@@ -2,21 +2,7 @@
 
 All items are potential work — not confirmed. Prioritized by value and effort.
 
-## Priority 1 — Daily UX Improvements
-
-(All Priority 1 items are implemented. See docs/multi-provider.md for the latest feature.)
-
-## Priority 2 — Code Quality
-
-### DRY pass
-
-Extract shared logic between `cli.ts` (~870 lines) and `tui/app.tsx` (~450 lines).
-
-- **Targets**: Flag parsing, bootstrap (provider/engine/registry/agent creation), `expandFileRefs`, `buildMcpHint`, command dispatch.
-- **Approach**: Extract into `src/shared/` modules. Both UIs become thin shells.
-- **Risk**: Over-abstraction. Keep it to obvious duplication only.
-
-## Priority 3 — Tooling & CI
+## Priority 1 — Tooling & CI
 
 ### Renovate
 

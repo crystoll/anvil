@@ -288,8 +288,9 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		? readFileSync(p.promptPath, "utf-8").trim()
 		: undefined;
 	const buildPrompt = (): string =>
-		[projectPrompt, activeSkill?.body, BASE_PROMPT].filter(Boolean).join("\n\n") +
-		buildMcpHint(mcpServers);
+		[projectPrompt, activeAgent?.prompt, activeSkill?.body, BASE_PROMPT]
+			.filter(Boolean)
+			.join("\n\n") + buildMcpHint(mcpServers);
 
 	// Agent loop
 	const agentHooks = activeAgent?.hooks ?? {};

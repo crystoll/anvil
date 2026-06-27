@@ -64,7 +64,7 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 		if (opts.contextSize != null) body.options = { num_ctx: opts.contextSize };
 
 		return ResultAsync.fromPromise(
-			fetchWithTimeout(`${baseUrl}/chat/completions`, {
+			fetch(`${baseUrl}/chat/completions`, {
 				method: "POST",
 				headers: headers(),
 				body: JSON.stringify(body),
@@ -110,7 +110,7 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 		if (opts.maxTokens != null) body.max_tokens = opts.maxTokens;
 
 		return ResultAsync.fromPromise(
-			fetchWithTimeout(`${baseUrl}/chat/completions`, {
+			fetch(`${baseUrl}/chat/completions`, {
 				method: "POST",
 				headers: headers(),
 				body: JSON.stringify(body),
@@ -125,7 +125,7 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 
 	const listModels = (): ResultAsync<string[], ProviderError> =>
 		ResultAsync.fromPromise(
-			fetchWithTimeout(`${baseUrl}/models`, {
+			fetch(`${baseUrl}/models`, {
 				headers: headers(),
 				signal: AbortSignal.timeout(connectTimeout),
 			}).then((r) => {
@@ -310,8 +310,6 @@ const parseCompletionResponse = (json: unknown): CompletionResult => {
 	}
 	return result;
 };
-
-const fetchWithTimeout = (url: string, init: RequestInit): Promise<Response> => fetch(url, init);
 
 const toConnectionError = (e: unknown): ProviderError => {
 	if (e instanceof Error && e.name === "TimeoutError") {
