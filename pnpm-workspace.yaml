@@ -1,6 +1,7 @@
 packages: []
 allowBuilds:
-  '@biomejs/biome': true
   dprint: true
   esbuild: true
   msw: true
+overrides:
+  anvil: 'link:'

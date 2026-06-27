@@ -76,6 +76,7 @@ Here are the top results: ...
 
 ```bash
 pnpm dev -- --version               # Show version and exit
+pnpm dev -- --simple                # Use readline CLI instead of TUI
 pnpm dev -- ~/code/myproject        # Open a specific project directory
 pnpm dev -- --model qwen3.6:27b    # Override model
 pnpm dev -- --skill code-review     # Start with a skill active
@@ -159,7 +160,9 @@ src/
 ├── session/    # Session persistence (auto-save, resume, history)
 ├── skills/     # Skill parser + multi-directory discovery
 ├── web/        # Web search (DuckDuckGo) + fetch (Readability extraction)
-└── cli.ts      # Interactive readline interface with commands
+├── tui/        # Ink-based terminal UI (default) — status bar, streaming, tool display
+├── cli.ts      # Readline-based CLI (--simple fallback)
+└── main.ts     # Entry point — routes to TUI or CLI based on flags/environment
 ```
 
 ## Agent Configs
@@ -292,9 +295,9 @@ Configure with `show_tokens: false` in `config.yaml` to hide per-turn display.
 
 ```bash
 pnpm install
-pnpm dev               # Launch interactive CLI
-pnpm build             # Bundle to dist/cli.js
-pnpm test              # Run unit tests (100 tests)
+pnpm dev               # Launch interactive CLI (TUI default)
+pnpm build             # Bundle to dist/
+pnpm test              # Run unit tests (110 tests)
 pnpm check             # Type-check
 pnpm lint              # Biome + oxlint
 pnpm format            # Biome (code) + dprint (markdown)

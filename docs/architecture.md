@@ -15,9 +15,9 @@ src/
 ├── lsp/        # LSP client — diagnostics, navigation, auto-inject after edits
 ├── mcp/        # MCP client — connect to external tool servers (stdio + HTTP)
 ├── web/        # Web search (DuckDuckGo) + fetch (Readability extraction)
-├── ui/         # Terminal UI helpers (status bar)
-├── cli.ts      # Interactive readline interface with commands
-└── index.ts    # Library entry point + VERSION
+├── tui/        # Ink-based terminal UI (default) — status bar, streaming, tool display
+├── cli.ts      # Readline-based CLI (--simple fallback)
+└── main.ts     # Entry point — routes to TUI or CLI based on flags/environment
 ```
 
 ## Provider Layer

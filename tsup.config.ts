@@ -1,10 +1,10 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-	entry: ["src/cli.ts"],
+	entry: ["src/main.ts", "src/cli.ts", "src/tui/app.tsx"],
 	format: ["esm"],
 	target: "node22",
+	splitting: true,
 	clean: true,
 	dts: false,
-	banner: { js: "#!/usr/bin/env node" },
 });
