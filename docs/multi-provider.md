@@ -11,7 +11,7 @@ Anvil supports multiple LLM providers. Switch between local (Ollama) and remote 
 - **Fully-qualified names**: Every model is `provider/model` — always explicit, always copy-pasteable
 - **No stateful selection**: No numbered lists, no "last listed" tracking
 - **Session-scoped**: Provider/model switching persists for the current session only
-- **Env var interpolation**: `${ENV_VAR}` syntax in config YAML for API keys
+- **Env var interpolation**: `${ENV_VAR}` syntax in config YAML for endpoints and API keys
 - **Backward compatible**: Existing configs work unchanged
 
 ## Config
