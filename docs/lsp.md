@@ -4,14 +4,14 @@ Language server integration provides code intelligence to the agent. After edits
 
 ## Tools
 
-| Tool | Approval | Description |
-| --- | --- | --- |
-| `lsp_diagnostics` | auto | Errors/warnings for a file |
-| `lsp_definition` | auto | Go to definition of symbol at position |
-| `lsp_references` | auto | Find all usages of symbol |
-| `lsp_hover` | auto | Type info and docs at position |
-| `lsp_symbols` | auto | List all symbols in a file |
-| `lsp_rename` | y/n | Rename symbol across files |
+| Tool              | Approval | Description                            |
+| ----------------- | -------- | -------------------------------------- |
+| `lsp_diagnostics` | auto     | Errors/warnings for a file             |
+| `lsp_definition`  | auto     | Go to definition of symbol at position |
+| `lsp_references`  | auto     | Find all usages of symbol              |
+| `lsp_hover`       | auto     | Type info and docs at position         |
+| `lsp_symbols`     | auto     | List all symbols in a file             |
+| `lsp_rename`      | y/n      | Rename symbol across files             |
 
 ## Auto-Inject After Edits
 

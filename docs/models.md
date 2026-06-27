@@ -4,18 +4,19 @@ Tested with `scripts/model-test.ts` — 4 tasks per model: simple Q&A, single to
 
 ## Summary
 
-| Model | Size | Architecture | Avg Time | Completion Tokens | Reliability |
-|-------|------|-------------|----------|-------------------|-------------|
-| **gemma4:e4b** | 8GB | MoE | **19s** | 1332 | 4/4 ✅ |
-| **qwen3.6:35b** | 22GB | MoE | **17s** | 871 | 4/4 ✅ |
-| qwen3.6:27b | 16GB | Dense | 66s | 878 | 4/4 ✅ |
-| qwen3-agentic | 8GB | Dense | 70s | 2951 | 4/4 ✅ |
+| Model           | Size | Architecture | Avg Time | Completion Tokens | Reliability |
+| --------------- | ---- | ------------ | -------- | ----------------- | ----------- |
+| **gemma4:e4b**  | 8GB  | MoE          | **19s**  | 1332              | 4/4 ✅      |
+| **qwen3.6:35b** | 22GB | MoE          | **17s**  | 871               | 4/4 ✅      |
+| qwen3.6:27b     | 16GB | Dense        | 66s      | 878               | 4/4 ✅      |
+| qwen3-agentic   | 8GB  | Dense        | 70s      | 2951              | 4/4 ✅      |
 
 ## Recommendations
 
 ### Default: `gemma4:e4b`
 
 Best all-rounder for daily use:
+
 - Fast (19s average across all task types)
 - Reliable tool calling — chains search → read → analyze without issues
 - Compact output — doesn't over-explain
@@ -25,6 +26,7 @@ Best all-rounder for daily use:
 ### Power: `qwen3.6:35b`
 
 Fastest overall (17s avg) despite being largest:
+
 - MoE architecture — only activates subset of parameters per token
 - Most token-efficient (871 total completion tokens across 4 tasks)
 - Excellent for complex tasks where quality matters
@@ -33,6 +35,7 @@ Fastest overall (17s avg) despite being largest:
 ### Deep reasoning: `qwen3.6:27b`
 
 Most capable per-parameter but slow:
+
 - Dense architecture — all 27B params active per token
 - 3-4x slower than MoE models (66s average)
 - Same output quality as 35b for these tasks
@@ -41,6 +44,7 @@ Most capable per-parameter but slow:
 ### Avoid for agentic work: `qwen3-agentic`
 
 Despite the name, not ideal:
+
 - Extremely verbose (2951 completion tokens — 3x more than others)
 - Slow (70s average)
 - Works correctly but wastes tokens on explanations

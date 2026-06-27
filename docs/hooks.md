@@ -4,12 +4,12 @@ Shell commands triggered at specific lifecycle points. Use cases: notifications,
 
 ## Lifecycle Events
 
-| Event | When | Blocking | Use case |
-| --- | --- | --- | --- |
-| `sessionStart` | Agent session begins | No | Start tracking, announce |
-| `preToolUse` | Before any tool executes | **Yes** | Guardrails, validation |
-| `postToolUse` | After tool execution completes | No | Logging, notifications |
-| `stop` | Agent turn ends (response complete) | No | Completion sounds, cleanup |
+| Event          | When                                | Blocking | Use case                   |
+| -------------- | ----------------------------------- | -------- | -------------------------- |
+| `sessionStart` | Agent session begins                | No       | Start tracking, announce   |
+| `preToolUse`   | Before any tool executes            | **Yes**  | Guardrails, validation     |
+| `postToolUse`  | After tool execution completes      | No       | Logging, notifications     |
+| `stop`         | Agent turn ends (response complete) | No       | Completion sounds, cleanup |
 
 ## Configuration
 
@@ -37,12 +37,12 @@ hooks:
 
 ## Hook Definition Fields
 
-| Field | Required | Default | Description |
-| --- | --- | --- | --- |
-| `command` | Yes | — | Shell command to execute |
-| `timeout` | No | 5 | Max seconds before kill |
-| `matcher` | No | — | Only fire for specific tool name |
-| `async` | No | false | Fire-and-forget (don't wait for completion) |
+| Field     | Required | Default | Description                                 |
+| --------- | -------- | ------- | ------------------------------------------- |
+| `command` | Yes      | —       | Shell command to execute                    |
+| `timeout` | No       | 5       | Max seconds before kill                     |
+| `matcher` | No       | —       | Only fire for specific tool name            |
+| `async`   | No       | false   | Fire-and-forget (don't wait for completion) |
 
 ## Protocol
 
