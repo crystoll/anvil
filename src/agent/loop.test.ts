@@ -223,3 +223,135 @@ describe("agent loop", () => {
 		expect(loop.state()).toBe("idle");
 	});
 });
+
+it("nudges model when it gives up without trying tools", async () => {
+	const provider = mockProvider([
+		// First response: model gives up
+		[{ content: "I'm unable to access the filesystem.", done: false }, { done: true }],
+		// After nudge: model uses tool
+		toolCallChunks("call_1", "list_dir", '{"path":"."}'),
+		// Final response after tool
+		[{ content: "Found files", done: false }, { done: true }],
+	]);
+	const engine = createEngine(provider, "test");
+	const registry = createRegistry();
+	registry.register(listDirTool);
+
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 5,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+	});
+
+	const events = await collect(loop.send("list the files"));
+
+	expect(events.some((e) => e.kind === "tool_result" && e.name === "list_dir")).toBe(true);
+	expect(loop.state()).toBe("idle");
+});
+
+it("does not nudge more than once per give-up", async () => {
+	const provider = mockProvider([
+		// First response: gives up
+		[{ content: "I cannot do this.", done: false }, { done: true }],
+		// After nudge: gives up again
+		[{ content: "Unfortunately I still can't.", done: false }, { done: true }],
+	]);
+	const engine = createEngine(provider, "test");
+	const registry = createRegistry();
+	registry.register(listDirTool);
+
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 5,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+	});
+
+	await collect(loop.send("do something"));
+
+	// Should exit idle after one nudge attempt, not loop forever
+	expect(loop.state()).toBe("idle");
+	expect(loop.rounds()).toBe(2);
+});
+
+it("detects stall when same tool+args called 3 times", async () => {
+	const provider = mockProvider([
+		toolCallChunks("c1", "list_dir", '{"path":"."}'),
+		toolCallChunks("c2", "list_dir", '{"path":"."}'),
+		toolCallChunks("c3", "list_dir", '{"path":"."}'),
+		// After stall injection, model responds with content
+		[{ content: "Let me try differently", done: false }, { done: true }],
+	]);
+	const engine = createEngine(provider, "test");
+	const registry = createRegistry();
+	registry.register(listDirTool);
+
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 10,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+	});
+
+	const events = await collect(loop.send("keep listing"));
+
+	// Third call should NOT produce a tool_result from execution
+	const toolResults = events.filter((e) => e.kind === "tool_result");
+	expect(toolResults).toHaveLength(2); // Only first two actually execute
+	expect(loop.state()).toBe("idle");
+});
+
+it("injects budget warning at 80% of rounds", async () => {
+	// 5 rounds max, 80% = round 4. We need 4 rounds of tool calls + final content.
+	const provider = mockProvider([
+		toolCallChunks("c1", "list_dir", '{"path":"a"}'),
+		toolCallChunks("c2", "list_dir", '{"path":"b"}'),
+		toolCallChunks("c3", "list_dir", '{"path":"c"}'),
+		toolCallChunks("c4", "list_dir", '{"path":"d"}'),
+		[{ content: "Done wrapping up", done: false }, { done: true }],
+	]);
+	const engine = createEngine(provider, "test");
+	const registry = createRegistry();
+	registry.register(listDirTool);
+
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 5,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+	});
+
+	await collect(loop.send("keep going"));
+
+	// At round 4 (80%), a budget warning should have been injected as user message
+	const messages = engine.messages();
+	const budgetMsg = messages.find(
+		(m) => m.role === "user" && (m.content ?? "").includes("rounds remaining"),
+	);
+	expect(budgetMsg).toBeDefined();
+});
+
+it("injects goal reminder every 5 rounds after round 5", async () => {
+	// Need 10+ rounds to trigger goal echo (fires when rounds > 5 && rounds % 5 === 0)
+	const provider = mockProvider([
+		...Array.from({ length: 10 }, (_, i) =>
+			toolCallChunks(`c${i}`, "list_dir", `{"path":"${String.fromCharCode(97 + i)}"}`),
+		),
+		[{ content: "All done", done: false }, { done: true }],
+	]);
+	const engine = createEngine(provider, "test");
+	const registry = createRegistry();
+	registry.register(listDirTool);
+
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 25,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+	});
+
+	await collect(loop.send("find all TODO comments and summarize them"));
+
+	const messages = engine.messages();
+	const goalReminder = messages.find(
+		(m) => m.role === "user" && (m.content ?? "").includes("Reminder"),
+	);
+	expect(goalReminder).toBeDefined();
+	expect(goalReminder?.content).toContain("find all TODO comments");
+});

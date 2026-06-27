@@ -49,6 +49,8 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	let state: AgentState = "idle";
 	let pendingCall: PendingCall | null = null;
 	let rounds = 0;
+	const recentCalls: string[] = [];
+	let originalGoal = "";
 
 	const setState = (s: AgentState): AgentEvent => {
 		state = s;
@@ -59,6 +61,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	async function* send(userMessage: string): AsyncGenerator<AgentEvent> {
 		engine.setSystem(config.systemPrompt);
 		engine.addUser(userMessage);
+		originalGoal = userMessage;
 		rounds = 0;
 		yield* runLoop();
 	}
@@ -113,24 +116,52 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		| { action: "executed"; events: AgentEvent[] }
 		| { action: "error_fed_back" };
 
+	/** Handle signal tools (done/stuck). */
+	const handleSignal = (name: string, args: string): ToolCallOutcome | undefined => {
+		if (name === "done")
+			return {
+				action: "done",
+				events: [setState("done"), { kind: "done", message: extractMessage(args) }],
+			};
+		if (name === "stuck")
+			return {
+				action: "stuck",
+				events: [setState("stuck"), { kind: "stuck", message: extractMessage(args) }],
+			};
+		return undefined;
+	};
+
+	/** Execute a non-approval tool and return outcome. */
+	const autoExecute = async (
+		tool: Tool,
+		args: Record<string, unknown>,
+		callId: string,
+	): Promise<ToolCallOutcome> => {
+		const denial = await config.onBeforeToolUse?.(tool.name, args);
+		if (denial) {
+			engine.addToolResult(callId, denial);
+			return { action: "error_fed_back" };
+		}
+		const result = await executeTool(tool, args, config.projectRoot);
+		const finalResult = config.transformToolResult
+			? await config.transformToolResult(tool.name, args, result)
+			: result;
+		config.onAfterToolUse?.(tool.name, args, finalResult);
+		engine.addToolResult(callId, finalResult);
+		return {
+			action: "executed",
+			events: [setState("executing"), { kind: "tool_result", name: tool.name, result }],
+		};
+	};
+
 	/** Process a single tool call from the assistant message. */
 	const handleToolCall = async (call: {
 		id: string;
 		name: string;
 		arguments: string;
 	}): Promise<ToolCallOutcome> => {
-		if (call.name === "done") {
-			return {
-				action: "done",
-				events: [setState("done"), { kind: "done", message: extractMessage(call.arguments) }],
-			};
-		}
-		if (call.name === "stuck") {
-			return {
-				action: "stuck",
-				events: [setState("stuck"), { kind: "stuck", message: extractMessage(call.arguments) }],
-			};
-		}
+		const signal = handleSignal(call.name, call.arguments);
+		if (signal) return signal;
 
 		const tool = registry.get(call.name);
 		if (!tool) {
@@ -152,22 +183,15 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			};
 		}
 
-		const denial = await config.onBeforeToolUse?.(tool.name, argsResult.value);
-		if (denial) {
-			engine.addToolResult(call.id, denial);
+		if (isStalled(tool.name, argsResult.value)) {
+			engine.addToolResult(
+				call.id,
+				"This tool call returned the same result multiple times. Try a different approach or tool.",
+			);
 			return { action: "error_fed_back" };
 		}
 
-		const result = await executeTool(tool, argsResult.value, config.projectRoot);
-		const finalResult = config.transformToolResult
-			? await config.transformToolResult(tool.name, argsResult.value, result)
-			: result;
-		config.onAfterToolUse?.(tool.name, argsResult.value, finalResult);
-		engine.addToolResult(call.id, finalResult);
-		return {
-			action: "executed",
-			events: [setState("executing"), { kind: "tool_result", name: tool.name, result }],
-		};
+		return autoExecute(tool, argsResult.value, call.id);
 	};
 
 	/** Stream one round and collect engine events into agent events. */
@@ -185,26 +209,83 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		}
 	}
 
-	/** Core agent loop — stream, detect tool calls, yield control for approval. */
+	/** Track and detect repeated identical tool calls. */
+	const isStalled = (toolName: string, args: Record<string, unknown>): boolean => {
+		const hash = `${toolName}:${JSON.stringify(args)}`;
+		recentCalls.push(hash);
+		if (recentCalls.length > 6) recentCalls.shift();
+		return recentCalls.filter((h) => h === hash).length >= 3;
+	};
+
+	/** Inject budget/goal context before streaming. */
+	const injectRoundContext = () => {
+		const threshold = Math.ceil(config.maxRounds * 0.8);
+		if (rounds === threshold) {
+			const remaining = config.maxRounds - rounds;
+			engine.addUser(`[Note: ${remaining} rounds remaining. Wrap up or present what you have.]`);
+		}
+		if (rounds > 5 && rounds % 5 === 0) {
+			engine.addUser(`[Reminder — your current task: ${originalGoal}]`);
+		}
+	};
+
+	/** If model gave up without tools, inject nudge. Returns true if nudged. */
+	const tryNudge = (lastMessage: { role: string; content?: string } | undefined): boolean => {
+		if (lastMessage?.role !== "assistant") return false;
+		if (!isGiveUp(lastMessage.content ?? "")) return false;
+		const toolNames = registry
+			.all()
+			.map((t) => t.name)
+			.join(", ");
+		engine.addUser(
+			`You have tools available: ${toolNames}. Use them to accomplish the task. Try again.`,
+		);
+		return true;
+	};
+
+	/** Check if round ended without tool call. */
+	const checkIdle = (nudged: boolean): "nudge" | "idle" | undefined => {
+		const lastMessage = engine.messages()[engine.messages().length - 1];
+		if (lastMessage?.toolCalls?.[0]) return undefined;
+		if (!nudged && tryNudge(lastMessage)) return "nudge";
+		return "idle";
+	};
+
+	/** Process tool call outcome. Returns events + whether to continue looping. */
+	const processOutcome = async (): Promise<{ loop: boolean; events: AgentEvent[] }> => {
+		const call = engine.messages()[engine.messages().length - 1]?.toolCalls?.[0];
+		if (!call) return { loop: false, events: [setState("idle")] };
+		const outcome = await handleToolCall(call);
+		if (outcome.action === "error_fed_back") return { loop: true, events: [] };
+		return { loop: outcome.action === "executed", events: outcome.events };
+	};
+
+	/** Core agent loop. */
 	async function* runLoop(): AsyncGenerator<AgentEvent> {
+		let nudged = false;
+
 		while (rounds < config.maxRounds) {
 			rounds++;
 			yield { kind: "round", current: rounds, max: config.maxRounds };
+			injectRoundContext();
 			yield setState("streaming");
 			yield* streamRound();
 
-			const lastMessage = engine.messages()[engine.messages().length - 1];
-			const call = lastMessage?.toolCalls?.[0];
-			if (!call) {
+			const idle = checkIdle(nudged);
+			if (idle === "nudge") {
+				nudged = true;
+				continue;
+			}
+			if (idle === "idle") {
 				yield setState("idle");
 				return;
 			}
+			nudged = false;
 
-			const outcome = await handleToolCall(call);
-			if (outcome.action === "error_fed_back") continue;
-
-			for (const e of outcome.events) yield e;
-			if (outcome.action !== "executed") return;
+			const result = await processOutcome();
+			for (const e of result.events) yield e;
+			if (result.loop) continue;
+			return;
 		}
 
 		yield { kind: "error", message: `Round cap reached (${config.maxRounds})` };
@@ -285,4 +366,19 @@ const extractMessage = (argsJson: string): string => {
 	} catch {
 		return argsJson;
 	}
+};
+
+const GIVE_UP_PATTERNS = [
+	"I cannot",
+	"I'm unable",
+	"I can't",
+	"Unfortunately I",
+	"I don't have access",
+	"I'm not able",
+	"As an AI",
+];
+
+const isGiveUp = (text: string): boolean => {
+	const lower = text.toLowerCase();
+	return GIVE_UP_PATTERNS.some((p) => lower.includes(p.toLowerCase()));
 };
