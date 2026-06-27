@@ -1,5 +1,5 @@
 import { load as yamlLoad } from "js-yaml";
-import { type Result, err, ok } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 
 /** A parsed skill definition. */
 export type Skill = {

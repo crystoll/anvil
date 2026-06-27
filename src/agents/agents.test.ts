@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Tool } from "../tools/registry.js";
 import { createRegistry } from "../tools/registry.js";
+import type { AgentDef } from "./agents.js";
 import {
 	applyAgentToRegistry,
 	checkCommand,
@@ -10,7 +11,6 @@ import {
 	discoverAgents,
 	loadAgentConfig,
 } from "./agents.js";
-import type { AgentDef } from "./agents.js";
 
 describe("agent config", () => {
 	const tmpDir = join(import.meta.dirname, "../../.test-agents");

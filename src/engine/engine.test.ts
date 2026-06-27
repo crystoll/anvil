@@ -1,8 +1,8 @@
 import { okAsync } from "neverthrow";
 import { describe, expect, it } from "vitest";
 import type { Provider, StreamChunk } from "../provider/types.js";
-import { createEngine } from "./engine.js";
 import type { EngineEvent } from "./engine.js";
+import { createEngine } from "./engine.js";
 
 /** Helper: create a mock provider that streams the given chunks. */
 const mockProvider = (chunks: StreamChunk[]): Provider => ({

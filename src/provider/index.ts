@@ -1,6 +1,7 @@
+export { createProvider } from "./openai-compatible.js";
 export type {
-	CompletionResult,
 	CompleteOptions,
+	CompletionResult,
 	Message,
 	Provider,
 	ProviderConfig,
@@ -13,4 +14,3 @@ export type {
 	ToolCallDelta,
 	ToolSchema,
 } from "./types.js";
-export { createProvider } from "./openai-compatible.js";

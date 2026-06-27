@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createRegistry, parseToolArgs } from "./registry.js";
 import type { Tool } from "./registry.js";
+import { createRegistry, parseToolArgs } from "./registry.js";
 
 const dummyTool: Tool = {
 	name: "test_tool",

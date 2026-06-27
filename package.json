@@ -8,8 +8,17 @@
 		"type": "git",
 		"url": "https://github.com/crystoll/anvil"
 	},
-	"keywords": ["ai", "cli", "local-first", "ollama", "agent", "tools"],
-	"files": ["dist"],
+	"keywords": [
+		"ai",
+		"cli",
+		"local-first",
+		"ollama",
+		"agent",
+		"tools"
+	],
+	"files": [
+		"dist"
+	],
 	"type": "module",
 	"bin": {
 		"anvil": "./dist/cli.js"
@@ -37,14 +46,14 @@
 		"remeda": "2.21.0"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "1.9.4",
+		"@biomejs/biome": "2.5.1",
 		"@types/node": "22.20.0",
 		"dprint": "0.47.5",
 		"msw": "2.14.6",
-		"oxlint": "0.12.0",
+		"oxlint": "1.71.0",
 		"tsup": "8.5.1",
 		"tsx": "4.22.4",
-		"typescript": "5.7.2",
+		"typescript": "6.0.3",
 		"vite": "^6.4.3",
 		"vitest": "4.1.9"
 	}

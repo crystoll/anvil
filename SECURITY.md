@@ -6,20 +6,18 @@ Run `pnpm audit` periodically. CI runs `pnpm audit --audit-level=critical --prod
 
 ### Known Accepted Vulnerabilities
 
-None currently. All prod dependencies are clean.
-
-Dev-only vulnerabilities (not shipped in binary) may appear in transitive deps of vitest/vite — these are acceptable as they only affect the local dev environment.
+None currently. All dependencies are at their latest versions.
 
 ### Upgrade Notes
 
-| Package     | Notes                                                                           |
-| ----------- | ------------------------------------------------------------------------------- |
-| js-yaml     | v5 dropped the default export. Use `import { load } from "js-yaml"`.            |
-| vitest      | v4 requires vite 6+ (needs `vite/module-runner`). Add vite as explicit dev dep. |
-| @types/node | Pin to 22.x to match our Node target (engines field).                           |
-| biome       | v2 changes config format + new rules. Separate migration.                       |
-| oxlint      | v1 adds new rules. Separate migration.                                          |
-| typescript  | v6 — no urgency, 5.7 works fine.                                                |
+| Package     | Notes                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------- |
+| js-yaml     | v5 dropped the default export. Use `import { load } from "js-yaml"`.                        |
+| vitest      | v4 requires vite 6+ (needs `vite/module-runner`). Add vite as explicit dev dep.             |
+| biome       | v2 changed config format. Run `npx biome migrate --write` then `--fix` for import ordering. |
+| typescript  | v6 requires explicit `"types": ["node"]` in tsconfig.json.                                  |
+| oxlint      | v1 was a clean upgrade, no changes needed.                                                  |
+| @types/node | Pin to 22.x to match our Node target (engines field).                                       |
 
 ### Last Reviewed
 

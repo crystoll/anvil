@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { type Result, err, ok } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 
 export type McpServerConfig =
 	| {

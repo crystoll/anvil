@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { createAgentLoop } from "./agent/loop.js";
-import { createEngine } from "./engine/engine.js";
 import type { EngineEvent } from "./engine/engine.js";
+import { createEngine } from "./engine/engine.js";
 import { createProvider } from "./provider/openai-compatible.js";
 import { done, listDir, stuck } from "./tools/builtins.js";
 import { createRegistry } from "./tools/registry.js";

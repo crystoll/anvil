@@ -1,8 +1,6 @@
 {
-	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-	"organizeImports": {
-		"enabled": true
-	},
+	"$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
+	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"formatter": {
 		"enabled": true,
 		"indentStyle": "tab",
@@ -11,19 +9,19 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
+			"preset": "recommended",
 			"complexity": {
 				"noExcessiveCognitiveComplexity": "error",
 				"noForEach": "warn"
 			},
 			"style": {
-				"noVar": "error",
 				"useConst": "error",
 				"useExportType": "error",
 				"useImportType": "error"
 			},
 			"suspicious": {
-				"noExplicitAny": "error"
+				"noExplicitAny": "error",
+				"noVar": "error"
 			},
 			"correctness": {
 				"noUnusedVariables": "error",
@@ -32,6 +30,6 @@
 		}
 	},
 	"files": {
-		"ignore": ["node_modules", "dist", "coverage"]
+		"includes": ["**", "!**/node_modules", "!**/dist", "!**/coverage"]
 	}
 }

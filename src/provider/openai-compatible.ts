@@ -1,4 +1,4 @@
-import { ResultAsync, errAsync, okAsync } from "neverthrow";
+import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import type {
 	CompleteOptions,
 	CompletionResult,

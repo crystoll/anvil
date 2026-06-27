@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { type LspManager, formatDiagnostics } from "./manager.js";
+import { formatDiagnostics, type LspManager } from "./manager.js";
 
 /**
  * Create a post-execution hook that appends LSP diagnostics to write_file/edit_file results.

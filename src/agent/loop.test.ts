@@ -2,10 +2,10 @@ import { okAsync } from "neverthrow";
 import { describe, expect, it } from "vitest";
 import { createEngine } from "../engine/engine.js";
 import type { Provider, StreamChunk } from "../provider/types.js";
-import { createRegistry } from "../tools/registry.js";
 import type { Tool } from "../tools/registry.js";
-import { createAgentLoop } from "./loop.js";
+import { createRegistry } from "../tools/registry.js";
 import type { AgentEvent } from "./loop.js";
+import { createAgentLoop } from "./loop.js";
 
 /** Mock provider that returns a sequence of chunk sets (one per stream call). */
 const mockProvider = (responses: StreamChunk[][]): Provider => {

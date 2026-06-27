@@ -2,15 +2,15 @@ import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+	createLspClient,
 	type Diagnostic,
 	type Location,
 	type LspClient,
 	type SymbolInfo,
 	type WorkspaceEdit,
-	createLspClient,
 	waitForDiagnostics,
 } from "./client.js";
-import { type LspConfig, detectLanguages } from "./config.js";
+import { detectLanguages, type LspConfig } from "./config.js";
 
 export type LspManager = {
 	/** Get diagnostics for a file (starts server lazily if needed). */

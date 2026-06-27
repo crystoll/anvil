@@ -9,6 +9,7 @@ import { type AgentDef, applyAgentToRegistry, discoverAgents, runHooks } from ".
 import { loadConfig } from "./config/index.js";
 import { createEngine } from "./engine/index.js";
 import { VERSION } from "./index.js";
+import type { LspManager } from "./lsp/index.js";
 import {
 	createDiagnosticInjector,
 	createLspDefinitionTool,
@@ -20,7 +21,6 @@ import {
 	createLspSymbolsTool,
 	loadLspConfig,
 } from "./lsp/index.js";
-import type { LspManager } from "./lsp/index.js";
 import {
 	type ConnectedServer,
 	connectServer,
@@ -28,9 +28,9 @@ import {
 	loadMcpConfig,
 	mcpToolsToAnvil,
 } from "./mcp/index.js";
-import { type Provider, createProvider } from "./provider/index.js";
+import { createProvider, type Provider } from "./provider/index.js";
 import { listSessions, loadSession, saveSession } from "./session/index.js";
-import { type Skill, discoverSkills } from "./skills/index.js";
+import { discoverSkills, type Skill } from "./skills/index.js";
 import { startSpinner } from "./spinner.js";
 import { builtinTools, createRegistry } from "./tools/index.js";
 import { createStatusBar } from "./ui/statusbar.js";
@@ -547,7 +547,7 @@ const handleHistoryCommand = async (
 	}
 	console.log();
 	const answer = await rl.question("Load # (or Enter to cancel): ");
-	const idx = Number.parseInt(answer.trim()) - 1;
+	const idx = Number.parseInt(answer.trim(), 10) - 1;
 	const selected = shown[idx];
 	if (!selected) return currentId;
 	const loaded = loadSession(HISTORY_DIR, selected.id);

@@ -1,9 +1,9 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { load as yamlLoad } from "js-yaml";
 import type { Result } from "neverthrow";
 import { err, ok } from "neverthrow";
-import { type Registry, type Tool, createRegistry } from "../tools/registry.js";
+import { createRegistry, type Registry, type Tool } from "../tools/registry.js";
 
 export type ToolSettings = {
 	read_file?: { deniedPaths?: string[] };

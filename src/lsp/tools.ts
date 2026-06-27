@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { backupFile } from "../tools/builtins.js";
 import type { Tool } from "../tools/registry.js";
 import type { TextEdit } from "./client.js";
-import { type LspManager, formatDiagnostics } from "./manager.js";
+import { formatDiagnostics, type LspManager } from "./manager.js";
 
 /** Create the lsp_diagnostics tool backed by the manager. */
 export const createLspDiagnosticsTool = (manager: LspManager): Tool => ({

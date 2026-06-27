@@ -1,5 +1,5 @@
 import { parseHTML } from "linkedom";
-import { type Result, err, ok } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 
 const DDG_URL = "https://html.duckduckgo.com/html/";
 const USER_AGENT =
