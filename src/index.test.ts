@@ -3,6 +3,6 @@ import { VERSION } from "./index.js";
 
 describe("anvil", () => {
 	it("exports a version string", () => {
-		expect(VERSION).toBe("0.1.0");
+		expect(VERSION).toBe("0.2.0");
 	});
 });

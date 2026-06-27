@@ -69,6 +69,7 @@ Here are the top results: ...
 | `/skill <name>`     | Activate a skill (no arg = list all)   |
 | `/agent`            | List available agents                  |
 | `/rewind N`         | Rewind conversation to turn N          |
+| `/plan <task>`      | Generate plan, execute step by step    |
 | `/transcript`       | Export session as markdown             |
 
 ## CLI Flags

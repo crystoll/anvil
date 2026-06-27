@@ -630,6 +630,10 @@ const handleCommand = async (
 		handleRewind(trimmed, ctx);
 		return "handled";
 	}
+	if (trimmed.startsWith("/plan")) {
+		await handlePlan(trimmed.replace("/plan", "").trim(), rl, ctx);
+		return "handled";
+	}
 	// Skill as slash command: /code-review triggers skill "code-review"
 	if (trimmed.startsWith("/")) {
 		const found = ctx.availableSkills.find((s) => s.name === trimmed.slice(1));
@@ -661,6 +665,73 @@ const exportTranscript = (ctx: CliContext): void => {
 	const path = join(dir, filename);
 	writeFileSync(path, md);
 	console.log(`Transcript saved: ${path}\n`);
+};
+
+const generatePlan = async (task: string, ctx: CliContext): Promise<string> => {
+	const prompt = `Break this task into numbered steps (just the steps, no explanation):\n${task}`;
+	let text = "";
+	const spinner = startSpinner();
+	for await (const event of ctx.agent.send(prompt)) {
+		if (event.kind === "content") {
+			spinner.stop();
+			text += event.text;
+			stdout.write(event.text);
+		}
+		if (event.kind === "usage") {
+			sessionTokens.prompt += event.promptTokens;
+			sessionTokens.total += event.totalTokens;
+		}
+	}
+	return text;
+};
+
+const executeSteps = async (
+	steps: string[],
+	rl: ReturnType<typeof createInterface>,
+	ctx: CliContext,
+): Promise<void> => {
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i] ?? "";
+		const progress = `Step ${i + 1}/${steps.length}: ${step}`;
+		stdout.write(`\n\x1b[36m${progress}\x1b[0m\n\x1b[2m─\x1b[0m\n`);
+		const prev = i > 0 ? "\nPrevious steps completed successfully." : "";
+		await processAgentTurn(rl, ctx.agent, `${progress}${prev}\nDo this now.`, ctx);
+		stdout.write("\n");
+		if (i >= steps.length - 1) continue;
+		const cont = await rl.question("\x1b[2m[continue? y/n/skip]: \x1b[0m");
+		const c = cont.trim().toLowerCase();
+		if (c === "n") break;
+	}
+};
+
+const handlePlan = async (
+	task: string,
+	rl: ReturnType<typeof createInterface>,
+	ctx: CliContext,
+): Promise<void> => {
+	if (!task) {
+		console.log("Usage: /plan <task description>\n");
+		return;
+	}
+
+	stdout.write("\x1b[2m─\x1b[0m\n");
+	const planText = await generatePlan(task, ctx);
+	stdout.write("\n\n");
+
+	const steps = planText
+		.split("\n")
+		.map((l) => l.replace(/^\d+[.)]\s*/, "").trim())
+		.filter((l) => l.length > 0);
+	if (steps.length === 0) {
+		console.log("[no steps found]\n");
+		return;
+	}
+
+	const answer = await rl.question(`\x1b[2m[${steps.length} steps — execute? y/n]: \x1b[0m`);
+	if (!answer.trim().toLowerCase().startsWith("y")) return;
+
+	await executeSteps(steps, rl, ctx);
+	console.log("\x1b[2m[plan complete]\x1b[0m\n");
 };
 
 const handleRewind = (input: string, ctx: CliContext): void => {
