@@ -33,6 +33,8 @@ export type Engine = {
 	reset: () => void;
 	/** Trim oldest messages to stay within a token budget. Returns number of messages removed. */
 	trimToFit: (maxTokens: number) => number;
+	/** Rewrite last message content as a tool call (for proxy recovery). */
+	rewriteLastAsToolCall: (call: { id: string; name: string; arguments: string }) => boolean;
 };
 
 type ToolCallAccum = { id: string; name: string; args: string };
@@ -187,6 +189,13 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 		cancel,
 		reset,
 		trimToFit: (maxTokens: number) => trimMessages(history, maxTokens),
+		rewriteLastAsToolCall: (call) => {
+			const last = history[history.length - 1];
+			if (!last || last.toolCalls?.length || !last.content) return false;
+			last.toolCalls = [call];
+			last.content = "";
+			return true;
+		},
 	};
 };
 

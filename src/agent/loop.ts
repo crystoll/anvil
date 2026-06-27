@@ -249,21 +249,15 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		const msgs = engine.messages();
 		const last = msgs[msgs.length - 1];
 		if (!last || last.toolCalls?.length || !last.content) return false;
-		const text = last.content.trim();
-		// Match JSON like {"name":"tool","arguments":{...}} or {"name":"tool","parameters":{...}}
 		try {
-			const parsed = JSON.parse(text);
+			const parsed = JSON.parse(last.content.trim());
 			if (typeof parsed.name !== "string") return false;
 			const args = parsed.arguments ?? parsed.parameters ?? {};
-			const call = {
+			return engine.rewriteLastAsToolCall({
 				id: `recovered-${Date.now()}`,
 				name: parsed.name,
 				arguments: JSON.stringify(args),
-			};
-			// Rewrite the last message to have toolCalls instead of content
-			(last as { toolCalls?: unknown[] }).toolCalls = [call];
-			(last as { content?: string }).content = "";
-			return true;
+			});
 		} catch {
 			return false;
 		}

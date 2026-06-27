@@ -14,19 +14,17 @@ export type SearchResult = {
 /** Parse search results from DuckDuckGo HTML response. */
 export const parseSearchResults = (html: string, maxResults = 10): SearchResult[] => {
 	const { document } = parseHTML(html);
-	const links = document.querySelectorAll(".result__a");
-	const snippets = document.querySelectorAll(".result__snippet");
-	const results: SearchResult[] = [];
+	const links = Array.from(document.querySelectorAll(".result__a"));
+	const snippets = Array.from(document.querySelectorAll(".result__snippet"));
 
-	for (let i = 0; i < links.length && results.length < maxResults; i++) {
-		const link = links[i];
-		const snippet = snippets[i];
-		const url = link?.getAttribute("href") ?? "";
-		const title = link?.textContent?.trim() ?? "";
-		if (!url || !title) continue;
-		results.push({ title, url, snippet: snippet?.textContent?.trim() ?? "" });
-	}
-	return results;
+	return links
+		.slice(0, maxResults)
+		.map((link, i) => ({
+			title: link?.textContent?.trim() ?? "",
+			url: link?.getAttribute("href") ?? "",
+			snippet: snippets[i]?.textContent?.trim() ?? "",
+		}))
+		.filter((r) => r.url && r.title);
 };
 
 /** Search DuckDuckGo and return structured results. */

@@ -235,6 +235,63 @@ export const stuck: Tool = {
 
 /** Search the web via DuckDuckGo. */
 /** Project context — quick overview of the project. */
+const readPackageInfo = async (root: string): Promise<string | undefined> => {
+	try {
+		const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf-8"));
+		const lines = [`## package.json`, `name: ${pkg.name}  version: ${pkg.version}`];
+		if (pkg.description) lines.push(pkg.description);
+		if (pkg.scripts) lines.push(`scripts: ${Object.keys(pkg.scripts).join(", ")}`);
+		const deps = Object.keys(pkg.dependencies ?? {});
+		if (deps.length) lines.push(`dependencies: ${deps.join(", ")}`);
+		const devDeps = Object.keys(pkg.devDependencies ?? {});
+		if (devDeps.length) lines.push(`devDependencies: ${devDeps.join(", ")}`);
+		return lines.join("\n");
+	} catch {
+		return undefined;
+	}
+};
+
+const readTsconfigInfo = async (root: string): Promise<string | undefined> => {
+	try {
+		const { compilerOptions } = JSON.parse(await readFile(join(root, "tsconfig.json"), "utf-8"));
+		if (!compilerOptions) return undefined;
+		const fields = ["target", "module", "moduleResolution", "strict"]
+			.filter((k) => compilerOptions[k] !== undefined)
+			.map((k) => `${k}: ${compilerOptions[k]}`);
+		return fields.length ? `## tsconfig.json\n${fields.join(", ")}` : undefined;
+	} catch {
+		return undefined;
+	}
+};
+
+const getFileTree = (root: string): Promise<string> =>
+	new Promise((res) => {
+		const args = [
+			root,
+			"-type",
+			"f",
+			"-not",
+			"-path",
+			"*/node_modules/*",
+			"-not",
+			"-path",
+			"*/.git/*",
+			"-not",
+			"-path",
+			"*/dist/*",
+		];
+		execFile("find", args, { timeout: 5000 }, (_, stdout) => {
+			const files = stdout
+				.trim()
+				.split("\n")
+				.filter(Boolean)
+				.map((f) => relative(root, f))
+				.sort();
+			const truncated = files.length > 60 ? `\n... and ${files.length - 60} more` : "";
+			res(`## Files (${files.length})\n${files.slice(0, 60).join("\n")}${truncated}`);
+		});
+	});
+
 export const projectContext: Tool = {
 	name: "project_context",
 	description: "Get project overview: package.json info, file tree, git status, and recent commits",
@@ -242,70 +299,16 @@ export const projectContext: Tool = {
 	needsApproval: false,
 	timeout: 10_000,
 	execute: async (_, projectRoot) => {
-		const parts: string[] = [];
-
-		try {
-			const pkg = await readFile(join(projectRoot, "package.json"), "utf-8");
-			const { name, version, description, scripts, dependencies, devDependencies } =
-				JSON.parse(pkg);
-			const deps = Object.keys(dependencies ?? {});
-			const devDeps = Object.keys(devDependencies ?? {});
-			parts.push(
-				`## package.json\nname: ${name}  version: ${version}${description ? `\n${description}` : ""}${scripts ? `\nscripts: ${Object.keys(scripts).join(", ")}` : ""}${deps.length ? `\ndependencies: ${deps.join(", ")}` : ""}${devDeps.length ? `\ndevDependencies: ${devDeps.join(", ")}` : ""}`,
-			);
-		} catch {}
-
-		try {
-			const tsconfig = await readFile(join(projectRoot, "tsconfig.json"), "utf-8");
-			const { compilerOptions } = JSON.parse(tsconfig);
-			if (compilerOptions) {
-				const fields = ["target", "module", "moduleResolution", "strict"]
-					.filter((k) => compilerOptions[k] !== undefined)
-					.map((k) => `${k}: ${compilerOptions[k]}`);
-				if (fields.length) parts.push(`## tsconfig.json\n${fields.join(", ")}`);
-			}
-		} catch {}
-
-		const tree = await new Promise<string>((res) => {
-			execFile(
-				"find",
-				[
-					projectRoot,
-					"-type",
-					"f",
-					"-not",
-					"-path",
-					"*/node_modules/*",
-					"-not",
-					"-path",
-					"*/.git/*",
-					"-not",
-					"-path",
-					"*/dist/*",
-				],
-				{ timeout: 5000 },
-				(_, stdout) => {
-					const files = stdout
-						.trim()
-						.split("\n")
-						.filter(Boolean)
-						.map((f) => relative(projectRoot, f))
-						.sort();
-					res(
-						`## Files (${files.length})\n${files.slice(0, 60).join("\n")}${files.length > 60 ? `\n... and ${files.length - 60} more` : ""}`,
-					);
-				},
-			);
-		});
-		parts.push(tree);
-
-		const status = await gitExec(["status", "--short", "--branch"], projectRoot);
-		parts.push(`## Git\n${status}`);
-
-		const log = await gitExec(["log", "--oneline", "-5"], projectRoot);
-		if (log.trim()) parts.push(`## Recent commits\n${log}`);
-
-		return parts.join("\n\n");
+		const sections = await Promise.all([
+			readPackageInfo(projectRoot),
+			readTsconfigInfo(projectRoot),
+			getFileTree(projectRoot),
+			gitExec(["status", "--short", "--branch"], projectRoot).then((s) => `## Git\n${s}`),
+			gitExec(["log", "--oneline", "-5"], projectRoot).then((s) =>
+				s.trim() ? `## Recent commits\n${s}` : undefined,
+			),
+		]);
+		return sections.filter(Boolean).join("\n\n");
 	},
 };
 
