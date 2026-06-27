@@ -1,26 +1,66 @@
 # Future Development Ideas
 
-## TUI Remaining Gaps
+All items are potential work — not confirmed. Prioritized by value and effort.
 
-Features present in `--simple` mode but not yet in TUI:
+## Priority 1 — Daily UX Improvements
 
-- Input history: cursor-up/down cycles through previous inputs (session-only, both UIs)
-- Model selection UX: `/model` shows numbered list of available models (query Ollama `/api/tags`), user picks by number. Later: support listing models from non-Ollama providers, favorites/recent models, fuzzy filter.
-- `@path` hint display (show "[attached: path (N lines)]" in TUI when file is attached)
+### LiteLLM / remote model support
 
-## Code Quality
+Support invoking models via LiteLLM proxy or any remote OpenAI-compatible gateway with API key auth.
 
-- **DRY pass**: Review duplication between `cli.ts` and `tui/app.tsx` (command handling, flag parsing, bootstrap). Extract shared logic into common modules to reduce maintenance burden.
-- **Internal task/todo tracking**: Agent-side step tracking so multi-step operations don't lose their place. Could be a visible checklist in TUI, or just internal state the agent uses to stay on track.
+- **Approach**: Already works at provider level (OpenAI-compatible API), but needs:
+  - Multiple providers in config (not just one default)
+  - API key management (per-provider `apiKey` field, env var fallback)
+  - `/model` listing that queries the remote provider's model list endpoint
+  - Seamless switching between local (Ollama) and remote (LiteLLM, OpenRouter, etc.) models
+- **Config example**:
+  ```yaml
+  providers:
+    ollama:
+      endpoint: http://localhost:11434/v1
+    litellm:
+      endpoint: https://my-proxy.example.com/v1
+      apiKey: ${LITELLM_API_KEY}
+  ```
+- **Scope**: Config schema extension, provider switching in `/model`, env var interpolation for keys. Medium effort.
 
-## TUI Enhancements
+## Priority 2 — Code Quality
 
-- **Multi-pane layout**: Split terminal into conversation pane + tool output/status pane. Would keep tool results visible without scrolling, show plan progress, or display file diffs alongside conversation. Needs investigation into Ink layout capabilities and terminal size handling.
+### DRY pass
 
-## Tooling & CI
+Extract shared logic between `cli.ts` (~870 lines) and `tui/app.tsx` (~450 lines).
 
-- **Renovate**: Add Renovate to GitHub Actions for automated dependency update PRs. Group minor/patch updates, require CI pass before merge.
+- **Targets**: Flag parsing, bootstrap (provider/engine/registry/agent creation), `expandFileRefs`, `buildMcpHint`, command dispatch.
+- **Approach**: Extract into `src/shared/` modules. Both UIs become thin shells.
+- **Risk**: Over-abstraction. Keep it to obvious duplication only.
 
-## Future Investigations
+## Priority 3 — Tooling & CI
 
-- **Remote control via Discord/Slack**: Open a session in a folder context, then interact with it remotely over Discord/Slack. Would need a headless daemon mode, message bridge, and auth/session mapping. Explore feasibility and UX.
+### Renovate
+
+Automated dependency update PRs via GitHub Actions.
+
+- **Approach**: Add `renovate.json` with: group minor/patch, require CI pass, auto-merge patch, manual merge minor/major.
+- **Value**: Catches security updates, prevents drift.
+- **Scope**: Config file only, no code changes.
+
+## Deferred / Future Investigations
+
+### Multi-pane layout
+
+Split terminal into conversation pane + tool output/status pane.
+
+- **Status**: Needs design and prototyping. Full project, not a feature.
+- **Value**: Keeps tool results visible without scrolling.
+
+### Remote control via Discord/Slack
+
+Headless daemon mode + message bridge for remote interaction.
+
+- **Status**: Exploratory. Security concerns. SSH + tmux already covers remote access.
+
+### Internal task/todo tracking
+
+Agent-side step tracking for multi-step operations.
+
+- **Status**: `/plan` command partially covers this. Evaluate after more real usage.

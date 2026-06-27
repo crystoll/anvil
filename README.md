@@ -18,7 +18,7 @@ pnpm build
 **Option A — symlink (simplest):**
 
 ```bash
-ln -sf $(pwd)/dist/cli.js /usr/local/bin/anvil
+ln -sf $(pwd)/dist/main.js /usr/local/bin/anvil
 ```
 
 **Option B — pnpm global link:**
@@ -311,5 +311,4 @@ pnpm format            # Biome (code) + dprint (markdown)
 
 ## What's Next
 
-- Scheduling and workflow chains
-- Multi-pane terminal UI (Ink)
+See [docs/ideas.md](docs/ideas.md) for potential future work.

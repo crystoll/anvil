@@ -6,7 +6,7 @@ import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
 import { useRef, useState } from "react";
 import { type AgentEvent, createAgentLoop } from "../agent/index.js";
-import { type AgentDef, applyAgentToRegistry, discoverAgents } from "../agents/index.js";
+import { type AgentDef, applyAgentToRegistry, discoverAgents, runHooks } from "../agents/index.js";
 import { loadConfig } from "../config/config.js";
 import { createEngine } from "../engine/index.js";
 import { VERSION } from "../index.js";
@@ -21,7 +21,12 @@ import {
 	createLspSymbolsTool,
 	loadLspConfig,
 } from "../lsp/index.js";
-import { connectServer, loadMcpConfig, mcpToolsToAnvil } from "../mcp/index.js";
+import {
+	type ConnectedServer,
+	connectServer,
+	loadMcpConfig,
+	mcpToolsToAnvil,
+} from "../mcp/index.js";
 import { createProvider } from "../provider/index.js";
 import { listSessions, loadSession, saveSession } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
@@ -73,6 +78,7 @@ const provider = createProvider(config.defaultProvider, {
 	streamTimeout: config.streamTimeout,
 	connectTimeout: config.connectTimeout,
 });
+const ollamaBase = providerEntry.endpoint.replace(/\/v1\/?$/, "");
 const engine = createEngine(provider, flagModel ?? config.defaultModel);
 const registry = createRegistry();
 for (const tool of builtinTools) registry.register(tool);
@@ -106,15 +112,26 @@ const mcpPaths = [
 	join(home, ".anvil", "mcp.json"),
 ];
 const mcpResult = loadMcpConfig(mcpPaths);
+const mcpServers: ConnectedServer[] = [];
 const mcpInit = async () => {
 	if (mcpResult.isErr()) return;
 	for (const [name, cfg] of Object.entries(mcpResult.value)) {
 		const result = await connectServer(name, cfg);
 		if (typeof result === "string") continue;
 		for (const tool of mcpToolsToAnvil(result)) registry.register(tool);
+		mcpServers.push(result);
 	}
 };
 const mcpReady = mcpInit();
+
+const buildMcpHint = (): string => {
+	if (mcpServers.length === 0) return "";
+	const groups = mcpServers.map((s) => {
+		const names = s.tools.map((t) => `${s.name}.${t.name}`).join(", ");
+		return `- "${s.name}" tools (${names}): Use these together as a group.`;
+	});
+	return `\nYou have access to external tool servers:\n${groups.join("\n")}\nPrefer prefixed tools over general-purpose tools for that resource.`;
+};
 
 // LSP
 const lspConfig = loadLspConfig(projectRoot);
@@ -141,14 +158,37 @@ When you don't know something, say so.
 Never output raw protocol tokens like <tool_response>, <tool_call>, or similar markup in your responses.`;
 
 const buildPrompt = (): string =>
-	[projectPrompt, activeSkill?.body, BASE_PROMPT].filter(Boolean).join("\n\n");
+	[projectPrompt, activeSkill?.body, BASE_PROMPT].filter(Boolean).join("\n\n") + buildMcpHint();
+
+const agentHooks = activeAgentDef?.hooks ?? {};
+const hookCtx = { session_id: Date.now().toString(), cwd: projectRoot };
 
 const agent = createAgentLoop(engine, registry, {
 	maxRounds: config.maxRounds ?? 25,
 	projectRoot,
 	systemPrompt: buildPrompt(),
+	streamOpts: { contextSize: config.contextSize },
+	onBeforeToolUse: async (toolName, args) =>
+		runHooks(agentHooks.preToolUse ?? [], {
+			...hookCtx,
+			hook_event_name: "preToolUse",
+			tool_name: toolName,
+			tool_args: args,
+		}),
+	onAfterToolUse: (toolName, args, result) => {
+		runHooks(agentHooks.postToolUse ?? [], {
+			...hookCtx,
+			hook_event_name: "postToolUse",
+			tool_name: toolName,
+			tool_args: args,
+			tool_result: result.substring(0, 500),
+		});
+	},
 	...(diagnosticInjector ? { transformToolResult: diagnosticInjector } : {}),
 });
+
+// Fire sessionStart hooks
+runHooks(agentHooks.sessionStart ?? [], { ...hookCtx, hook_event_name: "sessionStart" });
 
 let sessionId: string | undefined;
 if (flagResume) {
@@ -216,9 +256,20 @@ function App() {
 	const [busy, setBusy] = useState(false);
 	const [pendingTool, setPendingTool] = useState<string | null>(null);
 	const nextId = useRef(0);
+	const history = useRef<string[]>([]);
+	const histIdx = useRef(-1);
+	const lastModels = useRef<string[]>([]);
 
 	useInput((_input, key) => {
 		if (key.ctrl && _input === "c") process.exit(0);
+		if (key.upArrow && history.current.length > 0) {
+			histIdx.current = Math.min(histIdx.current + 1, history.current.length - 1);
+			setInput(history.current[histIdx.current] ?? "");
+		}
+		if (key.downArrow) {
+			histIdx.current = Math.max(histIdx.current - 1, -1);
+			setInput(histIdx.current < 0 ? "" : (history.current[histIdx.current] ?? ""));
+		}
 	});
 
 	const addMsg = (text: string, dim = false) => {
@@ -231,9 +282,10 @@ function App() {
 			promptTokens: tokens,
 			totalTokens: tokens,
 		});
+		runHooks(agentHooks.stop ?? [], { ...hookCtx, hook_event_name: "stop" });
 	};
 
-	const processEvents = async (events: AsyncGenerator<AgentEvent>) => {
+	const processEvents = async (events: AsyncGenerator<AgentEvent>): Promise<number> => {
 		let response = "";
 		for await (const event of events) {
 			switch (event.kind) {
@@ -248,7 +300,7 @@ function App() {
 						setStreaming("");
 						response = "";
 					}
-					return;
+					return response.length;
 				case "tool_result":
 					addMsg(`  ↳ ${event.name}: ${truncate(event.result)}`, true);
 					break;
@@ -261,6 +313,7 @@ function App() {
 		}
 		if (response) addMsg(`anvil: ${response}`);
 		setStreaming("");
+		return response.length;
 	};
 
 	const simpleCommands: Record<string, () => void> = {
@@ -295,15 +348,49 @@ function App() {
 			cmdAgent(cmd.slice(6).trim());
 			return true;
 		}
+		// Skill as slash command: /code-review activates skill "code-review"
+		const skillMatch = availableSkills.find((s) => s.name === cmd.slice(1));
+		if (skillMatch) {
+			activeSkill = skillMatch;
+			addMsg(`[skill → ${skillMatch.name}]`, true);
+			return true;
+		}
 		return false;
 	};
 
 	const cmdModel = (arg: string): true => {
-		if (arg) {
-			engine.setModel(arg);
-			addMsg(`[model → ${arg}]`, true);
+		if (arg.startsWith("set ")) {
+			const model = arg.slice(4).trim();
+			engine.setModel(model);
+			const cfgPath = join(home, ".anvil", "config.yaml");
+			const raw = readFileSync(cfgPath, "utf-8");
+			writeFileSync(cfgPath, raw.replace(/^default_model:.*/m, `default_model: ${model}`));
+			addMsg(`[default model → ${model}]`, true);
+		} else if (arg) {
+			// Check if it's a number selecting from last listed models
+			const n = Number.parseInt(arg, 10);
+			const picked =
+				n > 0 && lastModels.current.length >= n ? lastModels.current[n - 1] : undefined;
+			const model = picked ?? arg;
+			engine.setModel(model);
+			addMsg(`[model → ${model}]`, true);
 		} else {
 			addMsg(`[model: ${engine.model()}]`, true);
+			fetch(`${ollamaBase}/api/tags`)
+				.then((r) => r.json())
+				.then((data: { models?: { name: string }[] }) => {
+					const models = data.models ?? [];
+					if (models.length === 0) {
+						addMsg("[no models found]", true);
+						return;
+					}
+					lastModels.current = models.map((m) => m.name);
+					for (const [i, m] of models.entries()) {
+						const marker = m.name === engine.model() ? " ●" : "";
+						addMsg(`  ${i + 1}. ${m.name}${marker}`, true);
+					}
+				})
+				.catch(() => addMsg("[failed to list models]", true));
 		}
 		return true;
 	};
@@ -417,8 +504,18 @@ function App() {
 
 	const sendMessage = async (value: string) => {
 		addMsg(`you: ${value}`);
+		// @path hint display
+		const refs = value.match(/(^|[\s])@([\w./-]+)/g);
+		if (refs) {
+			const paths = refs.map((r) => r.trim().slice(1));
+			addMsg(`  [attached: ${paths.join(", ")}]`, true);
+		}
 		setBusy(true);
-		await processEvents(agent.send(expandFileRefs(value)));
+		let len = await processEvents(agent.send(expandFileRefs(value)));
+		if (len === 0 && !pendingTool) {
+			addMsg("  [empty response, retrying…]", true);
+			len = await processEvents(agent.send("Please try again."));
+		}
 		if (!pendingTool) {
 			setBusy(false);
 			save();
@@ -433,6 +530,8 @@ function App() {
 		}
 		if (busy) return;
 		setInput("");
+		history.current = [value, ...history.current.slice(0, 99)];
+		histIdx.current = -1;
 		const cmd = value.trim();
 		if (cmd.startsWith("/plan")) {
 			await handlePlan(cmd.slice(5).trim());
@@ -490,5 +589,24 @@ function App() {
 	);
 }
 
-await mcpReady;
-render(<App />);
+function Loading() {
+	return (
+		<Box paddingX={1}>
+			<Text color="yellow">
+				<Spinner type="dots" />
+			</Text>
+			<Text> connecting…</Text>
+		</Box>
+	);
+}
+
+function Root() {
+	const [ready, setReady] = useState(false);
+	if (!ready) {
+		mcpReady.then(() => setReady(true));
+		return <Loading />;
+	}
+	return <App />;
+}
+
+render(<Root />);
