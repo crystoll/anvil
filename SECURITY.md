@@ -6,10 +6,20 @@ Run `pnpm audit` periodically. CI runs `pnpm audit --audit-level=critical --prod
 
 ### Known Accepted Vulnerabilities
 
-| Package                       | Severity      | Why Accepted                                                                                         | Upgrade Path                                                                                              |
-| ----------------------------- | ------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| js-yaml 4.1.1                 | moderate      | Prototype pollution via `<<` merge key. We only parse trusted config files (`~/.anvil/config.yaml`). | Upgrade to js-yaml 5.x requires code changes — `load()` return type changed. Track in a separate PR.      |
-| vite/esbuild (via vitest 2.x) | moderate–high | Dev-only — not shipped in binary. Only affects local dev environment.                                | Upgrade to vitest 4.x — breaking changes in test infrastructure (temp dirs, mocking). Separate migration. |
+None currently. All prod dependencies are clean.
+
+Dev-only vulnerabilities (not shipped in binary) may appear in transitive deps of vitest/vite — these are acceptable as they only affect the local dev environment.
+
+### Upgrade Notes
+
+| Package     | Notes                                                                           |
+| ----------- | ------------------------------------------------------------------------------- |
+| js-yaml     | v5 dropped the default export. Use `import { load } from "js-yaml"`.            |
+| vitest      | v4 requires vite 6+ (needs `vite/module-runner`). Add vite as explicit dev dep. |
+| @types/node | Pin to 22.x to match our Node target (engines field).                           |
+| biome       | v2 changes config format + new rules. Separate migration.                       |
+| oxlint      | v1 adds new rules. Separate migration.                                          |
+| typescript  | v6 — no urgency, 5.7 works fine.                                                |
 
 ### Last Reviewed
 

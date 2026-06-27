@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import yaml from "js-yaml";
+import { load as yamlLoad } from "js-yaml";
 import type { Result } from "neverthrow";
 import { err, ok } from "neverthrow";
 import { type Registry, type Tool, createRegistry } from "../tools/registry.js";
@@ -44,7 +44,7 @@ export const loadAgentConfig = (filePath: string): Result<AgentDef, string> => {
 
 	let parsed: unknown;
 	try {
-		parsed = yaml.load(raw);
+		parsed = yamlLoad(raw);
 	} catch {
 		return err(`Invalid YAML in ${filePath}`);
 	}

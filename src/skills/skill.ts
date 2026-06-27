@@ -1,4 +1,4 @@
-import yaml from "js-yaml";
+import { load as yamlLoad } from "js-yaml";
 import { type Result, err, ok } from "neverthrow";
 
 /** A parsed skill definition. */
@@ -15,7 +15,7 @@ export const parseSkill = (content: string): Result<Skill, string> => {
 
 	let meta: Record<string, unknown>;
 	try {
-		meta = yaml.load(parts.frontmatter) as Record<string, unknown>;
+		meta = yamlLoad(parts.frontmatter) as Record<string, unknown>;
 	} catch {
 		return err("Invalid YAML in frontmatter");
 	}

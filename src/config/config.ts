@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import yaml from "js-yaml";
+import { load as yamlLoad } from "js-yaml";
 import { type Result, err, ok } from "neverthrow";
 
 /** Provider entry in config. */
@@ -67,7 +67,7 @@ const parseConfigFile = (path: string): Result<AnvilConfig, ConfigError> => {
 
 	let parsed: unknown;
 	try {
-		parsed = yaml.load(raw);
+		parsed = yamlLoad(raw);
 	} catch (e) {
 		return err({
 			kind: "parse",
