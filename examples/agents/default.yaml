@@ -1,0 +1,36 @@
+# .anvil/agents/default.yaml — Standard agent with guardrails
+name: default
+description: Standard coding agent with safety guardrails
+
+tools:
+  - "*"
+
+# Tools that auto-execute without approval
+allowedTools:
+  - list_dir
+  - glob
+  - search
+  - read_file
+  - git_status
+  - git_diff
+  - git_log
+  - project_context
+  - web_search
+  - web_fetch
+
+toolSettings:
+  read_file:
+    deniedPaths: ["~/.ssh/**", "~/.aws/**", "**/.env*"]
+  write_file:
+    allowedPaths: ["./**"]
+    deniedPaths: ["~/.ssh/**", "/etc/**"]
+  run_cmd:
+    deniedCommands: ["rm -rf.*", "sudo.*", "git (push|merge|reset).*"]
+
+hooks:
+  sessionStart:
+    - command: "echo 'session started'"
+      async: true
+  stop:
+    - command: "echo 'turn complete'"
+      async: true

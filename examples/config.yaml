@@ -1,0 +1,23 @@
+# ~/.anvil/config.yaml — Anvil configuration
+# Created automatically on first run. Edit to customize.
+
+default_provider: ollama
+default_model: gemma4:e4b
+
+providers:
+  ollama:
+    endpoint: http://localhost:11434/v1
+  # lmstudio:
+  #   endpoint: http://localhost:1234/v1
+  # llamacpp:
+  #   endpoint: http://localhost:8080/v1
+
+# Token usage display (per-turn after each response)
+show_tokens: true
+
+# Timeouts (seconds)
+stream_timeout: 30
+connect_timeout: 30
+
+# Agent loop max iterations per turn
+max_rounds: 25

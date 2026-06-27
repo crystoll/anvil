@@ -1,0 +1,51 @@
+{
+	"name": "anvil",
+	"version": "0.1.0",
+	"description": "Multi-pane terminal interface for local-first AI development workflows",
+	"license": "MIT",
+	"author": "crystoll",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/crystoll/anvil"
+	},
+	"keywords": ["ai", "cli", "local-first", "ollama", "agent", "tools"],
+	"files": ["dist"],
+	"type": "module",
+	"bin": {
+		"anvil": "./dist/cli.js"
+	},
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"dev": "tsx src/cli.ts",
+		"build": "tsup",
+		"prepare": "tsup",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"lint": "biome check . && oxlint",
+		"format": "biome format --write . && dprint fmt",
+		"format:md": "dprint fmt",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@mozilla/readability": "0.5.0",
+		"js-yaml": "4.1.0",
+		"linkedom": "0.18.9",
+		"neverthrow": "8.2.0",
+		"remeda": "2.21.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "1.9.4",
+		"@types/js-yaml": "4.0.9",
+		"@types/node": "22.10.0",
+		"dprint": "0.47.5",
+		"msw": "2.7.0",
+		"oxlint": "0.12.0",
+		"tsup": "8.3.5",
+		"tsx": "4.19.2",
+		"typescript": "5.7.2",
+		"vitest": "2.1.8"
+	}
+}

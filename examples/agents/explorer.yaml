@@ -1,0 +1,28 @@
+# .anvil/agents/explorer.yaml — Read-only agent for exploration
+name: explorer
+description: Read-only agent that cannot modify files or run commands
+
+tools:
+  - list_dir
+  - glob
+  - search
+  - read_file
+  - git_status
+  - git_diff
+  - git_log
+  - project_context
+  - web_search
+  - web_fetch
+
+# All tools auto-execute (they're all read-only)
+allowedTools:
+  - list_dir
+  - glob
+  - search
+  - read_file
+  - git_status
+  - git_diff
+  - git_log
+  - project_context
+  - web_search
+  - web_fetch

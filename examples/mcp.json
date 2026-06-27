@@ -1,0 +1,13 @@
+{
+	"mcpServers": {
+		"obsidian": {
+			"command": "npx",
+			"args": ["@bitbonsai/mcpvault@latest", "/path/to/your/vault"],
+			"autoApprove": ["search_notes", "read_note", "get_vault_stats", "list_all_tags"]
+		},
+		"playwright": {
+			"command": "npx",
+			"args": ["-y", "@playwright/mcp@latest"]
+		}
+	}
+}
