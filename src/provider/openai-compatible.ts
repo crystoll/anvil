@@ -244,28 +244,29 @@ const parseToolCallDelta = (delta: Record<string, unknown>): StreamChunk["toolCa
 	return result;
 };
 
+const parseUsage = (data: Record<string, unknown>): StreamChunk | undefined => {
+	const u = data.usage as { prompt_tokens?: number; total_tokens?: number } | undefined;
+	if (!u) return undefined;
+	return {
+		done: true,
+		usage: { promptTokens: u.prompt_tokens ?? 0, totalTokens: u.total_tokens ?? 0 },
+	};
+};
+
 const parseChunkJSON = (json: string): StreamChunk | undefined => {
 	try {
 		const data = JSON.parse(json);
 		const choice = data.choices?.[0];
 
-		if (!choice && data.usage) {
-			return {
-				done: true,
-				usage: {
-					promptTokens: data.usage.prompt_tokens ?? 0,
-					totalTokens: data.usage.total_tokens ?? 0,
-				},
-			};
-		}
-		if (!choice) return undefined;
+		if (!choice) return parseUsage(data);
 
 		const delta = choice.delta ?? {};
 		const chunk: StreamChunk = { done: choice.finish_reason != null };
 		if (choice.finish_reason) chunk.finishReason = choice.finish_reason;
 
 		if (delta.content) chunk.content = delta.content;
-		if (delta.reasoning_content) chunk.reasoning = delta.reasoning_content;
+		if (delta.reasoning_content || delta.reasoning)
+			chunk.reasoning = delta.reasoning_content ?? delta.reasoning;
 
 		const toolCall = parseToolCallDelta(delta);
 		if (toolCall) chunk.toolCall = toolCall;

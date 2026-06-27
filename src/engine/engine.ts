@@ -24,6 +24,7 @@ export type Engine = {
 	state: () => EngineState;
 	setSystem: (content: string) => void;
 	setModel: (m: string) => void;
+	setProvider: (p: Provider) => void;
 	addUser: (content: string) => void;
 	addToolResult: (toolCallId: string, content: string) => void;
 	loadMessages: (msgs: Message[]) => void;
@@ -80,11 +81,12 @@ const finalizeMessage = (acc: Accumulator): Message => {
 };
 
 /** Create a chat engine bound to a specific provider and model. */
-export const createEngine = (provider: Provider, initialModel: string): Engine => {
+export const createEngine = (initialProvider: Provider, initialModel: string): Engine => {
 	const history: Message[] = [];
 	let currentState: EngineState = "idle";
 	let abortController: AbortController | null = null;
 	let model = initialModel;
+	let provider = initialProvider;
 
 	const setSystem = (content: string) => {
 		const idx = history.findIndex((m) => m.role === "system");
@@ -174,6 +176,9 @@ export const createEngine = (provider: Provider, initialModel: string): Engine =
 		setSystem,
 		setModel: (m: string) => {
 			model = m;
+		},
+		setProvider: (p: Provider) => {
+			provider = p;
 		},
 		addUser,
 		addToolResult,

@@ -7,7 +7,7 @@ import TextInput from "ink-text-input";
 import { useRef, useState } from "react";
 import { type AgentEvent, createAgentLoop } from "../agent/index.js";
 import { type AgentDef, applyAgentToRegistry, discoverAgents, runHooks } from "../agents/index.js";
-import { loadConfig } from "../config/config.js";
+import { loadConfig, type ProviderEntry } from "../config/config.js";
 import { createEngine } from "../engine/index.js";
 import { VERSION } from "../index.js";
 import {
@@ -72,14 +72,28 @@ if (!providerEntry) {
 	process.exit(1);
 }
 
-const provider = createProvider(config.defaultProvider, {
-	endpoint: providerEntry.endpoint,
-	...(providerEntry.apiKey ? { apiKey: providerEntry.apiKey } : {}),
-	streamTimeout: config.streamTimeout,
-	connectTimeout: config.connectTimeout,
-});
-const ollamaBase = providerEntry.endpoint.replace(/\/v1\/?$/, "");
-const engine = createEngine(provider, flagModel ?? config.defaultModel);
+const makeProvider = (name: string, entry: ProviderEntry) =>
+	createProvider(name, {
+		endpoint: entry.endpoint,
+		...(entry.apiKey ? { apiKey: entry.apiKey } : {}),
+		streamTimeout: config.streamTimeout,
+		connectTimeout: config.connectTimeout,
+	});
+
+// Resolve fully-qualified default_model (e.g., "litellm/ollama/gemma4:e4b")
+const resolvedModel = flagModel ?? config.defaultModel;
+const fqSlash = resolvedModel.indexOf("/");
+const bootProvider =
+	fqSlash > 0 && config.providers[resolvedModel.slice(0, fqSlash)]
+		? resolvedModel.slice(0, fqSlash)
+		: config.defaultProvider;
+const bootModel =
+	bootProvider !== config.defaultProvider ? resolvedModel.slice(fqSlash + 1) : resolvedModel;
+const bootEntry = config.providers[bootProvider] ?? providerEntry;
+
+const provider = makeProvider(bootProvider, bootEntry);
+let activeProviderName = bootProvider;
+const engine = createEngine(provider, bootModel);
 const registry = createRegistry();
 for (const tool of builtinTools) registry.register(tool);
 
@@ -123,6 +137,14 @@ const mcpInit = async () => {
 	}
 };
 const mcpReady = mcpInit();
+
+// Validate provider is reachable
+const providerCheck = fetch(`${bootEntry.endpoint}/models`, {
+	signal: AbortSignal.timeout(5000),
+	headers: bootEntry.apiKey ? { Authorization: `Bearer ${bootEntry.apiKey}` } : {},
+})
+	.then((r) => (r.ok ? undefined : `${bootProvider}: HTTP ${r.status}`))
+	.catch(() => `${bootProvider}: unreachable (is it running?)`);
 
 const buildMcpHint = (): string => {
 	if (mcpServers.length === 0) return "";
@@ -227,10 +249,21 @@ const expandFileRefs = (input: string): string =>
 		}
 	});
 
-function StatusBar({ model, tokens, busy }: { model: string; tokens: number; busy: boolean }) {
+function StatusBar({
+	provider,
+	model,
+	tokens,
+	busy,
+}: {
+	provider: string;
+	model: string;
+	tokens: number;
+	busy: boolean;
+}) {
+	const label = `${provider}/${model}`;
 	return (
 		<Box borderStyle="single" borderColor="gray" paddingX={1}>
-			<Text color="cyan">{model}</Text>
+			<Text color="cyan">{label}</Text>
 			<Text> │ </Text>
 			<Text dimColor>
 				{busy ? "~" : ""}
@@ -248,20 +281,31 @@ function StatusBar({ model, tokens, busy }: { model: string; tokens: number; bus
 	);
 }
 
-function App() {
-	const [messages, setMessages] = useState<Msg[]>([]);
+function App({ providerWarning }: { providerWarning: string | undefined }) {
+	const initMsgs: Msg[] = providerWarning
+		? [{ id: 0, text: `⚠ ${providerWarning} — use /model to switch`, dim: true }]
+		: [];
+	const [messages, setMessages] = useState<Msg[]>(initMsgs);
 	const [input, setInput] = useState("");
 	const [tokens, setTokens] = useState(0);
 	const [streaming, setStreaming] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [pendingTool, setPendingTool] = useState<string | null>(null);
-	const nextId = useRef(0);
+	const nextId = useRef(providerWarning ? 1 : 0);
 	const history = useRef<string[]>([]);
 	const histIdx = useRef(-1);
-	const lastModels = useRef<string[]>([]);
 
 	useInput((_input, key) => {
-		if (key.ctrl && _input === "c") process.exit(0);
+		if (key.ctrl && _input === "c") {
+			if (busy) {
+				engine.cancel();
+				setBusy(false);
+				setStreaming("");
+				addMsg("  [cancelled]", true);
+			} else {
+				process.exit(0);
+			}
+		}
 		if (key.upArrow && history.current.length > 0) {
 			histIdx.current = Math.min(histIdx.current + 1, history.current.length - 1);
 			setInput(history.current[histIdx.current] ?? "");
@@ -293,6 +337,9 @@ function App() {
 					response += event.text;
 					setStreaming(`anvil: ${response}`);
 					break;
+				case "reasoning":
+					setStreaming(`anvil: [thinking…]`);
+					break;
 				case "pending":
 					setPendingTool(`${event.call.tool.name}(${JSON.stringify(event.call.args)})`);
 					if (response) {
@@ -307,6 +354,9 @@ function App() {
 				case "usage":
 					setTokens((t) => t + event.totalTokens);
 					break;
+				case "error":
+					addMsg(`  ⚠ ${event.message}`, true);
+					return -1;
 				default:
 					break;
 			}
@@ -358,39 +408,82 @@ function App() {
 		return false;
 	};
 
+	const switchProvider = (name: string, model: string) => {
+		const entry = config.providers[name];
+		if (!entry) {
+			addMsg(`[unknown provider: ${name}]`, true);
+			return;
+		}
+		const p = makeProvider(name, entry);
+		engine.setProvider(p);
+		engine.setModel(model);
+		activeProviderName = name;
+		addMsg(`[model → ${name}/${model}]`, true);
+	};
+
+	const listModels = (providerName: string) => {
+		const entry = config.providers[providerName];
+		if (!entry) {
+			addMsg(`[unknown provider: ${providerName}]`, true);
+			return;
+		}
+		const current = `${activeProviderName}/${engine.model()}`;
+		addMsg(`[provider: ${providerName} | active: ${current}]`, true);
+		fetch(`${entry.endpoint}/models`, {
+			headers: entry.apiKey ? { Authorization: `Bearer ${entry.apiKey}` } : {},
+		})
+			.then((r) => r.json())
+			.then((data: { data?: { id: string }[] }) => {
+				const models = (data.data ?? []).map((m) => m.id);
+				if (models.length === 0) {
+					addMsg("[no models found]", true);
+					return;
+				}
+				for (const name of models) {
+					const fq = `${providerName}/${name}`;
+					const marker = fq === current ? " ●" : "";
+					addMsg(`  ${fq}${marker}`, true);
+				}
+			})
+			.catch(() => addMsg("[failed to list models]", true));
+	};
+
+	const listAllModels = () => {
+		const providers = Object.keys(config.providers);
+		if (providers.length > 1) {
+			for (const p of providers) listModels(p);
+		} else {
+			listModels(activeProviderName);
+		}
+	};
+
 	const cmdModel = (arg: string): true => {
 		if (arg.startsWith("set ")) {
-			const model = arg.slice(4).trim();
-			engine.setModel(model);
+			const fq = arg.slice(4).trim();
+			const slashIdx = fq.indexOf("/");
+			if (slashIdx > 0) {
+				const prov = fq.slice(0, slashIdx);
+				const model = fq.slice(slashIdx + 1);
+				switchProvider(prov, model);
+			} else {
+				engine.setModel(fq);
+			}
 			const cfgPath = join(home, ".anvil", "config.yaml");
 			const raw = readFileSync(cfgPath, "utf-8");
-			writeFileSync(cfgPath, raw.replace(/^default_model:.*/m, `default_model: ${model}`));
-			addMsg(`[default model → ${model}]`, true);
+			writeFileSync(cfgPath, raw.replace(/^default_model:.*/m, `default_model: ${fq}`));
+			addMsg(`[default → ${fq}]`, true);
+		} else if (arg.startsWith("@")) {
+			listModels(arg.slice(1));
+		} else if (arg.includes("/")) {
+			// Fully-qualified: provider/model
+			const slashIdx = arg.indexOf("/");
+			switchProvider(arg.slice(0, slashIdx), arg.slice(slashIdx + 1));
 		} else if (arg) {
-			// Check if it's a number selecting from last listed models
-			const n = Number.parseInt(arg, 10);
-			const picked =
-				n > 0 && lastModels.current.length >= n ? lastModels.current[n - 1] : undefined;
-			const model = picked ?? arg;
-			engine.setModel(model);
-			addMsg(`[model → ${model}]`, true);
+			// Bare name — switch within current provider
+			engine.setModel(arg);
+			addMsg(`[model → ${activeProviderName}/${arg}]`, true);
 		} else {
-			addMsg(`[model: ${engine.model()}]`, true);
-			fetch(`${ollamaBase}/api/tags`)
-				.then((r) => r.json())
-				.then((data: { models?: { name: string }[] }) => {
-					const models = data.models ?? [];
-					if (models.length === 0) {
-						addMsg("[no models found]", true);
-						return;
-					}
-					lastModels.current = models.map((m) => m.name);
-					for (const [i, m] of models.entries()) {
-						const marker = m.name === engine.model() ? " ●" : "";
-						addMsg(`  ${i + 1}. ${m.name}${marker}`, true);
-					}
-				})
-				.catch(() => addMsg("[failed to list models]", true));
+			listAllModels();
 		}
 		return true;
 	};
@@ -567,7 +660,7 @@ function App() {
 				))}
 				{streaming && <Text color="gray">{streaming}</Text>}
 			</Box>
-			<StatusBar model={engine.model()} tokens={tokens} busy={busy} />
+			<StatusBar provider={activeProviderName} model={engine.model()} tokens={tokens} busy={busy} />
 			<Box paddingX={1}>
 				{pendingTool ? (
 					<>
@@ -602,11 +695,15 @@ function Loading() {
 
 function Root() {
 	const [ready, setReady] = useState(false);
+	const [warning, setWarning] = useState<string | undefined>();
 	if (!ready) {
-		mcpReady.then(() => setReady(true));
+		Promise.all([mcpReady, providerCheck]).then(([, err]) => {
+			if (err) setWarning(err);
+			setReady(true);
+		});
 		return <Loading />;
 	}
-	return <App />;
+	return <App providerWarning={warning} />;
 }
 
 render(<Root />);

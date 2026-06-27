@@ -65,6 +65,7 @@ Here are the top results: ...
 | `/usage`            | Show session token usage               |
 | `/context`          | Show context window + tool token usage |
 | `/model <name>`     | Switch model (no arg = list available) |
+| `/model @provider`  | List models from another provider      |
 | `/model set <name>` | Set default model (persists to config) |
 | `/skill <name>`     | Activate a skill (no arg = list all)   |
 | `/agent`            | List available agents                  |
@@ -139,7 +140,12 @@ max_rounds: 25
 providers:
   ollama:
     endpoint: http://localhost:11434/v1
+  litellm:                           # optional — any OpenAI-compatible gateway
+    endpoint: http://localhost:4000/v1
+    api_key: ${LITELLM_API_KEY}      # resolved from environment
 ```
+
+Switch providers at runtime: `/model litellm/claude-sonnet-4-20250514` or list with `/model @litellm`. See [docs/multi-provider.md](docs/multi-provider.md) for setup.
 
 ## Project Prompt
 

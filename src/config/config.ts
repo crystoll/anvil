@@ -119,13 +119,17 @@ const parseProviders = (raw: unknown): Result<Record<string, ProviderEntry>, Con
 		const endpoint = entry?.endpoint;
 		if (typeof endpoint !== "string") continue;
 
-		const provider: ProviderEntry = { endpoint };
+		const provider: ProviderEntry = { endpoint: resolveEnvVar(endpoint) };
 		const apiKey = entry?.api_key;
-		if (typeof apiKey === "string" && apiKey) provider.apiKey = apiKey;
+		if (typeof apiKey === "string" && apiKey) provider.apiKey = resolveEnvVar(apiKey);
 		result[name] = provider;
 	}
 	return ok(result);
 };
+
+/** Resolve ${ENV_VAR} patterns from process.env. */
+const resolveEnvVar = (value: string): string =>
+	value.replace(/\$\{([^}]+)\}/g, (_, name) => process.env[name] ?? "");
 
 const toNumber = (value: unknown, fallback: number): number => {
 	if (typeof value === "number") return value;

@@ -244,9 +244,35 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	/** Check if round ended without tool call. */
+	/** Attempt to recover a tool call from content (LiteLLM streaming quirk). */
+	const tryRecoverToolCall = (): boolean => {
+		const msgs = engine.messages();
+		const last = msgs[msgs.length - 1];
+		if (!last || last.toolCalls?.length || !last.content) return false;
+		const text = last.content.trim();
+		// Match JSON like {"name":"tool","arguments":{...}} or {"name":"tool","parameters":{...}}
+		try {
+			const parsed = JSON.parse(text);
+			if (typeof parsed.name !== "string") return false;
+			const args = parsed.arguments ?? parsed.parameters ?? {};
+			const call = {
+				id: `recovered-${Date.now()}`,
+				name: parsed.name,
+				arguments: JSON.stringify(args),
+			};
+			// Rewrite the last message to have toolCalls instead of content
+			(last as { toolCalls?: unknown[] }).toolCalls = [call];
+			(last as { content?: string }).content = "";
+			return true;
+		} catch {
+			return false;
+		}
+	};
+
 	const checkIdle = (nudged: boolean): "nudge" | "idle" | undefined => {
 		const lastMessage = engine.messages()[engine.messages().length - 1];
 		if (lastMessage?.toolCalls?.[0]) return undefined;
+		if (tryRecoverToolCall()) return undefined;
 		if (!nudged && tryNudge(lastMessage)) return "nudge";
 		return "idle";
 	};

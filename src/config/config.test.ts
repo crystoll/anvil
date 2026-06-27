@@ -106,4 +106,25 @@ providers:
 		const config = result._unsafeUnwrap();
 		expect(config.providers.litellm?.apiKey).toBe("sk-secret-123");
 	});
+
+	it("resolves env var placeholders in api_key", () => {
+		process.env.TEST_ANVIL_KEY = "resolved-key-456";
+		writeFileSync(
+			CONFIG_PATH,
+			`default_provider: litellm
+default_model: claude-3
+providers:
+  litellm:
+    endpoint: https://my-proxy.com/v1
+    api_key: \${TEST_ANVIL_KEY}
+`,
+		);
+
+		const result = loadConfig(CONFIG_PATH);
+
+		expect(result.isOk()).toBe(true);
+		const config = result._unsafeUnwrap();
+		expect(config.providers.litellm?.apiKey).toBe("resolved-key-456");
+		delete process.env.TEST_ANVIL_KEY;
+	});
 });

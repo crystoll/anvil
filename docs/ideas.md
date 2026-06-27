@@ -4,25 +4,7 @@ All items are potential work — not confirmed. Prioritized by value and effort.
 
 ## Priority 1 — Daily UX Improvements
 
-### LiteLLM / remote model support
-
-Support invoking models via LiteLLM proxy or any remote OpenAI-compatible gateway with API key auth.
-
-- **Approach**: Already works at provider level (OpenAI-compatible API), but needs:
-  - Multiple providers in config (not just one default)
-  - API key management (per-provider `apiKey` field, env var fallback)
-  - `/model` listing that queries the remote provider's model list endpoint
-  - Seamless switching between local (Ollama) and remote (LiteLLM, OpenRouter, etc.) models
-- **Config example**:
-  ```yaml
-  providers:
-    ollama:
-      endpoint: http://localhost:11434/v1
-    litellm:
-      endpoint: https://my-proxy.example.com/v1
-      apiKey: ${LITELLM_API_KEY}
-  ```
-- **Scope**: Config schema extension, provider switching in `/model`, env var interpolation for keys. Medium effort.
+(All Priority 1 items are implemented. See docs/multi-provider.md for the latest feature.)
 
 ## Priority 2 — Code Quality
 
