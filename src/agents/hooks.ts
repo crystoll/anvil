@@ -57,6 +57,7 @@ const executeHook = (
 		child.stdout.on("data", (d: Buffer) => {
 			stdout += d.toString();
 		});
+		child.stdin.on("error", () => {});
 		child.stdin.write(JSON.stringify(context));
 		child.stdin.end();
 
