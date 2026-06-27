@@ -59,19 +59,22 @@ Here are the top results: ...
 
 | Command             | Description                            |
 | ------------------- | -------------------------------------- |
-| `/quit`             | Exit                                   |
+| `/quit`, `/exit`    | Exit                                   |
 | `/new`              | Start fresh session                    |
 | `/history`          | Browse and load past sessions          |
 | `/usage`            | Show session token usage               |
-| `/context`          | Show context window usage              |
+| `/context`          | Show context window + tool token usage |
 | `/model <name>`     | Switch model (no arg = list available) |
 | `/model set <name>` | Set default model (persists to config) |
 | `/skill <name>`     | Activate a skill (no arg = list all)   |
 | `/agent`            | List available agents                  |
+| `/rewind N`         | Rewind conversation to turn N          |
+| `/transcript`       | Export session as markdown             |
 
 ## CLI Flags
 
 ```bash
+pnpm dev -- --version               # Show version and exit
 pnpm dev -- ~/code/myproject        # Open a specific project directory
 pnpm dev -- --model qwen3.6:27b    # Override model
 pnpm dev -- --skill code-review     # Start with a skill active

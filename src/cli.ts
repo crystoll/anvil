@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { stdin, stdout } from "node:process";
@@ -8,6 +8,7 @@ import type { AgentEvent } from "./agent/loop.js";
 import { type AgentDef, applyAgentToRegistry, discoverAgents, runHooks } from "./agents/index.js";
 import { loadConfig } from "./config/index.js";
 import { createEngine } from "./engine/index.js";
+import { VERSION } from "./index.js";
 import {
 	createDiagnosticInjector,
 	createLspDefinitionTool,
@@ -80,6 +81,10 @@ const buildMcpPromptHint = (servers: ConnectedServer[]): string | undefined => {
 
 const parseArgs = () => {
 	const args = process.argv.slice(2);
+	if (args.includes("--version")) {
+		console.log(VERSION);
+		process.exit(0);
+	}
 	const modelIdx = args.indexOf("--model");
 	const model = modelIdx >= 0 ? args[modelIdx + 1] : undefined;
 	const skillIdx = args.indexOf("--skill");
@@ -241,7 +246,7 @@ const runOneShot = async (
 		}
 	};
 
-	await processEvents(agent.send(command));
+	await processEvents(agent.send(expandFileRefs(command, projectRoot)));
 	flushUsage();
 	stdout.write("\n");
 	await Promise.all(mcpServers.map(disconnectServer));
@@ -339,6 +344,7 @@ const main = async () => {
 			provider,
 			contextSize: config.contextSize,
 			toolCount: registry.all().length,
+			toolTokens: Math.round(JSON.stringify(registry.schemas()).length / 4),
 			fireStopHooks: async () => {
 				await runHooks(agentHooks.stop ?? [], { ...hookCtxBase, hook_event_name: "stop" });
 			},
@@ -365,6 +371,7 @@ type CliContext = {
 	provider: Provider;
 	contextSize: number;
 	toolCount: number;
+	toolTokens: number;
 	fireStopHooks: () => Promise<void>;
 };
 
@@ -563,27 +570,34 @@ const sessionPreview = (id: string): string => {
 };
 
 /** Returns true if input was a command (handled), false if it's a message to send. */
+const showUsage = (): void => {
+	const completion = sessionTokens.total - sessionTokens.prompt;
+	console.log(
+		`Session: ${sessionTokens.total} tokens (${sessionTokens.prompt} prompt, ${completion} completion)\n`,
+	);
+};
+
+const showContext = (ctx: CliContext): void => {
+	const lastPrompt = sessionTokens.prompt > 0 ? sessionTokens.prompt : 0;
+	const pct = lastPrompt > 0 ? Math.round((lastPrompt / ctx.contextSize) * 100) : 0;
+	console.log(`Context window: ${ctx.contextSize.toLocaleString()} tokens`);
+	console.log(`Last prompt:    ${lastPrompt.toLocaleString()} tokens (${pct}% used)`);
+	console.log(`Tools loaded:   ${ctx.toolCount} (~${ctx.toolTokens.toLocaleString()} tokens)\n`);
+};
+
 const handleCommand = async (
 	trimmed: string,
 	rl: ReturnType<typeof createInterface>,
 	ctx: CliContext,
 	setId: (id: string | undefined) => void,
 ): Promise<"handled" | "quit" | "message"> => {
-	if (trimmed === "/quit") return "quit";
+	if (trimmed === "/quit" || trimmed === "/exit") return "quit";
 	if (trimmed === "/usage") {
-		const completion = sessionTokens.total - sessionTokens.prompt;
-		console.log(
-			`Session: ${sessionTokens.total} tokens (${sessionTokens.prompt} prompt, ${completion} completion)\n`,
-		);
+		showUsage();
 		return "handled";
 	}
 	if (trimmed === "/context") {
-		const lastPrompt = sessionTokens.prompt > 0 ? sessionTokens.prompt : 0;
-		const ctxSize = ctx.contextSize;
-		const pct = lastPrompt > 0 ? Math.round((lastPrompt / ctxSize) * 100) : 0;
-		console.log(`Context window: ${ctxSize.toLocaleString()} tokens`);
-		console.log(`Last prompt:    ${lastPrompt.toLocaleString()} tokens (${pct}% used)`);
-		console.log(`Tools loaded:   ${ctx.toolCount}\n`);
+		showContext(ctx);
 		return "handled";
 	}
 	if (trimmed === "/new") {
@@ -601,21 +615,100 @@ const handleCommand = async (
 		return "handled";
 	}
 	if (trimmed === "/history") {
-		const newId = await handleHistoryCommand(rl, ctx.engine, undefined);
-		setId(newId);
+		setId(await handleHistoryCommand(rl, ctx.engine, undefined));
+		return "handled";
+	}
+	if (trimmed === "/transcript") {
+		exportTranscript(ctx);
 		return "handled";
 	}
 	if (trimmed.startsWith("/agent")) {
 		handleAgentCommand(trimmed, ctx);
 		return "handled";
 	}
+	if (trimmed.startsWith("/rewind")) {
+		handleRewind(trimmed, ctx);
+		return "handled";
+	}
+	// Skill as slash command: /code-review triggers skill "code-review"
+	if (trimmed.startsWith("/")) {
+		const found = ctx.availableSkills.find((s) => s.name === trimmed.slice(1));
+		if (found) {
+			ctx.activeSkill = found;
+			console.log(`Activated: ${found.name}\n`);
+			return "handled";
+		}
+	}
 	return "message";
+};
+
+const exportTranscript = (ctx: CliContext): void => {
+	const msgs = ctx.engine.messages();
+	if (msgs.length === 0) {
+		console.log("No messages to export.\n");
+		return;
+	}
+	const dir = join(homedir(), ".anvil", "transcripts");
+	mkdirSync(dir, { recursive: true });
+	const md = msgs
+		.map((m) => {
+			const role =
+				m.role === "user" ? "**You**" : m.role === "assistant" ? "**Assistant**" : `*${m.role}*`;
+			return `${role}:\n${m.content ?? ""}\n`;
+		})
+		.join("\n---\n\n");
+	const filename = `${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.md`;
+	const path = join(dir, filename);
+	writeFileSync(path, md);
+	console.log(`Transcript saved: ${path}\n`);
+};
+
+const handleRewind = (input: string, ctx: CliContext): void => {
+	const n = Number.parseInt(input.replace("/rewind", "").trim(), 10);
+	const msgs = ctx.engine.messages();
+	const userIndices: number[] = [];
+	for (const [i, m] of msgs.entries()) {
+		if (m.role === "user") userIndices.push(i);
+	}
+	if (Number.isNaN(n) || n < 1 || n > userIndices.length) {
+		console.log(`Usage: /rewind N (1-${userIndices.length} user turns)\n`);
+		return;
+	}
+	// Keep up to the end of the Nth user turn's response
+	const lastUserIdx = userIndices[n - 1] ?? 0;
+	// Find next user message after this one (that's where the turn ends)
+	const nextUserIdx = userIndices[n] ?? msgs.length;
+	const kept = msgs.slice(0, nextUserIdx);
+	ctx.engine.loadMessages([...kept]);
+	sessionTokens = { prompt: 0, total: 0 };
+	const removed = msgs.length - kept.length;
+	const preview = (msgs[lastUserIdx]?.content ?? "").slice(0, 60);
+	console.log(`[rewound to turn ${n}: "${preview}…" — removed ${removed} messages]\n`);
 };
 
 const showPasteHint = (input: string): void => {
 	const lineCount = input.split("\n").length;
 	if (lineCount > 3) stdout.write(`\x1b[2m[${lineCount} lines]\x1b[0m\n`);
 };
+
+const MAX_FILE_CHARS = 8000;
+
+/** Expand @path references to file contents inline. */
+const expandFileRefs = (input: string, root: string): string =>
+	input.replace(/(^|[\s])@([\w./-]+)/g, (match, prefix: string, p: string) => {
+		const filePath = resolve(root, p);
+		if (!existsSync(filePath)) return match;
+		try {
+			const content = readFileSync(filePath, "utf-8");
+			const lines = content.split("\n").length;
+			stdout.write(`\x1b[2m[attached: ${p} (${lines} lines)]\x1b[0m\n`);
+			if (content.length > MAX_FILE_CHARS)
+				return `${prefix}<file path="${p}">\n${content.slice(0, MAX_FILE_CHARS)}\n[truncated, use read_file for full content]\n</file>`;
+			return `${prefix}<file path="${p}">\n${content}\n</file>`;
+		} catch {
+			return match;
+		}
+	});
 
 const chatLoop = async (
 	rl: ReturnType<typeof createInterface>,
@@ -644,7 +737,8 @@ const chatLoop = async (
 
 		try {
 			stdout.write("\x1b[2m─\x1b[0m\n");
-			await processAgentTurn(rl, ctx.agent, trimmed, ctx);
+			const expanded = expandFileRefs(trimmed, projectRoot);
+			await processAgentTurn(rl, ctx.agent, expanded, ctx);
 		} catch (e) {
 			stdout.write(`\n[error: ${e instanceof Error ? e.message : String(e)}]\n`);
 		}
