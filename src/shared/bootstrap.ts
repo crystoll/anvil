@@ -189,11 +189,10 @@ export const expandFileRefs = (input: string, root: string): string =>
 
 // === Base prompt ===
 
-const BASE_PROMPT = `You are Anvil, a local-first coding assistant running in a terminal.
-You have tools for: shell commands, file operations, directory listing, web search, and reading web pages. Use them when you need real data. Call tools silently and base your answers on the results.
-When a task requires multiple steps, execute all steps in sequence.
+const BASE_PROMPT = `You are Anvil, a local-first AI assistant running in a terminal.
+You can answer questions directly from your knowledge, or use tools when you need real data (file system, shell, web search, git).
+When a task requires multiple steps, execute all steps in sequence — prefer acting over asking for confirmation.
 Keep responses concise. Use markdown formatting when it helps readability.
-When you don't know something, say so.
 Never output raw protocol tokens like <tool_response>, <tool_call>, or similar markup in your responses.`;
 
 // === Bootstrap internals ===
@@ -351,7 +350,13 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		? readFileSync(p.promptPath, "utf-8").trim()
 		: undefined;
 	const buildPrompt = (): string =>
-		[projectPrompt, activeAgent?.prompt, activeSkill?.body, BASE_PROMPT]
+		[
+			projectPrompt,
+			activeAgent?.prompt,
+			activeSkill?.body,
+			BASE_PROMPT,
+			`Working directory: ${projectRoot}`,
+		]
 			.filter(Boolean)
 			.join("\n\n") + buildMcpHint(mcpServers);
 
