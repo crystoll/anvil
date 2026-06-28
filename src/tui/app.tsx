@@ -90,20 +90,58 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	const [streaming, setStreaming] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [pendingTool, setPendingTool] = useState<string | null>(null);
+	const [picker, setPicker] = useState<string[] | null>(null);
+	const [pickerIdx, setPickerIdx] = useState(0);
 	const nextId = useRef(providerWarning ? 1 : 0);
 	const history = useRef<string[]>([]);
 	const histIdx = useRef(-1);
 
+	const addMsg = (text: string, dim = false) => {
+		const id = nextId.current++;
+		setMessages((prev) => [...prev, { id, text, dim }]);
+	};
+
+	const handlePickerKey = (key: {
+		upArrow: boolean;
+		downArrow: boolean;
+		escape: boolean;
+		return: boolean;
+	}) => {
+		if (key.upArrow) setPickerIdx((i) => Math.max(0, i - 1));
+		if (key.downArrow) setPickerIdx((i) => Math.min((picker?.length ?? 1) - 1, i + 1));
+		if (key.escape) setPicker(null);
+		if (key.return && picker) {
+			const picked = picker[pickerIdx];
+			setPicker(null);
+			if (!picked) return;
+			const slashIdx = picked.indexOf("/");
+			switchProvider(picked.slice(0, slashIdx), picked.slice(slashIdx + 1));
+		}
+	};
+
+	const handleCtrlC = () => {
+		if (picker) {
+			setPicker(null);
+			return;
+		}
+		if (!busy) {
+			process.exit(0);
+			return;
+		}
+		engine.cancel();
+		setBusy(false);
+		setStreaming("");
+		addMsg("  [cancelled]", true);
+	};
+
 	useInput((_input, key) => {
 		if (key.ctrl && _input === "c") {
-			if (busy) {
-				engine.cancel();
-				setBusy(false);
-				setStreaming("");
-				addMsg("  [cancelled]", true);
-			} else {
-				process.exit(0);
-			}
+			handleCtrlC();
+			return;
+		}
+		if (picker) {
+			handlePickerKey(key);
+			return;
 		}
 		if (key.upArrow && history.current.length > 0) {
 			histIdx.current = Math.min(histIdx.current + 1, history.current.length - 1);
@@ -114,11 +152,6 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			setInput(histIdx.current < 0 ? "" : (history.current[histIdx.current] ?? ""));
 		}
 	});
-
-	const addMsg = (text: string, dim = false) => {
-		const id = nextId.current++;
-		setMessages((prev) => [...prev, { id, text, dim }]);
-	};
 
 	const save = () => {
 		sessionId = saveSession(historyDir, [...engine.messages()], sessionId, {
@@ -228,7 +261,23 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			addMsg("[no healthy providers]", true);
 			return;
 		}
-		for (const [name] of healthy) listModels(name);
+		const promises = healthy.map(async ([name]) => {
+			const entry = config.providers[name];
+			if (!entry) return [];
+			const res = await fetch(`${entry.endpoint}/models`, {
+				headers: entry.apiKey ? { Authorization: `Bearer ${entry.apiKey}` } : {},
+			}).then((r) => r.json() as Promise<{ data?: { id: string }[] }>);
+			return (res.data ?? []).map((m) => `${name}/${m.id}`);
+		});
+		Promise.all(promises).then((results) => {
+			const models = results.flat();
+			if (models.length === 0) {
+				addMsg("[no models available]", true);
+				return;
+			}
+			setPickerIdx(0);
+			setPicker(models);
+		});
 	};
 
 	const cmdModel = (arg: string): true => {
@@ -475,7 +524,18 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			</Box>
 			<StatusBar provider={activeProviderName} model={engine.model()} tokens={tokens} busy={busy} />
 			<Box paddingX={1}>
-				{pendingTool ? (
+				{picker ? (
+					<Box flexDirection="column">
+						<Text dimColor>↑↓ select, Enter confirm, Esc cancel</Text>
+						{picker.map((m, i) => (
+							<Text key={m} {...(i === pickerIdx ? { color: "cyan" } : {})}>
+								{i === pickerIdx ? "❯ " : "  "}
+								{m}
+								{m === `${activeProviderName}/${engine.model()}` ? " ●" : ""}
+							</Text>
+						))}
+					</Box>
+				) : pendingTool ? (
 					<>
 						<Text color="yellow">
 							{"⚡ "}

@@ -210,34 +210,63 @@ const showContext = (): void => {
 	);
 };
 
-const printModelList = async (): Promise<void> => {
-	const current = `${ctx.activeProviderName}/${engine.model()}`;
-	console.log(`Active: ${current}\n`);
+const collectModels = async (): Promise<string[]> => {
+	const models: string[] = [];
 	for (const [name, health] of ctx.healthyProviders) {
-		if (health.status !== "healthy") {
-			console.log(`  ${name}: ${health.message}`);
-			continue;
-		}
+		if (health.status !== "healthy") continue;
 		const entry = config.providers[name];
 		if (!entry) continue;
 		const result = await makeProvider(name, entry, {
 			streamTimeout: config.streamTimeout,
 			connectTimeout: config.connectTimeout,
 		}).listModels();
-		if (result.isErr()) {
-			console.log(`  ${name}: failed to list models`);
-			continue;
-		}
-		for (const m of result.value) {
-			const fq = `${name}/${m}`;
-			console.log(`  ${fq}${fq === current ? " ●" : ""}`);
+		if (result.isOk()) {
+			for (const m of result.value) models.push(`${name}/${m}`);
 		}
 	}
+	return models;
 };
 
-const handleModelCommand = async (input: string): Promise<void> => {
+const pickModel = async (rl: ReturnType<typeof createInterface>): Promise<void> => {
+	const models = await collectModels();
+	if (models.length === 0) {
+		console.log("[no models available]");
+		return;
+	}
+	const current = `${ctx.activeProviderName}/${engine.model()}`;
+	for (let i = 0; i < models.length; i++) {
+		const marker = models[i] === current ? " ●" : "";
+		console.log(`  ${i + 1}) ${models[i]}${marker}`);
+	}
+	const answer = await rl.question("\n# (or Enter to cancel): ");
+	const idx = Number.parseInt(answer, 10) - 1;
+	if (Number.isNaN(idx) || idx < 0 || idx >= models.length) return;
+	const picked = models[idx];
+	if (!picked) return;
+	const slashIdx = picked.indexOf("/");
+	const provName = picked.slice(0, slashIdx);
+	const modelName = picked.slice(slashIdx + 1);
+	const entry = config.providers[provName];
+	if (!entry) return;
+	if (provName !== ctx.activeProviderName) {
+		engine.setProvider(
+			makeProvider(provName, entry, {
+				streamTimeout: config.streamTimeout,
+				connectTimeout: config.connectTimeout,
+			}),
+		);
+		ctx.activeProviderName = provName;
+	}
+	engine.setModel(modelName);
+	console.log(`[model → ${picked}]`);
+};
+
+const handleModelCommand = async (
+	rl: ReturnType<typeof createInterface>,
+	input: string,
+): Promise<void> => {
 	const arg = input.replace("/model", "").trim();
-	if (!arg) return printModelList();
+	if (!arg) return pickModel(rl);
 
 	if (arg.startsWith("set ")) {
 		const model = arg.slice(4).trim();
@@ -486,7 +515,7 @@ const handleCommand = async (
 		return "handled";
 	}
 	if (trimmed.startsWith("/model")) {
-		await handleModelCommand(trimmed);
+		await handleModelCommand(rl, trimmed);
 		return "handled";
 	}
 	if (trimmed.startsWith("/skill")) {
