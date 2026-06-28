@@ -4,10 +4,6 @@ export default defineConfig({
 	test: {
 		globals: false,
 		environment: "node",
-		environmentOptions: {
-			node: {
-				storage: true,
-			},
-		},
+		setupFiles: ["./vitest.setup.ts"],
 	},
 });
