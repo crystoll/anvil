@@ -121,7 +121,10 @@ const parseProviders = (raw: unknown): Result<Record<string, ProviderEntry>, Con
 
 		const provider: ProviderEntry = { endpoint: resolveEnvVar(endpoint) };
 		const apiKey = entry?.api_key;
-		if (typeof apiKey === "string" && apiKey) provider.apiKey = resolveEnvVar(apiKey);
+		if (typeof apiKey === "string" && apiKey) {
+			const resolved = resolveEnvVar(apiKey);
+			if (resolved) provider.apiKey = resolved;
+		}
 		result[name] = provider;
 	}
 	return ok(result);
@@ -130,6 +133,19 @@ const parseProviders = (raw: unknown): Result<Record<string, ProviderEntry>, Con
 /** Resolve ${ENV_VAR} patterns from process.env. */
 const resolveEnvVar = (value: string): string =>
 	value.replace(/\$\{([^}]+)\}/g, (_, name) => process.env[name] ?? "");
+
+/** Validate provider entries, return warnings for issues. */
+export const validateProviderEntries = (providers: Record<string, ProviderEntry>): string[] => {
+	const warnings: string[] = [];
+	for (const [name, entry] of Object.entries(providers)) {
+		if (!entry.endpoint) {
+			warnings.push(`${name}: endpoint is empty (env var not set?)`);
+		} else if (!entry.endpoint.startsWith("http://") && !entry.endpoint.startsWith("https://")) {
+			warnings.push(`${name}: endpoint "${entry.endpoint}" is not a valid URL`);
+		}
+	}
+	return warnings;
+};
 
 const toNumber = (value: unknown, fallback: number): number => {
 	if (typeof value === "number") return value;

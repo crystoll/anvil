@@ -3,7 +3,12 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createAgentLoop } from "../agent/index.js";
 import { type AgentDef, applyAgentToRegistry, discoverAgents, runHooks } from "../agents/index.js";
-import { type AnvilConfig, loadConfig, type ProviderEntry } from "../config/config.js";
+import {
+	type AnvilConfig,
+	loadConfig,
+	type ProviderEntry,
+	validateProviderEntries,
+} from "../config/config.js";
 import { createEngine } from "../engine/index.js";
 import { VERSION } from "../index.js";
 import {
@@ -42,6 +47,11 @@ export type Flags = {
 	debug: boolean;
 };
 
+export type ProviderHealth = {
+	status: "healthy" | "unreachable" | "auth_failed" | "error";
+	message?: string;
+};
+
 export type AppContext = {
 	config: AnvilConfig;
 	projectRoot: string;
@@ -50,6 +60,7 @@ export type AppContext = {
 	agent: ReturnType<typeof createAgentLoop>;
 	provider: Provider;
 	activeProviderName: string;
+	healthyProviders: Map<string, ProviderHealth>;
 	availableSkills: Skill[];
 	activeSkill: Skill | undefined;
 	availableAgents: AgentDef[];
@@ -194,12 +205,57 @@ const loadConfigOrExit = (configPath: string) => {
 		process.exit(1);
 	}
 	const config = result.value;
+	const warnings = validateProviderEntries(config.providers);
+	for (const w of warnings) console.error(`⚠ config: ${w}`);
 	const entry = config.providers[config.defaultProvider];
 	if (!entry) {
 		console.error(`Provider "${config.defaultProvider}" not found in config`);
 		process.exit(1);
 	}
 	return { config, defaultEntry: entry };
+};
+
+/** Ping each provider's /models endpoint, return health map. */
+export const validateProviders = async (
+	providers: Record<string, ProviderEntry>,
+	connectTimeout: number,
+): Promise<Map<string, ProviderHealth>> => {
+	const results = await Promise.all(
+		Object.entries(providers).map(async ([name, entry]) => {
+			const health = await pingProvider(entry, connectTimeout);
+			return [name, health] as const;
+		}),
+	);
+	return new Map(results);
+};
+
+export const pingProvider = async (
+	entry: ProviderEntry,
+	timeout: number,
+): Promise<ProviderHealth> => {
+	try {
+		const res = await fetch(`${entry.endpoint}/models`, {
+			headers: entry.apiKey ? { Authorization: `Bearer ${entry.apiKey}` } : {},
+			signal: AbortSignal.timeout(timeout),
+		});
+		if (res.status === 401 || res.status === 403)
+			return { status: "auth_failed", message: "Authentication failed — check api_key" };
+		if (!res.ok) return { status: "error", message: `HTTP ${res.status}` };
+		return { status: "healthy" };
+	} catch {
+		return { status: "unreachable", message: "Not reachable — is it running?" };
+	}
+};
+
+const warnUnhealthyDefault = (health: Map<string, ProviderHealth>, defaultName: string): void => {
+	const defaultHealth = health.get(defaultName);
+	if (!defaultHealth || defaultHealth.status === "healthy") return;
+	const healthy = [...health.entries()].filter(([, h]) => h.status === "healthy");
+	const hint = healthy.length
+		? `\n  Healthy: ${healthy.map(([n]) => n).join(", ")}. Use --model ${healthy[0]?.[0]}/<model>`
+		: "";
+	console.error(`⚠ Default provider "${defaultName}": ${defaultHealth.message}${hint}`);
+	if (!healthy.length) process.exit(1);
 };
 
 const setupMcp = async (
@@ -253,6 +309,13 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	const p = paths(projectRoot);
 	const { config, defaultEntry } = loadConfigOrExit(p.configPath);
 	const timeouts = { streamTimeout: config.streamTimeout, connectTimeout: config.connectTimeout };
+
+	// Validate all providers
+	const healthyProviders = await validateProviders(
+		config.providers,
+		Math.min(config.connectTimeout * 1000, 3000),
+	);
+	warnUnhealthyDefault(healthyProviders, config.defaultProvider);
 
 	// Provider + engine
 	const resolved = resolveProviderModel(
@@ -330,6 +393,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		agent,
 		provider,
 		activeProviderName,
+		healthyProviders,
 		availableSkills,
 		activeSkill,
 		availableAgents,

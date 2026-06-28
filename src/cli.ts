@@ -5,7 +5,14 @@ import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import type { AgentEvent } from "./agent/loop.js";
 import { listSessions, loadSession, saveSession } from "./session/index.js";
-import { bootstrap, expandFileRefs, parseFlags } from "./shared/bootstrap.js";
+import {
+	bootstrap,
+	expandFileRefs,
+	makeProvider,
+	parseFlags,
+	pingProvider,
+	resolveProviderModel,
+} from "./shared/bootstrap.js";
 import { startSpinner } from "./spinner.js";
 import { createStatusBar } from "./ui/statusbar.js";
 
@@ -204,11 +211,27 @@ const showContext = (): void => {
 };
 
 const printModelList = async (): Promise<void> => {
-	console.log(`Current model: ${engine.model()}`);
-	const result = await ctx.provider.listModels();
-	if (result.isOk()) {
-		console.log("\nAvailable models:");
-		for (const m of result.value) console.log(`  ${m === engine.model() ? "* " : "  "}${m}`);
+	const current = `${ctx.activeProviderName}/${engine.model()}`;
+	console.log(`Active: ${current}\n`);
+	for (const [name, health] of ctx.healthyProviders) {
+		if (health.status !== "healthy") {
+			console.log(`  ${name}: ${health.message}`);
+			continue;
+		}
+		const entry = config.providers[name];
+		if (!entry) continue;
+		const result = await makeProvider(name, entry, {
+			streamTimeout: config.streamTimeout,
+			connectTimeout: config.connectTimeout,
+		}).listModels();
+		if (result.isErr()) {
+			console.log(`  ${name}: failed to list models`);
+			continue;
+		}
+		for (const m of result.value) {
+			const fq = `${name}/${m}`;
+			console.log(`  ${fq}${fq === current ? " ●" : ""}`);
+		}
 	}
 };
 
@@ -229,14 +252,31 @@ const handleModelCommand = async (input: string): Promise<void> => {
 		return;
 	}
 
-	const result = await ctx.provider.listModels();
-	if (result.isOk() && !result.value.includes(arg)) {
-		console.log(`Model "${arg}" not found. Available models:`);
-		for (const m of result.value) console.log(`  ${m}`);
+	const { provider: provName, model: modelName } = resolveProviderModel(
+		arg,
+		config.providers,
+		ctx.activeProviderName,
+	);
+	const entry = config.providers[provName];
+	if (!entry) {
+		console.log(`Provider "${provName}" not configured`);
 		return;
 	}
-	engine.setModel(arg);
-	console.log(`Switched to: ${arg}`);
+	const health = await pingProvider(entry, config.connectTimeout * 1000);
+	if (health.status !== "healthy") {
+		console.log(`Provider "${provName}": ${health.message}`);
+		return;
+	}
+
+	if (provName !== ctx.activeProviderName) {
+		const newProvider = makeProvider(provName, entry, {
+			streamTimeout: config.streamTimeout,
+			connectTimeout: config.connectTimeout,
+		});
+		engine.setProvider(newProvider);
+	}
+	engine.setModel(modelName);
+	console.log(`Switched to: ${provName}/${modelName}`);
 };
 
 const handleSkillCommand = (input: string): void => {

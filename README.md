@@ -106,50 +106,21 @@ pnpm dev -- ~/code/project -c "run tests"  # One-shot in a specific directory
 | `edit_file`       | y/n      | Edit part of a file                 |
 | `run_cmd`         | y/n      | Run a shell command                 |
 
-## Skills
-
-Anvil supports the [Agent Skills](https://agentskills.io) standard — compatible with Kiro and Claude skills.
-
-Skills are discovered from (project-local first, then global):
-
-- `.anvil/skills/`, `.kiro/skills/`, `.claude/skills/` (in project)
-- `~/.anvil/skills/`, `~/.kiro/skills/`, `~/.claude/skills/` (global)
-
-Create a skill: `mkdir -p .anvil/skills/my-skill && cat > .anvil/skills/my-skill/SKILL.md`
-
-```yaml
----
-name: my-skill
-description: When to activate this skill
----
-
-Instructions for the agent when this skill is active.
-```
-
 ## Configuration
 
-Created automatically on first run at `~/.anvil/config.yaml`:
+Global config at `~/.anvil/config.yaml`, created on first run. Change `default_model` to switch models, add providers for remote gateways. See [docs/multi-provider.md](docs/multi-provider.md) for multi-provider setup.
 
-```yaml
-default_provider: ollama
-default_model: gemma4:e4b      # change this to switch your default
-stream_timeout: 30
-connect_timeout: 30
-max_rounds: 25
+Per-project customization uses agents, skills, and prompts — not a local config file.
 
-providers:
-  ollama:
-    endpoint: http://localhost:11434/v1
-  litellm:                           # optional — any OpenAI-compatible gateway
-    endpoint: http://localhost:4000/v1
-    api_key: ${LITELLM_API_KEY}      # resolved from environment
-```
+## Per-Project Customization
 
-Switch providers at runtime: `/model litellm/claude-sonnet-4-20250514` or list with `/model @litellm`. See [docs/multi-provider.md](docs/multi-provider.md) for setup.
-
-## Project Prompt
-
-Place a `.anvil/prompt.md` in your project root to provide persistent context to the agent (project description, conventions, etc). Loaded automatically on every session.
+| Feature        | Location           | Description                                                                               |
+| -------------- | ------------------ | ----------------------------------------------------------------------------------------- |
+| Project prompt | `.anvil/prompt.md` | Persistent context loaded every session                                                   |
+| Skills         | `.anvil/skills/`   | [Agent Skills](https://agentskills.io) standard (also `.kiro/skills/`, `.claude/skills/`) |
+| Agent configs  | `.anvil/agents/`   | Trust levels, tool guards, hooks — see [docs/hooks.md](docs/hooks.md)                     |
+| MCP servers    | `.anvil/mcp.json`  | External tool servers — see [docs/mcp.md](docs/mcp.md)                                    |
+| LSP            | `.anvil/lsp.json`  | Language server integration — see [docs/lsp.md](docs/lsp.md)                              |
 
 ## Architecture
 
@@ -161,7 +132,7 @@ src/
 ├── agent/      # Agent loop — state machine with approval gating and round cap
 ├── agents/     # Agent configs — loader, discovery, guards, hooks
 ├── lsp/        # LSP client — TypeScript/Python diagnostics, navigation, auto-inject
-├── mcp/        # MCP client — connect to external tool servers (stdio transport)
+├── mcp/        # MCP client — connect to external tool servers (stdio + HTTP)
 ├── config/     # YAML config loader with validation and defaults
 ├── session/    # Session persistence (auto-save, resume, history)
 ├── skills/     # Skill parser + multi-directory discovery
@@ -171,131 +142,7 @@ src/
 └── main.ts     # Entry point — routes to TUI or CLI based on flags/environment
 ```
 
-## Agent Configs
-
-Define agent profiles with different trust levels in `.anvil/agents/`:
-
-```yaml
-# .anvil/agents/default.yaml
-name: default
-description: Standard agent with guardrails
-tools:
-  - "*"
-allowedTools:
-  - list_dir
-  - glob
-  - search
-  - read_file
-  - web_search
-  - web_fetch
-toolSettings:
-  read_file:
-    deniedPaths: ["~/.ssh/**", "~/.aws/**", "**/.env*"]
-  write_file:
-    allowedPaths: ["./**"]
-    deniedPaths: ["~/.ssh/**", "/etc/**"]
-  run_cmd:
-    deniedCommands: ["rm -rf.*", "sudo.*", "git (push|merge|reset).*"]
-hooks:
-  sessionStart:
-    - command: "bash ~/.anvil/hooks/notify.sh"
-  stop:
-    - command: "bash ~/.anvil/hooks/notify.sh"
-      async: true
-  preToolUse:
-    - command: "bash ~/.anvil/hooks/guardrail.sh"
-      matcher: "run_cmd"
-      timeout: 3
-```
-
-Agents are discovered from `.anvil/agents/` (project-local, then `~/.anvil/agents/` global).
-
-## MCP (Model Context Protocol)
-
-Connect external tool servers to Anvil. Any MCP server that supports stdio transport works — Obsidian, Playwright, databases, etc.
-
-Configure in `~/.anvil/mcp.json` (global) or `.anvil/mcp.json` (project-local):
-
-```json
-{
-  "mcpServers": {
-    "obsidian": {
-      "command": "npx",
-      "args": ["@bitbonsai/mcpvault@latest", "/path/to/vault"],
-      "autoApprove": ["search_notes", "read_note", "get_vault_stats"]
-    },
-    "remote-docs": {
-      "type": "http",
-      "url": "https://example.com/mcp"
-    }
-  }
-}
-```
-
-Supports both stdio (local subprocess) and HTTP (remote server) transports. Anvil also reads `.mcp.json` in your project root (Claude Code compatible).
-
-MCP tools appear in the registry prefixed with their server name (e.g., `obsidian.search_notes`). They require approval by default unless listed in `autoApprove`. The `allowedTools` field in agent configs applies to MCP tools too.
-
-On startup: `MCP: 1 server(s), 15 tools`
-
-## LSP (Language Server Protocol)
-
-Anvil integrates with language servers for code intelligence. After edits, diagnostics are automatically injected into tool results — the model sees type errors immediately and can self-correct.
-
-Configure in `.anvil/lsp.json` (project) or `~/.anvil/lsp.json` (global). Also reads `.kiro/settings/lsp.json`:
-
-```json
-{
-  "languages": {
-    "typescript": {
-      "name": "typescript-language-server",
-      "command": "typescript-language-server",
-      "args": ["--stdio"],
-      "file_extensions": ["ts", "js", "tsx", "jsx", "mjs", "cjs"],
-      "project_patterns": ["package.json", "tsconfig.json"],
-      "exclude_patterns": ["**/node_modules/**", "**/dist/**"]
-    },
-    "python": {
-      "name": "basedpyright",
-      "command": "basedpyright-langserver",
-      "args": ["--stdio"],
-      "file_extensions": ["py", "pyi"],
-      "project_patterns": ["pyproject.toml", "setup.py", "requirements.txt"],
-      "exclude_patterns": ["**/__pycache__/**", "**/.venv/**", "**/venv/**"]
-    }
-  }
-}
-```
-
-Install language servers: `npm i -g typescript-language-server typescript` and `pipx install basedpyright`
-
-LSP tools (all auto-approve, read-only):
-
-| Tool              | Description                            |
-| ----------------- | -------------------------------------- |
-| `lsp_diagnostics` | Errors/warnings for a file             |
-| `lsp_definition`  | Go to definition of symbol at position |
-| `lsp_references`  | Find all usages of symbol              |
-| `lsp_hover`       | Type info and docs at position         |
-| `lsp_symbols`     | List all symbols in a file             |
-| `lsp_rename`      | Rename symbol across files (y/n)       |
-
-On startup: `LSP: configured`
-
-## File History
-
-Before `write_file` or `edit_file` modifies an existing file, the original is backed up to `.anvil/file-history/<path>/<timestamp>`. This provides an undo safety net for agent writes. New files (first creation) are not backed up.
-
-## Token Usage
-
-Token usage is tracked per-turn and per-session:
-
-- After each response: `[1220→32 tok]` (prompt → completion)
-- On `/quit`: `Session: 1252 tokens (1220 prompt)`
-- On demand: `/usage` command
-- Persisted in session JSON for historical tracking
-
-Configure with `show_tokens: false` in `config.yaml` to hide per-turn display.
+See [docs/architecture.md](docs/architecture.md) for design details.
 
 ## Development
 
@@ -303,7 +150,7 @@ Configure with `show_tokens: false` in `config.yaml` to hide per-turn display.
 pnpm install
 pnpm dev               # Launch interactive CLI (TUI default)
 pnpm build             # Bundle to dist/
-pnpm test              # Run unit tests (110 tests)
+pnpm test              # Run unit tests (115 tests)
 pnpm check             # Type-check
 pnpm lint              # Biome + oxlint
 pnpm format            # Biome (code) + dprint (markdown)
@@ -315,6 +162,14 @@ pnpm format            # Biome (code) + dprint (markdown)
 - pnpm
 - Ollama (macOS app or official installer — not Homebrew)
 
-## What's Next
+## Documentation
 
-See [docs/ideas.md](docs/ideas.md) for potential future work.
+| Doc                                         | Content                                                   |
+| ------------------------------------------- | --------------------------------------------------------- |
+| [architecture.md](docs/architecture.md)     | Provider layer, agent loop, tool registry, error handling |
+| [multi-provider.md](docs/multi-provider.md) | LiteLLM, OpenRouter, remote provider setup                |
+| [models.md](docs/models.md)                 | Model benchmarks and recommendations                      |
+| [hooks.md](docs/hooks.md)                   | Agent lifecycle hooks and guardrails                      |
+| [mcp.md](docs/mcp.md)                       | MCP server configuration (stdio + HTTP)                   |
+| [lsp.md](docs/lsp.md)                       | Language server integration and tools                     |
+| [ideas.md](docs/ideas.md)                   | Future development ideas                                  |

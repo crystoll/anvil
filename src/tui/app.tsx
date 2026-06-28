@@ -7,7 +7,13 @@ import TextInput from "ink-text-input";
 import { useRef, useState } from "react";
 import type { AgentEvent } from "../agent/loop.js";
 import { listSessions, loadSession, saveSession } from "../session/index.js";
-import { bootstrap, expandFileRefs, makeProvider, parseFlags } from "../shared/bootstrap.js";
+import {
+	bootstrap,
+	expandFileRefs,
+	makeProvider,
+	parseFlags,
+	pingProvider,
+} from "../shared/bootstrap.js";
 
 const flags = parseFlags(process.argv);
 const ctx = await bootstrap(flags);
@@ -27,16 +33,12 @@ let { activeProviderName, sessionId } = ctx;
 let activeSkill = ctx.activeSkill;
 let activeAgentDef = ctx.activeAgent;
 
-// Provider health check
-const bootEntry = config.providers[activeProviderName];
-const providerCheck = bootEntry
-	? fetch(`${bootEntry.endpoint}/models`, {
-			signal: AbortSignal.timeout(5000),
-			headers: bootEntry.apiKey ? { Authorization: `Bearer ${bootEntry.apiKey}` } : {},
-		})
-			.then((r) => (r.ok ? undefined : `${activeProviderName}: HTTP ${r.status}`))
-			.catch(() => `${activeProviderName}: unreachable (is it running?)`)
-	: Promise.resolve(undefined);
+// Provider health — derived from bootstrap validation
+const defaultHealth = ctx.healthyProviders.get(activeProviderName);
+const providerWarning =
+	defaultHealth && defaultHealth.status !== "healthy"
+		? `${activeProviderName}: ${defaultHealth.message}`
+		: undefined;
 
 // === UI ===
 type Msg = { id: number; text: string; dim?: boolean };
@@ -171,22 +173,34 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			addMsg(`[unknown provider: ${name}]`, true);
 			return;
 		}
-		const p = makeProvider(name, entry, {
-			streamTimeout: config.streamTimeout,
-			connectTimeout: config.connectTimeout,
+		pingProvider(entry, config.connectTimeout * 1000).then((health) => {
+			if (health.status !== "healthy") {
+				addMsg(`[${name}: ${health.message}]`, true);
+				return;
+			}
+			const p = makeProvider(name, entry, {
+				streamTimeout: config.streamTimeout,
+				connectTimeout: config.connectTimeout,
+			});
+			engine.setProvider(p);
+			engine.setModel(model);
+			activeProviderName = name;
+			addMsg(`[model → ${name}/${model}]`, true);
 		});
-		engine.setProvider(p);
-		engine.setModel(model);
-		activeProviderName = name;
-		addMsg(`[model → ${name}/${model}]`, true);
 	};
 
 	const listModels = (providerName: string) => {
-		const entry = config.providers[providerName];
-		if (!entry) {
+		const health = ctx.healthyProviders.get(providerName);
+		if (!health) {
 			addMsg(`[unknown provider: ${providerName}]`, true);
 			return;
 		}
+		if (health.status !== "healthy") {
+			addMsg(`[${providerName}: ${health.message}]`, true);
+			return;
+		}
+		const entry = config.providers[providerName];
+		if (!entry) return;
 		const current = `${activeProviderName}/${engine.model()}`;
 		addMsg(`[provider: ${providerName} | active: ${current}]`, true);
 		fetch(`${entry.endpoint}/models`, {
@@ -205,16 +219,16 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 					addMsg(`  ${fq}${marker}`, true);
 				}
 			})
-			.catch(() => addMsg("[failed to list models]", true));
+			.catch(() => addMsg(`[${providerName}: failed to list models]`, true));
 	};
 
 	const listAllModels = () => {
-		const providers = Object.keys(config.providers);
-		if (providers.length > 1) {
-			for (const p of providers) listModels(p);
-		} else {
-			listModels(activeProviderName);
+		const healthy = [...ctx.healthyProviders.entries()].filter(([, h]) => h.status === "healthy");
+		if (healthy.length === 0) {
+			addMsg("[no healthy providers]", true);
+			return;
 		}
+		for (const [name] of healthy) listModels(name);
 	};
 
 	const cmdModel = (arg: string): true => {
@@ -481,28 +495,8 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	);
 }
 
-function Loading() {
-	return (
-		<Box paddingX={1}>
-			<Text color="yellow">
-				<Spinner type="dots" />
-			</Text>
-			<Text> connecting…</Text>
-		</Box>
-	);
-}
-
 function Root() {
-	const [ready, setReady] = useState(false);
-	const [warning, setWarning] = useState<string | undefined>();
-	if (!ready) {
-		providerCheck.then((err) => {
-			if (err) setWarning(err);
-			setReady(true);
-		});
-		return <Loading />;
-	}
-	return <App providerWarning={warning} />;
+	return <App providerWarning={providerWarning} />;
 }
 
 render(<Root />);

@@ -128,3 +128,40 @@ providers:
 		delete process.env.TEST_ANVIL_KEY;
 	});
 });
+
+describe("validateProviderEntries", async () => {
+	const { validateProviderEntries } = await import("./config.js");
+
+	it("returns no warnings for valid providers", () => {
+		const warnings = validateProviderEntries({
+			ollama: { endpoint: "http://localhost:11434/v1" },
+			remote: { endpoint: "https://api.example.com/v1", apiKey: "sk-123" },
+		});
+		expect(warnings).toEqual([]);
+	});
+
+	it("warns on empty endpoint", () => {
+		const warnings = validateProviderEntries({
+			broken: { endpoint: "" },
+		});
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("broken");
+		expect(warnings[0]).toContain("empty");
+	});
+
+	it("warns on non-URL endpoint", () => {
+		const warnings = validateProviderEntries({
+			bad: { endpoint: "not-a-url" },
+		});
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("bad");
+		expect(warnings[0]).toContain("not a valid URL");
+	});
+
+	it("does not warn on missing apiKey (no auth is valid)", () => {
+		const warnings = validateProviderEntries({
+			local: { endpoint: "http://localhost:11434/v1" },
+		});
+		expect(warnings).toEqual([]);
+	});
+});
