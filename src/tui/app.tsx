@@ -95,6 +95,8 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		setBusyState(v);
 	};
 	const [pendingTool, setPendingTool] = useState<string | null>(null);
+	const pendingToolName = useRef<string | null>(null);
+	const autoApproved = useRef(new Set<string>());
 	const [picker, setPicker] = useState<string[] | null>(null);
 	const [pickerIdx, setPickerIdx] = useState(0);
 	const nextId = useRef(providerWarning ? 1 : 0);
@@ -146,15 +148,13 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		addMsg("  [press Ctrl+C again to exit]", true);
 	};
 
-	useInput((_input, key) => {
-		if (key.ctrl && _input === "c") {
-			handleCtrlC();
-			return;
-		}
-		if (picker) {
-			handlePickerKey(key);
-			return;
-		}
+	const handleApprovalKey = (input: string, key: { escape: boolean }) => {
+		if (input === "y" || input === "Y") handleApproval("y");
+		else if (input === "a" || input === "A") handleApproval("a");
+		else if (input === "n" || input === "N" || key.escape) handleApproval("n");
+	};
+
+	const handleHistoryNav = (key: { upArrow: boolean; downArrow: boolean }) => {
 		if (key.upArrow && history.current.length > 0) {
 			histIdx.current = Math.min(histIdx.current + 1, history.current.length - 1);
 			setInput(history.current[histIdx.current] ?? "");
@@ -163,6 +163,22 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			histIdx.current = Math.max(histIdx.current - 1, -1);
 			setInput(histIdx.current < 0 ? "" : (history.current[histIdx.current] ?? ""));
 		}
+	};
+
+	useInput((_input, key) => {
+		if (key.ctrl && _input === "c") {
+			handleCtrlC();
+			return;
+		}
+		if (pendingTool) {
+			handleApprovalKey(_input, key);
+			return;
+		}
+		if (picker) {
+			handlePickerKey(key);
+			return;
+		}
+		handleHistoryNav(key);
 	});
 
 	const save = () => {
@@ -171,6 +187,24 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			totalTokens: tokens,
 		});
 		ctx.fireStopHooks();
+	};
+
+	const handlePendingEvent = async (
+		event: AgentEvent & { kind: "pending" },
+		response: string,
+	): Promise<number> => {
+		if (autoApproved.current.has(event.call.tool.name)) {
+			addMsg(`  ↳ ${event.call.tool.name} [auto-approved]`, true);
+			const len = await processEvents(agent.approve());
+			return len > 0 ? len : response.length;
+		}
+		pendingToolName.current = event.call.tool.name;
+		setPendingTool(`${event.call.tool.name}(${JSON.stringify(event.call.args)})`);
+		if (response) {
+			addMsg(`anvil: ${response}`);
+			setStreaming("");
+		}
+		return response.length;
 	};
 
 	const processEvents = async (events: AsyncGenerator<AgentEvent>): Promise<number> => {
@@ -185,13 +219,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 					setStreaming("anvil: [thinking…]");
 					break;
 				case "pending":
-					setPendingTool(`${event.call.tool.name}(${JSON.stringify(event.call.args)})`);
-					if (response) {
-						addMsg(`anvil: ${response}`);
-						setStreaming("");
-						response = "";
-					}
-					return response.length;
+					return handlePendingEvent(event, response);
 				case "tool_result":
 					addMsg(`  ↳ ${event.name}: ${truncate(event.result)}`, true);
 					break;
@@ -460,8 +488,14 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	// === Message handling ===
 
 	const handleApproval = async (value: string) => {
-		const approved = value.trim().toLowerCase().startsWith("y");
+		const key = value.trim().toLowerCase();
+		const approved = key === "y" || key === "a";
+		if (key === "a" && pendingToolName.current) {
+			autoApproved.current.add(pendingToolName.current);
+			addMsg(`  [auto-approving ${pendingToolName.current} for this session]`, true);
+		}
 		setPendingTool(null);
+		pendingToolName.current = null;
 		setInput("");
 		await processEvents(approved ? agent.approve() : agent.reject(value));
 		if (!pendingTool) {
@@ -507,10 +541,6 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 
 	const handleSubmit = async (value: string) => {
 		if (!value.trim()) return;
-		if (pendingTool) {
-			await handleApproval(value);
-			return;
-		}
 		if (busy) return;
 		setInput("");
 		history.current = [value, ...history.current.slice(0, 99)];
@@ -553,8 +583,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 							{"⚡ "}
 							{pendingTool}
 						</Text>
-						<Text> [y/n]: </Text>
-						<TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
+						<Text dimColor> [y]es [n]o [a]lways </Text>
 					</>
 				) : (
 					<>
