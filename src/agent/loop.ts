@@ -49,6 +49,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	let state: AgentState = "idle";
 	let pendingCall: PendingCall | null = null;
 	let rounds = 0;
+	let cancelled = false;
 	const recentCalls: string[] = [];
 	let originalGoal = "";
 
@@ -280,42 +281,62 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		return { loop: outcome.action === "executed", events: outcome.events };
 	};
 
+	/** Process one round's outcome after streaming. Returns whether to continue looping. */
+	async function* processRoundEnd(
+		nudged: boolean,
+	): AsyncGenerator<AgentEvent, "continue" | "nudge" | "stop"> {
+		const idle = checkIdle(nudged);
+		if (idle === "nudge") return "nudge";
+		if (idle === "idle") {
+			yield setState("idle");
+			return "stop";
+		}
+
+		const result = await processOutcome();
+		for (const e of result.events) yield e;
+		return result.loop ? "continue" : "stop";
+	}
+
 	/** Core agent loop. */
 	async function* runLoop(): AsyncGenerator<AgentEvent> {
 		let nudged = false;
 
 		while (rounds < config.maxRounds) {
+			if (cancelled) {
+				cancelled = false;
+				yield setState("idle");
+				return;
+			}
 			rounds++;
 			yield { kind: "round", current: rounds, max: config.maxRounds };
 			injectRoundContext();
 			yield setState("streaming");
 			yield* streamRound();
 
-			const idle = checkIdle(nudged);
-			if (idle === "nudge") {
+			const action = yield* processRoundEnd(nudged);
+			if (action === "nudge") {
 				nudged = true;
 				continue;
 			}
-			if (idle === "idle") {
-				yield setState("idle");
-				return;
-			}
+			if (action === "stop") return;
 			nudged = false;
-
-			const result = await processOutcome();
-			for (const e of result.events) yield e;
-			if (result.loop) continue;
-			return;
 		}
 
 		yield { kind: "error", message: `Round cap reached (${config.maxRounds})` };
 		yield setState("idle");
 	}
 
+	/** Cancel the current agent loop (aborts streaming and stops looping). */
+	const cancel = () => {
+		cancelled = true;
+		engine.cancel();
+	};
+
 	return {
 		send,
 		approve,
 		reject,
+		cancel,
 		state: () => state,
 		rounds: () => rounds,
 		pending: () => pendingCall,

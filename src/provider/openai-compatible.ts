@@ -63,12 +63,16 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 		if (opts.maxTokens != null) body.max_tokens = opts.maxTokens;
 		if (opts.contextSize != null) body.options = { num_ctx: opts.contextSize };
 
+		const signals: AbortSignal[] = [AbortSignal.timeout(connectTimeout)];
+		if (opts.signal) signals.push(opts.signal);
+		const fetchSignal = AbortSignal.any(signals);
+
 		return ResultAsync.fromPromise(
 			fetch(`${baseUrl}/chat/completions`, {
 				method: "POST",
 				headers: headers(),
 				body: JSON.stringify(body),
-				signal: AbortSignal.timeout(connectTimeout),
+				signal: fetchSignal,
 			}),
 			(e) => toConnectionError(e),
 		).andThen((response) => {
@@ -159,24 +163,34 @@ async function* readWithTimeout(
 
 	try {
 		while (true) {
-			const readPromise = reader.read();
-			const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
-				timer = setTimeout(() => resolve({ timedOut: true }), timeout);
-			});
+			let readResult: ReadableStreamReadResult<Uint8Array>;
+			try {
+				const readPromise = reader.read();
+				const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
+					timer = setTimeout(() => resolve({ timedOut: true }), timeout);
+				});
 
-			const result = await Promise.race([readPromise, timeoutPromise]);
-			clearWatchdog();
+				const result = await Promise.race([readPromise, timeoutPromise]);
+				clearWatchdog();
 
-			if ("timedOut" in result) {
-				reader.cancel();
-				yield "timeout";
-				return;
+				if ("timedOut" in result) {
+					reader.cancel();
+					yield "timeout";
+					return;
+				}
+				readResult = result;
+			} catch (e) {
+				if (e instanceof DOMException && e.name === "AbortError") {
+					yield "end";
+					return;
+				}
+				throw e;
 			}
-			if (result.done) {
+			if (readResult.done) {
 				yield "end";
 				return;
 			}
-			yield result.value;
+			yield readResult.value;
 		}
 	} finally {
 		clearWatchdog();

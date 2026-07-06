@@ -27,6 +27,7 @@ const { config, projectRoot, engine, registry, agent, historyDir } = ctx;
 
 let sessionTokens = { prompt: 0, total: 0 };
 let pendingUsageDisplay = "";
+let busy = false;
 const debugMode = flags.debug;
 const showTokens = config.showTokens;
 const statusBar = createStatusBar();
@@ -131,6 +132,7 @@ const processAgentTurn = async (
 ): Promise<void> => {
 	let spinner = startSpinner();
 	let active = true;
+	busy = true;
 	const stop = () => {
 		if (active) {
 			spinner.stop();
@@ -142,11 +144,13 @@ const processAgentTurn = async (
 		if (event.kind !== "usage" && event.kind !== "state" && event.kind !== "round") stop();
 		if (event.kind === "pending") {
 			await handleApproval(rl, event);
+			busy = false;
 			return;
 		}
 		if (event.kind === "error") {
 			stop();
 			displayEvent(event);
+			busy = false;
 			const answer = await rl.question("\nRetry? (y/n): ");
 			if (answer.trim().toLowerCase() === "y") await processAgentTurn(rl, message);
 			return;
@@ -158,6 +162,7 @@ const processAgentTurn = async (
 		}
 	}
 	stop();
+	busy = false;
 	flushUsage();
 	renderStatusBar();
 };
@@ -167,7 +172,9 @@ const handleApproval = async (
 	event: AgentEvent & { kind: "pending" },
 ): Promise<void> => {
 	pendingUsageDisplay = "";
+	busy = false;
 	const approved = await promptApproval(rl, event);
+	busy = true;
 	let spinner = startSpinner();
 	let active = true;
 	const stop = () => {
@@ -186,6 +193,7 @@ const handleApproval = async (
 		}
 	}
 	stop();
+	busy = false;
 	flushUsage();
 	renderStatusBar();
 };
@@ -648,6 +656,17 @@ if (flags.command) {
 	console.log("Type /quit to exit, /skill to list, /model <name> to switch\n");
 
 	const rl = createInterface({ input: stdin, output: stdout });
+
+	rl.on("SIGINT", () => {
+		if (busy) {
+			agent.cancel();
+			busy = false;
+			stdout.write("\n  [cancelled]\n\n");
+		} else {
+			rl.close();
+		}
+	});
+
 	try {
 		await chatLoop(rl);
 	} finally {

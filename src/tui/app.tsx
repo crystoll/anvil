@@ -88,7 +88,12 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	const [input, setInput] = useState("");
 	const [tokens, setTokens] = useState(0);
 	const [streaming, setStreaming] = useState("");
-	const [busy, setBusy] = useState(false);
+	const [busy, setBusyState] = useState(false);
+	const busyRef = useRef(false);
+	const setBusy = (v: boolean) => {
+		busyRef.current = v;
+		setBusyState(v);
+	};
 	const [pendingTool, setPendingTool] = useState<string | null>(null);
 	const [picker, setPicker] = useState<string[] | null>(null);
 	const [pickerIdx, setPickerIdx] = useState(0);
@@ -119,19 +124,26 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		}
 	};
 
+	const lastCtrlC = useRef(0);
+
 	const handleCtrlC = () => {
 		if (picker) {
 			setPicker(null);
 			return;
 		}
-		if (!busy) {
-			process.exit(0);
+		if (busyRef.current) {
+			agent.cancel();
+			setBusy(false);
+			setStreaming("");
+			addMsg("  [cancelled]", true);
 			return;
 		}
-		engine.cancel();
-		setBusy(false);
-		setStreaming("");
-		addMsg("  [cancelled]", true);
+		const now = Date.now();
+		if (now - lastCtrlC.current < 1500) {
+			process.exit(0);
+		}
+		lastCtrlC.current = now;
+		addMsg("  [press Ctrl+C again to exit]", true);
 	};
 
 	useInput((_input, key) => {
@@ -559,4 +571,4 @@ function Root() {
 	return <App providerWarning={providerWarning} />;
 }
 
-render(<Root />);
+render(<Root />, { exitOnCtrlC: false });

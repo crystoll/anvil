@@ -137,7 +137,10 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 		currentState = "streaming";
 		abortController = new AbortController();
 
-		const result = await provider.streamChat(model, [...history], tools, opts);
+		const result = await provider.streamChat(model, [...history], tools, {
+			...opts,
+			signal: abortController.signal,
+		});
 
 		if (result.isErr()) {
 			currentState = "idle";

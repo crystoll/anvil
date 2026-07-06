@@ -63,6 +63,8 @@ export type StreamOptions = {
 	temperature?: number;
 	maxTokens?: number;
 	contextSize?: number;
+	/** Signal to abort the stream externally (e.g. user cancellation). */
+	signal?: AbortSignal;
 };
 
 /** Options for non-streaming completions. */
