@@ -65,7 +65,9 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 			body.options = { num_ctx: opts.contextSize, num_predict: -1 };
 		}
 
-		const signals: AbortSignal[] = [AbortSignal.timeout(connectTimeout)];
+		const connectController = new AbortController();
+		const connectTimer = setTimeout(() => connectController.abort(), connectTimeout);
+		const signals: AbortSignal[] = [connectController.signal];
 		if (opts.signal) signals.push(opts.signal);
 		const fetchSignal = AbortSignal.any(signals);
 
@@ -78,6 +80,7 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 			}),
 			(e) => toConnectionError(e),
 		).andThen((response) => {
+			clearTimeout(connectTimer);
 			if (!response.ok) {
 				return errAsync<AsyncIterable<StreamChunk>, ProviderError>({
 					kind: "api",
