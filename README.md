@@ -112,6 +112,26 @@ Global config at `~/.anvil/config.yaml`, created on first run. Change `default_m
 
 Per-project customization uses agents, skills, and prompts — not a local config file.
 
+### Ollama: Context Size (Required)
+
+> **You must create a model variant with a larger context window.** Ollama defaults to 4096 tokens, which is far too small for agent tool use. Without this step, Anvil will produce empty responses or appear stuck.
+
+```bash
+# Create a 128K context variant (uses no extra disk space)
+echo 'FROM your-model:tag
+PARAMETER num_ctx 131072' | ollama create your-model:tag-128k -f -
+```
+
+Then set it as your default in `~/.anvil/config.yaml`:
+
+```yaml
+default_model: your-model:tag-128k
+```
+
+**Why**: Ollama's OpenAI-compatible endpoint (`/v1/chat/completions`) ignores runtime context options. The only reliable way to set context size is to bake it into the model via `ollama create`.
+
+**Symptoms of insufficient context**: empty responses, model stuck after reading files, `finish_reason: length` in debug mode (`--debug`).
+
 ## Per-Project Customization
 
 | Feature        | Location           | Description                                                                               |

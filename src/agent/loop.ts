@@ -233,13 +233,17 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	/** If model gave up without tools, inject nudge. Returns true if nudged. */
 	const tryNudge = (lastMessage: { role: string; content?: string } | undefined): boolean => {
 		if (lastMessage?.role !== "assistant") return false;
-		if (!isGiveUp(lastMessage.content ?? "")) return false;
+		const content = lastMessage.content ?? "";
+		// Nudge if content is empty (reasoning-only) or matches give-up patterns
+		if (content.trim() !== "" && !isGiveUp(content)) return false;
 		const toolNames = registry
 			.all()
 			.map((t) => t.name)
 			.join(", ");
 		engine.addUser(
-			`You have tools available: ${toolNames}. Use them to accomplish the task. Try again.`,
+			content.trim() === ""
+				? "Your response was empty. Please provide an answer or use a tool to proceed."
+				: `You have tools available: ${toolNames}. Use them to accomplish the task. Try again.`,
 		);
 		return true;
 	};

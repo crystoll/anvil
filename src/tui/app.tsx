@@ -209,6 +209,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 
 	const processEvents = async (events: AsyncGenerator<AgentEvent>): Promise<number> => {
 		let response = "";
+		let finishReason: string | undefined;
 		for await (const event of events) {
 			switch (event.kind) {
 				case "content":
@@ -225,6 +226,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 					break;
 				case "usage":
 					setTokens((t) => t + event.totalTokens);
+					if (event.finishReason) finishReason = event.finishReason;
 					break;
 				case "error":
 					addMsg(`  ⚠ ${event.message}`, true);
@@ -235,6 +237,9 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		}
 		if (response) addMsg(`anvil: ${response}`);
 		setStreaming("");
+		if (!response && finishReason) {
+			addMsg(`  [no content — finish_reason: ${finishReason}]`, true);
+		}
 		return response.length;
 	};
 

@@ -103,7 +103,7 @@ const validateConfig = (raw: Record<string, unknown>): Result<AnvilConfig, Confi
 		streamTimeout: toNumber(raw.stream_timeout, 120),
 		connectTimeout: toNumber(raw.connect_timeout, 120),
 		maxRounds: toNumber(raw.max_rounds, 25),
-		contextSize: toNumber(raw.context_size, 131072),
+		contextSize: toNumber(process.env.ANVIL_CONTEXT_SIZE ?? raw.context_size, 131072),
 		showTokens: raw.show_tokens !== false,
 	});
 };

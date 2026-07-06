@@ -61,7 +61,9 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 		if (tools.length > 0) body.tools = buildToolsPayload(tools);
 		if (opts.temperature != null) body.temperature = opts.temperature;
 		if (opts.maxTokens != null) body.max_tokens = opts.maxTokens;
-		if (opts.contextSize != null) body.options = { num_ctx: opts.contextSize };
+		if (opts.contextSize != null) {
+			body.options = { num_ctx: opts.contextSize, num_predict: -1 };
+		}
 
 		const signals: AbortSignal[] = [AbortSignal.timeout(connectTimeout)];
 		if (opts.signal) signals.push(opts.signal);
@@ -207,6 +209,56 @@ const parseSSELine = (line: string): StreamChunk | "done" | undefined => {
 	return parseChunkJSON(trimmed.slice(6));
 };
 
+/**
+ * Reclassify content inside <think>...</think> blocks as reasoning.
+ * Handles Qwen3 and other models that embed thinking in the content field.
+ */
+const reclassifyThinkBlock = (
+	chunk: StreamChunk,
+	inThink: boolean,
+	setInThink: (v: boolean) => void,
+): StreamChunk => {
+	if (!chunk.content) return chunk;
+	let text = chunk.content;
+	let reasoning = chunk.reasoning ?? "";
+	let content = "";
+
+	while (text.length > 0) {
+		if (!inThink) {
+			const openIdx = text.indexOf("<think>");
+			if (openIdx === -1) {
+				content += text;
+				break;
+			}
+			content += text.slice(0, openIdx);
+			text = text.slice(openIdx + 7);
+			setInThink(true);
+			inThink = true;
+		} else {
+			const closeIdx = text.indexOf("</think>");
+			if (closeIdx === -1) {
+				reasoning += text;
+				break;
+			}
+			reasoning += text.slice(0, closeIdx);
+			text = text.slice(closeIdx + 8);
+			setInThink(false);
+			inThink = false;
+		}
+	}
+
+	const result: StreamChunk = { ...chunk };
+	if (content) {
+		result.content = content;
+	} else {
+		delete result.content;
+	}
+	if (reasoning) {
+		result.reasoning = reasoning;
+	}
+	return result;
+};
+
 /** Parse SSE stream into async iterable of StreamChunks with timeout watchdog. */
 async function* parseSSEStream(
 	body: ReadableStream<Uint8Array>,
@@ -214,6 +266,7 @@ async function* parseSSEStream(
 ): AsyncIterable<StreamChunk> {
 	const decoder = new TextDecoder();
 	let buffer = "";
+	let inThinkBlock = false;
 
 	for await (const data of readWithTimeout(body.getReader(), timeout)) {
 		if (data === "timeout") {
@@ -238,7 +291,10 @@ async function* parseSSEStream(
 				yield { done: true };
 				return;
 			}
-			if (parsed) yield parsed;
+			if (parsed)
+				yield reclassifyThinkBlock(parsed, inThinkBlock, (v) => {
+					inThinkBlock = v;
+				});
 		}
 	}
 }
