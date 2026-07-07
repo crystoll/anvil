@@ -6,6 +6,28 @@ Chat with local models, run tools, search the web, use skills — all from TypeS
 
 > **Disclaimer**: This is a personal experiment shared for like-minded researchers and tinkerers — not a supported product. It is not superior to existing tools, nor does it aim to be. Local models can be unreliable, slow, or produce nonsensical output. Use at your own responsibility.
 
+## What Makes Anvil Different
+
+**Local-first.** Anvil is designed to run against local LLMs via Ollama. No API keys, no cloud dependency, no usage bills. Your code stays on your machine.
+
+**Optimized for smaller models.** Most AI coding tools assume frontier-class models with 128k+ context. Anvil is built to work well with models that fit on consumer hardware — 7B to 27B parameter models running locally. Context management (auto-compaction, overflow detection, configurable context windows) is a first-class concern, not an afterthought.
+
+**What it does:**
+
+- Agentic coding loop with tool use (files, shell, git, web search)
+- Automatic context compaction when conversations grow too long
+- Overflow detection and recovery — won't silently degrade when context fills up
+- Multi-provider support (Ollama native, OpenAI-compatible endpoints, LiteLLM)
+- Skills, agents, MCP servers, LSP integration
+- Session persistence and history
+
+**What it doesn't do:**
+
+- Compete with Claude Code, Cursor, or Windsurf on frontier model performance
+- Provide a GUI or editor integration
+- Work reliably without a capable local model (garbage in, garbage out)
+- Handle massive monorepos without tuning context size
+
 ## Install Globally
 
 After cloning, build and install as a global binary:
@@ -124,6 +146,26 @@ context_size: 131072  # 128k — use for large codebases
 This is sent as `options.num_ctx` in every request. No custom Modelfile needed.
 
 > **Note**: If your config has `endpoint: http://localhost:11434/v1` (the `/v1` suffix), Anvil uses the OpenAI-compatible endpoint which does not support context control. Remove the `/v1` to use the native API.
+
+**Alternative: Set context size in Ollama itself.** Instead of relying on Anvil's per-request `num_ctx`, you can bake a larger context into the model:
+
+```dockerfile
+# Modelfile
+FROM qwen3:8b
+PARAMETER num_ctx 65536
+```
+
+```bash
+ollama create qwen3:8b-64k -f Modelfile
+```
+
+Or set the `OLLAMA_NUM_CTX` environment variable to change Ollama's default for all models:
+
+```bash
+export OLLAMA_NUM_CTX=65536  # applies to all requests that don't specify num_ctx
+```
+
+Anvil detects context overflow (repeated empty responses, error messages) and will auto-compact the conversation history when it occurs — but starting with a context size that matches your workload avoids compaction in the first place.
 
 ## Per-Project Customization
 
