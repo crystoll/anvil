@@ -150,9 +150,17 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 		});
 	};
 
-	const parseLines = function* (lines: string[]): Generator<StreamChunk> {
+	const parseLines = function* (
+		lines: string[],
+		counter: { value: number },
+	): Generator<StreamChunk> {
 		for (const line of lines) {
-			yield* parseChunks(line);
+			for (const chunk of parseChunks(line)) {
+				if (chunk.toolCall) {
+					chunk.toolCall = { ...chunk.toolCall, index: counter.value++ };
+				}
+				yield chunk;
+			}
 		}
 	};
 
@@ -163,6 +171,7 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 		const reader = body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
+		const toolCallCounter = { value: 0 };
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const clearTimer = () => {
 			if (timer) clearTimeout(timer);
@@ -179,9 +188,9 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split("\n");
 				buffer = lines.pop() ?? "";
-				yield* parseLines(lines);
+				yield* parseLines(lines, toolCallCounter);
 			}
-			if (buffer.trim()) yield* parseLines([buffer]);
+			if (buffer.trim()) yield* parseLines([buffer], toolCallCounter);
 		} finally {
 			clearTimer();
 			reader.releaseLock();

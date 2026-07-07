@@ -203,6 +203,78 @@ describe("ollama-native provider", () => {
 			});
 		});
 
+		it("assigns unique indices to tool calls across separate NDJSON lines", async () => {
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, () => {
+					const body = ndjson([
+						{
+							model: "m",
+							message: {
+								role: "assistant",
+								content: "",
+								tool_calls: [
+									{ id: "call_1", function: { name: "grep", arguments: {} } },
+								],
+							},
+							done: false,
+						},
+						{
+							model: "m",
+							message: {
+								role: "assistant",
+								content: "",
+								tool_calls: [
+									{
+										id: "call_2",
+										function: { name: "search", arguments: { query: "interrupt" } },
+									},
+								],
+							},
+							done: false,
+						},
+						{
+							model: "m",
+							message: {
+								role: "assistant",
+								content: "",
+								tool_calls: [
+									{
+										id: "call_3",
+										function: { name: "search", arguments: { query: "Ctrl+C" } },
+									},
+								],
+							},
+							done: false,
+						},
+						{
+							model: "m",
+							message: { role: "assistant", content: "" },
+							done: true,
+							done_reason: "stop",
+							prompt_eval_count: 50,
+							eval_count: 20,
+						},
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const result = await provider.streamChat("m", [{ role: "user", content: "find" }], [], {});
+			const chunks = await collect(result._unsafeUnwrap());
+
+			const toolChunks = chunks.filter((c) => c.toolCall);
+			expect(toolChunks).toHaveLength(3);
+			expect(toolChunks[0]?.toolCall?.index).toBe(0);
+			expect(toolChunks[0]?.toolCall?.name).toBe("grep");
+			expect(toolChunks[1]?.toolCall?.index).toBe(1);
+			expect(toolChunks[1]?.toolCall?.name).toBe("search");
+			expect(toolChunks[1]?.toolCall?.argumentsFragment).toBe('{"query":"interrupt"}');
+			expect(toolChunks[2]?.toolCall?.index).toBe(2);
+			expect(toolChunks[2]?.toolCall?.name).toBe("search");
+			expect(toolChunks[2]?.toolCall?.argumentsFragment).toBe('{"query":"Ctrl+C"}');
+		});
+
 		it("formats tool results with tool_name, assistant with type/index, and reasoning as thinking", async () => {
 			let capturedBody: Record<string, unknown> = {};
 			server.use(
