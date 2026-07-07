@@ -278,7 +278,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			addMsg(`[unknown provider: ${name}]`, true);
 			return;
 		}
-		pingProvider(entry, config.connectTimeout * 1000).then((health) => {
+		pingProvider(name, entry, config.connectTimeout * 1000).then((health) => {
 			if (health.status !== "healthy") {
 				addMsg(`[${name}: ${health.message}]`, true);
 				return;

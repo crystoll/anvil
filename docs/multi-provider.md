@@ -113,6 +113,66 @@ providers:
 /model openrouter/anthropic/claude-sonnet-4
 ```
 
+## Setup: llama.cpp Server
+
+llama.cpp's built-in HTTP server exposes an OpenAI-compatible API with tool calling, reasoning support, and model metadata. Anvil has a dedicated provider that adds health checking and context size auto-detection.
+
+### Starting the server
+
+```bash
+# Basic — loads model with 64k context
+llama-server -m model.gguf -c 65536
+
+# With tool calling (required for agent mode)
+llama-server -m model.gguf -c 65536 --jinja
+
+# With an alias (shows as model name in Anvil)
+llama-server -m model.gguf -c 65536 --jinja --alias qwen3:8b
+
+# From Hugging Face (auto-downloads)
+llama-server -hf ggml-org/Qwen3-8B-GGUF:Q4_K_M -c 65536 --jinja
+```
+
+### Config
+
+```yaml
+default_provider: llamacpp
+default_model: qwen3:8b  # must match --alias or the model path/id
+
+providers:
+  llamacpp:
+    endpoint: http://localhost:8080
+```
+
+The provider name (`llamacpp`, `llama.cpp`, or `llama-cpp`) triggers the dedicated provider. It auto-appends `/v1` internally — don't add it to the endpoint.
+
+### How it works
+
+- Streaming and completions go through the standard `/v1/chat/completions` endpoint
+- `checkHealth` hits `/health` to detect if the model is still loading
+- `fetchContextSize` reads `n_ctx_train` from `/v1/models` metadata
+- Tool calling requires the server to be started with `--jinja`
+- Reasoning models work with `--reasoning-format deepseek`
+
+### Key differences from Ollama
+
+|                 | Ollama                  | llama.cpp                         |
+| --------------- | ----------------------- | --------------------------------- |
+| Context size    | Per-request (`num_ctx`) | Set at server launch (`-c`)       |
+| Model switching | Built-in multi-model    | Restart server or use router mode |
+| Model listing   | All pulled models       | Only loaded model(s)              |
+| Tool calling    | Native                  | Requires `--jinja` flag           |
+
+### Context size
+
+Unlike Ollama, llama.cpp does not support per-request context size override. The context is fixed at server launch via `-c N`. Anvil's `context_size` config is used only for overflow detection — the actual context is whatever you passed to `llama-server`.
+
+If you want to use a specific context size, launch the server accordingly:
+
+```bash
+llama-server -m model.gguf -c 131072 --jinja  # 128k context
+```
+
 ## Known Limitations
 
 - LiteLLM streaming may not always produce structured `tool_calls` chunks for some model/provider combinations. Direct Ollama is most reliable for tool calling.

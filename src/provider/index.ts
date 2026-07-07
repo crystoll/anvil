@@ -1,3 +1,4 @@
+export { createLlamaCppProvider } from "./llamacpp.js";
 export { createProvider } from "./openai-compatible.js";
 export type {
 	CompleteOptions,

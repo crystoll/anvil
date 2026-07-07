@@ -14,15 +14,32 @@ describe("pingProvider", () => {
 			http.get("http://localhost:11434/api/tags", () => HttpResponse.json({ models: [] })),
 		);
 
-		const result = await pingProvider({ endpoint: "http://localhost:11434" }, 3000);
+		const result = await pingProvider("ollama", { endpoint: "http://localhost:11434" }, 3000);
 		expect(result.status).toBe("healthy");
 	});
 
 	it("pings /models for OpenAI-compatible endpoint", async () => {
 		server.use(http.get("http://localhost:1234/v1/models", () => HttpResponse.json({ data: [] })));
 
-		const result = await pingProvider({ endpoint: "http://localhost:1234/v1" }, 3000);
+		const result = await pingProvider("litellm", { endpoint: "http://localhost:1234/v1" }, 3000);
 		expect(result.status).toBe("healthy");
+	});
+
+	it("pings /health for llama.cpp provider", async () => {
+		server.use(http.get("http://localhost:8080/health", () => HttpResponse.json({ status: "ok" })));
+
+		const result = await pingProvider("llamacpp", { endpoint: "http://localhost:8080" }, 3000);
+		expect(result.status).toBe("healthy");
+	});
+
+	it("returns error when llama.cpp is loading (503)", async () => {
+		server.use(
+			http.get("http://localhost:8080/health", () => new HttpResponse(null, { status: 503 })),
+		);
+
+		const result = await pingProvider("llamacpp", { endpoint: "http://localhost:8080" }, 3000);
+		expect(result.status).toBe("error");
+		expect(result.message).toBe("Model is still loading");
 	});
 
 	it("returns auth_failed for 401", async () => {
@@ -30,7 +47,7 @@ describe("pingProvider", () => {
 			http.get("http://localhost:11434/api/tags", () => new HttpResponse(null, { status: 401 })),
 		);
 
-		const result = await pingProvider({ endpoint: "http://localhost:11434" }, 3000);
+		const result = await pingProvider("ollama", { endpoint: "http://localhost:11434" }, 3000);
 		expect(result.status).toBe("auth_failed");
 	});
 
@@ -39,7 +56,7 @@ describe("pingProvider", () => {
 			http.get("http://localhost:11434/api/tags", () => new HttpResponse(null, { status: 500 })),
 		);
 
-		const result = await pingProvider({ endpoint: "http://localhost:11434" }, 3000);
+		const result = await pingProvider("ollama", { endpoint: "http://localhost:11434" }, 3000);
 		expect(result.status).toBe("error");
 	});
 
@@ -52,7 +69,11 @@ describe("pingProvider", () => {
 			}),
 		);
 
-		await pingProvider({ endpoint: "http://localhost:4000/v1", apiKey: "sk-test" }, 3000);
+		await pingProvider(
+			"litellm",
+			{ endpoint: "http://localhost:4000/v1", apiKey: "sk-test" },
+			3000,
+		);
 		expect(authHeader).toBe("Bearer sk-test");
 	});
 });

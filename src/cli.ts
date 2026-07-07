@@ -367,7 +367,7 @@ const handleModelCommand = async (
 		console.log(`Provider "${provName}" not configured`);
 		return;
 	}
-	const health = await pingProvider(entry, config.connectTimeout * 1000);
+	const health = await pingProvider(provName, entry, config.connectTimeout * 1000);
 	if (health.status !== "healthy") {
 		console.log(`Provider "${provName}": ${health.message}`);
 		return;

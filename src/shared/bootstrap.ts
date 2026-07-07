@@ -31,6 +31,7 @@ import {
 	mcpToolsToAnvil,
 } from "../mcp/index.js";
 import { createProvider, type Provider } from "../provider/index.js";
+import { createLlamaCppProvider } from "../provider/llamacpp.js";
 import { createOllamaProvider } from "../provider/ollama-native.js";
 import { listSessions, loadSession } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
@@ -145,6 +146,7 @@ export const makeProvider = (
 		streamTimeout: timeouts.streamTimeout,
 		connectTimeout: timeouts.connectTimeout,
 	};
+	if (isLlamaCppProvider(name)) return createLlamaCppProvider(name, providerConfig);
 	return isOllamaEndpoint(entry.endpoint)
 		? createOllamaProvider(name, providerConfig)
 		: createProvider(name, providerConfig);
@@ -159,6 +161,10 @@ export const isOllamaEndpoint = (endpoint: string): boolean => {
 		return false;
 	}
 };
+
+/** Detect llama.cpp provider by name. */
+export const isLlamaCppProvider = (name: string): boolean =>
+	name === "llamacpp" || name === "llama.cpp" || name === "llama-cpp";
 
 /** Resolve fully-qualified model name to provider + model. */
 export const resolveProviderModel = (
@@ -236,7 +242,7 @@ export const validateProviders = async (
 ): Promise<Map<string, ProviderHealth>> => {
 	const results = await Promise.all(
 		Object.entries(providers).map(async ([name, entry]) => {
-			const health = await pingProvider(entry, connectTimeout);
+			const health = await pingProvider(name, entry, connectTimeout);
 			return [name, health] as const;
 		}),
 	);
@@ -244,11 +250,16 @@ export const validateProviders = async (
 };
 
 export const pingProvider = async (
+	name: string,
 	entry: ProviderEntry,
 	timeout: number,
 ): Promise<ProviderHealth> => {
 	const endpoint = entry.endpoint.replace(/\/$/, "");
-	const pingUrl = isOllamaEndpoint(endpoint) ? `${endpoint}/api/tags` : `${endpoint}/models`;
+	const pingUrl = isLlamaCppProvider(name)
+		? `${endpoint}/health`
+		: isOllamaEndpoint(endpoint)
+			? `${endpoint}/api/tags`
+			: `${endpoint}/models`;
 	try {
 		const res = await fetch(pingUrl, {
 			headers: entry.apiKey ? { Authorization: `Bearer ${entry.apiKey}` } : {},
@@ -256,6 +267,8 @@ export const pingProvider = async (
 		});
 		if (res.status === 401 || res.status === 403)
 			return { status: "auth_failed", message: "Authentication failed — check api_key" };
+		if (res.status === 503 && isLlamaCppProvider(name))
+			return { status: "error", message: "Model is still loading" };
 		if (!res.ok) return { status: "error", message: `HTTP ${res.status}` };
 		return { status: "healthy" };
 	} catch {
