@@ -281,12 +281,17 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		if (!entry) return;
 		const current = `${activeProviderName}/${engine.model()}`;
 		addMsg(`[provider: ${providerName} | active: ${current}]`, true);
-		fetch(`${entry.endpoint}/models`, {
-			headers: entry.apiKey ? { Authorization: `Bearer ${entry.apiKey}` } : {},
+		makeProvider(providerName, entry, {
+			streamTimeout: config.streamTimeout,
+			connectTimeout: config.connectTimeout,
 		})
-			.then((r) => r.json())
-			.then((data: { data?: { id: string }[] }) => {
-				const models = (data.data ?? []).map((m) => m.id);
+			.listModels()
+			.then((res) => {
+				if (res.isErr()) {
+					addMsg(`[${providerName}: failed to list models]`, true);
+					return;
+				}
+				const models = res.value;
 				if (models.length === 0) {
 					addMsg("[no models found]", true);
 					return;
@@ -296,8 +301,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 					const marker = fq === current ? " ●" : "";
 					addMsg(`  ${fq}${marker}`, true);
 				}
-			})
-			.catch(() => addMsg(`[${providerName}: failed to list models]`, true));
+			});
 	};
 
 	const listAllModels = () => {
@@ -309,10 +313,11 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		const promises = healthy.map(async ([name]) => {
 			const entry = config.providers[name];
 			if (!entry) return [];
-			const res = await fetch(`${entry.endpoint}/models`, {
-				headers: entry.apiKey ? { Authorization: `Bearer ${entry.apiKey}` } : {},
-			}).then((r) => r.json() as Promise<{ data?: { id: string }[] }>);
-			return (res.data ?? []).map((m) => `${name}/${m.id}`);
+			const result = await makeProvider(name, entry, {
+				streamTimeout: config.streamTimeout,
+				connectTimeout: config.connectTimeout,
+			}).listModels();
+			return result.isOk() ? result.value.map((m) => `${name}/${m}`) : [];
 		});
 		Promise.all(promises).then((results) => {
 			const models = results.flat();

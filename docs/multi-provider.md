@@ -19,13 +19,15 @@ Anvil supports multiple LLM providers. Switch between local (Ollama) and remote 
 ```yaml
 default_provider: ollama
 default_model: gemma4:e4b
+context_size: 32768  # 32k default — increase for large codebases
 
 providers:
   ollama:
-    endpoint: http://localhost:11434/v1
+    endpoint: http://localhost:11434       # no /v1 → uses native API with context control
+    context_size: 131072                   # per-provider override (optional)
   litellm:
-    endpoint: http://localhost:4000/v1
-    api_key: ${LITELLM_API_KEY}    # resolved from environment
+    endpoint: http://localhost:4000/v1     # /v1 → OpenAI-compatible
+    api_key: ${LITELLM_API_KEY}
   openrouter:
     endpoint: https://openrouter.ai/api/v1
     api_key: ${OPENROUTER_API_KEY}

@@ -119,7 +119,7 @@ src/
 ├── shared/
 │   └── bootstrap.ts  Orchestrates startup, creates AppContext
 ├── config/           YAML loader, validation, env var interpolation
-├── provider/         OpenAI-compatible streaming (single implementation)
+├── provider/         Ollama native + OpenAI-compatible streaming
 ├── engine/           Message history, streaming, model switching
 ├── agent/            State machine — send/approve/reject/cancel
 ├── agents/           Agent YAML configs — guards, hooks, trust levels
@@ -135,7 +135,10 @@ src/
 
 ## Provider Layer
 
-All providers use the OpenAI-compatible chat completions API. A single implementation covers Ollama, LM Studio, llama.cpp, and any compatible endpoint.
+Two provider implementations, same `Provider` interface:
+
+- **Ollama native** (`/api/chat`) — auto-detected when endpoint has no `/v1` suffix. NDJSON streaming, `options.num_ctx` for runtime context control, native tool call format.
+- **OpenAI-compatible** (`/v1/chat/completions`) — for LM Studio, llama.cpp, LiteLLM, OpenRouter, or Ollama with `/v1` suffix. SSE streaming, standard tool call deltas.
 
 ```typescript
 type StreamChunk = {

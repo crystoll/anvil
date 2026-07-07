@@ -31,6 +31,7 @@ import {
 	mcpToolsToAnvil,
 } from "../mcp/index.js";
 import { createProvider, type Provider } from "../provider/index.js";
+import { createOllamaProvider } from "../provider/ollama-native.js";
 import { listSessions, loadSession } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
 import { builtinTools, createRegistry } from "../tools/index.js";
@@ -137,13 +138,27 @@ export const makeProvider = (
 	name: string,
 	entry: ProviderEntry,
 	timeouts: { streamTimeout: number; connectTimeout: number },
-): Provider =>
-	createProvider(name, {
+): Provider => {
+	const providerConfig = {
 		endpoint: entry.endpoint,
 		...(entry.apiKey ? { apiKey: entry.apiKey } : {}),
 		streamTimeout: timeouts.streamTimeout,
 		connectTimeout: timeouts.connectTimeout,
-	});
+	};
+	return isOllamaEndpoint(entry.endpoint)
+		? createOllamaProvider(name, providerConfig)
+		: createProvider(name, providerConfig);
+};
+
+/** Detect native Ollama: endpoint without /v1 path suffix. */
+export const isOllamaEndpoint = (endpoint: string): boolean => {
+	try {
+		const url = new URL(endpoint);
+		return !url.pathname.startsWith("/v1");
+	} catch {
+		return false;
+	}
+};
 
 /** Resolve fully-qualified model name to provider + model. */
 export const resolveProviderModel = (
@@ -367,7 +382,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		maxRounds: config.maxRounds,
 		projectRoot,
 		systemPrompt: buildPrompt(),
-		streamOpts: { contextSize: config.contextSize },
+		streamOpts: { contextSize: bootEntry.contextSize ?? config.contextSize },
 		onBeforeToolUse: async (toolName, args) =>
 			runHooks(agentHooks.preToolUse ?? [], {
 				...hookCtx,

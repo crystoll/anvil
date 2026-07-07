@@ -7,6 +7,7 @@ import { err, ok, type Result } from "neverthrow";
 export type ProviderEntry = {
 	endpoint: string;
 	apiKey?: string;
+	contextSize?: number;
 };
 
 /** Full Anvil config. */
@@ -27,25 +28,25 @@ const DEFAULT_CONFIG: AnvilConfig = {
 	defaultProvider: "ollama",
 	defaultModel: "gemma4:e4b",
 	providers: {
-		ollama: { endpoint: "http://localhost:11434/v1" },
+		ollama: { endpoint: "http://localhost:11434" },
 	},
 	streamTimeout: 120,
 	connectTimeout: 120,
 	maxRounds: 25,
 	showTokens: true,
-	contextSize: 131072,
+	contextSize: 32768,
 };
 
 const DEFAULT_YAML = `default_provider: ollama
 default_model: gemma4:e4b
 stream_timeout: 120
 connect_timeout: 120
-context_size: 131072
+context_size: 32768
 max_rounds: 25
 
 providers:
   ollama:
-    endpoint: http://localhost:11434/v1
+    endpoint: http://localhost:11434
 `;
 
 /** Load config from path, creating defaults if missing. */
@@ -103,7 +104,7 @@ const validateConfig = (raw: Record<string, unknown>): Result<AnvilConfig, Confi
 		streamTimeout: toNumber(raw.stream_timeout, 120),
 		connectTimeout: toNumber(raw.connect_timeout, 120),
 		maxRounds: toNumber(raw.max_rounds, 25),
-		contextSize: toNumber(process.env.ANVIL_CONTEXT_SIZE ?? raw.context_size, 131072),
+		contextSize: toNumber(process.env.ANVIL_CONTEXT_SIZE ?? raw.context_size, 32768),
 		showTokens: raw.show_tokens !== false,
 	});
 };
@@ -125,6 +126,8 @@ const parseProviders = (raw: unknown): Result<Record<string, ProviderEntry>, Con
 			const resolved = resolveEnvVar(apiKey);
 			if (resolved) provider.apiKey = resolved;
 		}
+		const ctxSize = entry?.context_size;
+		if (typeof ctxSize === "number" && ctxSize > 0) provider.contextSize = ctxSize;
 		result[name] = provider;
 	}
 	return ok(result);
@@ -142,6 +145,10 @@ export const validateProviderEntries = (providers: Record<string, ProviderEntry>
 			warnings.push(`${name}: endpoint is empty (env var not set?)`);
 		} else if (!entry.endpoint.startsWith("http://") && !entry.endpoint.startsWith("https://")) {
 			warnings.push(`${name}: endpoint "${entry.endpoint}" is not a valid URL`);
+		} else if (entry.endpoint.includes(":11434") && entry.endpoint.includes("/v1")) {
+			warnings.push(
+				`${name}: endpoint has /v1 suffix — context_size won't work. Remove /v1 for native Ollama API`,
+			);
 		}
 	}
 	return warnings;

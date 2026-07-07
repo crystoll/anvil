@@ -112,25 +112,17 @@ Global config at `~/.anvil/config.yaml`, created on first run. Change `default_m
 
 Per-project customization uses agents, skills, and prompts — not a local config file.
 
-### Ollama: Context Size (Required)
+### Ollama: Context Size
 
-> **You must create a model variant with a larger context window.** Ollama defaults to 4096 tokens, which is far too small for agent tool use. Without this step, Anvil will produce empty responses or appear stuck.
-
-```bash
-# Create a 128K context variant (uses no extra disk space)
-echo 'FROM your-model:tag
-PARAMETER num_ctx 131072' | ollama create your-model:tag-128k -f -
-```
-
-Then set it as your default in `~/.anvil/config.yaml`:
+Anvil uses Ollama's native API (`/api/chat`) which supports runtime context control. The default context is 32k tokens — sufficient for most tasks. To increase it, set `context_size` in `~/.anvil/config.yaml`:
 
 ```yaml
-default_model: your-model:tag-128k
+context_size: 131072  # 128k — use for large codebases
 ```
 
-**Why**: Ollama's OpenAI-compatible endpoint (`/v1/chat/completions`) ignores runtime context options. The only reliable way to set context size is to bake it into the model via `ollama create`.
+This is sent as `options.num_ctx` in every request. No custom Modelfile needed.
 
-**Symptoms of insufficient context**: empty responses, model stuck after reading files, `finish_reason: length` in debug mode (`--debug`).
+> **Note**: If your config has `endpoint: http://localhost:11434/v1` (the `/v1` suffix), Anvil uses the OpenAI-compatible endpoint which does not support context control. Remove the `/v1` to use the native API.
 
 ## Per-Project Customization
 
@@ -170,7 +162,7 @@ See [docs/architecture.md](docs/architecture.md) for design details.
 pnpm install
 pnpm dev               # Launch interactive CLI (TUI default)
 pnpm build             # Bundle to dist/
-pnpm test              # Run unit tests (115 tests)
+pnpm test              # Run unit tests (131 tests)
 pnpm check             # Type-check
 pnpm lint              # Biome + oxlint
 pnpm format            # Biome (code) + dprint (markdown)

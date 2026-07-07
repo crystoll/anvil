@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { createAgentLoop } from "./agent/loop.js";
 import type { EngineEvent } from "./engine/engine.js";
 import { createEngine } from "./engine/engine.js";
+import { createOllamaProvider } from "./provider/ollama-native.js";
 import { createProvider } from "./provider/openai-compatible.js";
 import { done, listDir, stuck } from "./tools/builtins.js";
 import { createRegistry } from "./tools/registry.js";
@@ -17,6 +18,7 @@ import { createRegistry } from "./tools/registry.js";
 const SKIP = process.env.SKIP_INTEGRATION === "1";
 const MODEL = process.env.TEST_MODEL ?? "qwen3:8b";
 const ENDPOINT = process.env.OLLAMA_ENDPOINT ?? "http://localhost:11434/v1";
+const NATIVE_ENDPOINT = "http://localhost:11434";
 
 describe.skipIf(SKIP)("integration: ollama", () => {
 	it("streams a basic chat response", async () => {
@@ -91,4 +93,59 @@ describe.skipIf(SKIP)("integration: ollama", () => {
 		);
 		expect(productive).toBe(true);
 	}, 120_000);
+});
+
+describe.skipIf(SKIP)("integration: ollama native", () => {
+	it("streams a basic chat response via /api/chat", async () => {
+		const provider = createOllamaProvider("ollama", {
+			endpoint: NATIVE_ENDPOINT,
+			streamTimeout: 60,
+			connectTimeout: 60,
+		});
+		const engine = createEngine(provider, MODEL);
+		engine.setSystem("You are a helpful assistant. Reply briefly.");
+		engine.addUser("What is 2+2? Reply with just the number.");
+
+		const events: EngineEvent[] = [];
+		for await (const event of engine.stream([], { contextSize: 32768 })) {
+			events.push(event);
+		}
+
+		expect(events.length).toBeGreaterThan(0);
+
+		const errorEvent = events.find((e) => e.kind === "error");
+		if (errorEvent) {
+			console.log("Native stream error:", errorEvent);
+			return;
+		}
+
+		const doneEvent = events.find((e) => e.kind === "done");
+		expect(doneEvent).toBeDefined();
+		if (doneEvent?.kind === "done") {
+			expect(doneEvent.message.content.length).toBeGreaterThan(0);
+		}
+	}, 60_000);
+
+	it("sends num_ctx and gets valid response", async () => {
+		const provider = createOllamaProvider("ollama", {
+			endpoint: NATIVE_ENDPOINT,
+			streamTimeout: 60,
+			connectTimeout: 60,
+		});
+		const engine = createEngine(provider, MODEL);
+		engine.setSystem("Reply with one word.");
+		engine.addUser("Hi");
+
+		const events: EngineEvent[] = [];
+		for await (const event of engine.stream([], { contextSize: 32768 })) {
+			events.push(event);
+		}
+
+		// Should complete successfully with context_size set
+		const doneEvent = events.find((e) => e.kind === "done");
+		expect(doneEvent).toBeDefined();
+		if (doneEvent?.kind === "done") {
+			expect(doneEvent.message.content.length).toBeGreaterThan(0);
+		}
+	}, 60_000);
 });

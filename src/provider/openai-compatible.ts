@@ -61,10 +61,6 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 		if (tools.length > 0) body.tools = buildToolsPayload(tools);
 		if (opts.temperature != null) body.temperature = opts.temperature;
 		if (opts.maxTokens != null) body.max_tokens = opts.maxTokens;
-		if (opts.contextSize != null) {
-			body.options = { num_ctx: opts.contextSize, num_predict: -1 };
-		}
-
 		const connectController = new AbortController();
 		const connectTimer = setTimeout(() => connectController.abort(), connectTimeout);
 		const signals: AbortSignal[] = [connectController.signal];

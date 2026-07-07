@@ -23,7 +23,7 @@ describe("config loader", () => {
 		expect(config.defaultProvider).toBe("ollama");
 		expect(config.defaultModel).toBe("gemma4:e4b");
 		expect(config.providers.ollama).toBeDefined();
-		expect(config.providers.ollama?.endpoint).toBe("http://localhost:11434/v1");
+		expect(config.providers.ollama?.endpoint).toBe("http://localhost:11434");
 		expect(existsSync(CONFIG_PATH)).toBe(true);
 	});
 
@@ -134,7 +134,7 @@ describe("validateProviderEntries", async () => {
 
 	it("returns no warnings for valid providers", () => {
 		const warnings = validateProviderEntries({
-			ollama: { endpoint: "http://localhost:11434/v1" },
+			ollama: { endpoint: "http://localhost:11434" },
 			remote: { endpoint: "https://api.example.com/v1", apiKey: "sk-123" },
 		});
 		expect(warnings).toEqual([]);
@@ -160,8 +160,55 @@ describe("validateProviderEntries", async () => {
 
 	it("does not warn on missing apiKey (no auth is valid)", () => {
 		const warnings = validateProviderEntries({
-			local: { endpoint: "http://localhost:11434/v1" },
+			local: { endpoint: "http://localhost:11434" },
 		});
 		expect(warnings).toEqual([]);
+	});
+
+	it("warns when Ollama endpoint has /v1 suffix", () => {
+		const warnings = validateProviderEntries({
+			ollama: { endpoint: "http://localhost:11434/v1" },
+		});
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("Remove /v1");
+	});
+
+	it("does not warn about /v1 on non-Ollama endpoints", () => {
+		const warnings = validateProviderEntries({
+			lmstudio: { endpoint: "http://localhost:1234/v1" },
+		});
+		expect(warnings).toEqual([]);
+	});
+});
+
+describe("isOllamaEndpoint", async () => {
+	const { isOllamaEndpoint } = await import("../shared/bootstrap.js");
+
+	it("returns true for bare Ollama endpoint", () => {
+		expect(isOllamaEndpoint("http://localhost:11434")).toBe(true);
+	});
+
+	it("returns true for Ollama on custom port", () => {
+		expect(isOllamaEndpoint("http://localhost:8080")).toBe(true);
+	});
+
+	it("returns true for Ollama with trailing slash", () => {
+		expect(isOllamaEndpoint("http://localhost:11434/")).toBe(true);
+	});
+
+	it("returns false for endpoint with /v1 path", () => {
+		expect(isOllamaEndpoint("http://localhost:11434/v1")).toBe(false);
+	});
+
+	it("returns false for LM Studio /v1 endpoint", () => {
+		expect(isOllamaEndpoint("http://localhost:1234/v1")).toBe(false);
+	});
+
+	it("returns false for remote /v1 endpoint", () => {
+		expect(isOllamaEndpoint("https://api.example.com/v1")).toBe(false);
+	});
+
+	it("returns false for invalid URL", () => {
+		expect(isOllamaEndpoint("not-a-url")).toBe(false);
 	});
 });
