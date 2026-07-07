@@ -19,17 +19,34 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 	const baseUrl = config.endpoint.replace(/\/$/, "");
 
 	const buildMessages = (messages: Message[]) =>
-		messages.map((m) => {
+		messages.map((m, i) => {
 			const msg: Record<string, unknown> = { role: m.role, content: m.content };
-			if (m.toolCallId) msg.tool_call_id = m.toolCallId;
-			if (m.toolCalls?.length) {
-				msg.tool_calls = m.toolCalls.map((tc) => ({
-					id: tc.id,
-					function: { name: tc.name, arguments: JSON.parse(tc.arguments) },
-				}));
+
+			if (m.role === "assistant") {
+				if (m.reasoning) msg.thinking = m.reasoning;
+				if (m.toolCalls?.length) {
+					msg.tool_calls = m.toolCalls.map((tc, idx) => ({
+						type: "function",
+						function: { index: idx, name: tc.name, arguments: JSON.parse(tc.arguments) },
+					}));
+				}
 			}
+
+			if (m.role === "tool" && m.toolCallId) {
+				msg.tool_name = resolveToolName(messages, i, m.toolCallId);
+			}
+
 			return msg;
 		});
+
+	/** Resolve tool name from the preceding assistant message's tool_calls by matching ID. */
+	const resolveToolName = (messages: Message[], toolIdx: number, toolCallId: string): string => {
+		for (let i = toolIdx - 1; i >= 0; i--) {
+			const tc = messages[i]?.toolCalls?.find((c) => c.id === toolCallId);
+			if (tc) return tc.name;
+		}
+		return "unknown";
+	};
 
 	const buildTools = (tools: ToolSchema[]) =>
 		tools.map((t) => ({

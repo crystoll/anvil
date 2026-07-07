@@ -148,6 +148,110 @@ describe("ollama-native provider", () => {
 			});
 		});
 
+		it("formats tool results with tool_name, assistant with type/index, and reasoning as thinking", async () => {
+			let capturedBody: Record<string, unknown> = {};
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, async ({ request }) => {
+					capturedBody = (await request.json()) as Record<string, unknown>;
+					const body = ndjson([
+						{
+							model: "m",
+							message: { role: "assistant", content: "done" },
+							done: true,
+							done_reason: "stop",
+							prompt_eval_count: 100,
+							eval_count: 5,
+						},
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const messages = [
+				{ role: "user" as const, content: "read the file" },
+				{
+					role: "assistant" as const,
+					content: "",
+					reasoning: "I should read the file",
+					toolCalls: [{ id: "call_1", name: "read_file", arguments: '{"path":"src/main.ts"}' }],
+				},
+				{ role: "tool" as const, content: "file contents here", toolCallId: "call_1" },
+			];
+
+			const result = await provider.streamChat("m", messages, [], {});
+			await collect(result._unsafeUnwrap());
+
+			const sent = capturedBody.messages as Record<string, unknown>[];
+
+			// User message — unchanged
+			expect(sent[0]).toEqual({ role: "user", content: "read the file" });
+
+			// Assistant message — thinking field, type+index in tool_calls, no id
+			expect(sent[1]).toEqual({
+				role: "assistant",
+				content: "",
+				thinking: "I should read the file",
+				tool_calls: [
+					{
+						type: "function",
+						function: { index: 0, name: "read_file", arguments: { path: "src/main.ts" } },
+					},
+				],
+			});
+
+			// Tool result — tool_name, no tool_call_id
+			expect(sent[2]).toEqual({
+				role: "tool",
+				content: "file contents here",
+				tool_name: "read_file",
+			});
+		});
+
+		it("parses tool calls as complete objects", async () => {
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, () => {
+					const body = ndjson([
+						{
+							model: "m",
+							message: {
+								role: "assistant",
+								content: "",
+								tool_calls: [
+									{
+										id: "call_123",
+										function: { name: "read_file", arguments: { path: "src/main.ts" } },
+									},
+								],
+							},
+							done: false,
+						},
+						{
+							model: "m",
+							message: { role: "assistant", content: "" },
+							done: true,
+							done_reason: "stop",
+							prompt_eval_count: 50,
+							eval_count: 20,
+						},
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const result = await provider.streamChat("m", [{ role: "user", content: "read" }], [], {});
+			const chunks = await collect(result._unsafeUnwrap());
+
+			const toolChunk = chunks.find((c) => c.toolCall);
+			expect(toolChunk?.toolCall).toMatchObject({
+				index: 0,
+				id: "call_123",
+				name: "read_file",
+				argumentsFragment: '{"path":"src/main.ts"}',
+			});
+		});
+
 		it("sends num_ctx in options when contextSize provided", async () => {
 			let capturedBody: Record<string, unknown> = {};
 			server.use(
