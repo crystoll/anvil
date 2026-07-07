@@ -148,6 +148,61 @@ describe("ollama-native provider", () => {
 			});
 		});
 
+		it("parses multiple tool calls in a single chunk with distinct indices", async () => {
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, () => {
+					const body = ndjson([
+						{
+							model: "m",
+							message: {
+								role: "assistant",
+								content: "",
+								tool_calls: [
+									{
+										id: "call_1",
+										function: { name: "search", arguments: { query: "FINA VIDEOT", limit: 5 } },
+									},
+									{
+										id: "call_2",
+										function: { name: "list_files", arguments: { path: "/" } },
+									},
+								],
+							},
+							done: false,
+						},
+						{
+							model: "m",
+							message: { role: "assistant", content: "" },
+							done: true,
+							done_reason: "stop",
+							prompt_eval_count: 50,
+							eval_count: 20,
+						},
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const result = await provider.streamChat("m", [{ role: "user", content: "find" }], [], {});
+			const chunks = await collect(result._unsafeUnwrap());
+
+			const toolChunks = chunks.filter((c) => c.toolCall);
+			expect(toolChunks).toHaveLength(2);
+			expect(toolChunks[0]?.toolCall).toMatchObject({
+				index: 0,
+				id: "call_1",
+				name: "search",
+				argumentsFragment: '{"query":"FINA VIDEOT","limit":5}',
+			});
+			expect(toolChunks[1]?.toolCall).toMatchObject({
+				index: 1,
+				id: "call_2",
+				name: "list_files",
+				argumentsFragment: '{"path":"/"}',
+			});
+		});
+
 		it("formats tool results with tool_name, assistant with type/index, and reasoning as thinking", async () => {
 			let capturedBody: Record<string, unknown> = {};
 			server.use(

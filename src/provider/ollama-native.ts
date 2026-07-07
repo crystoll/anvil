@@ -9,6 +9,7 @@ import type {
 	StreamChunk,
 	StreamOptions,
 	ToolCall,
+	ToolCallDelta,
 	ToolSchema,
 } from "./types.js";
 
@@ -54,17 +55,18 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 			function: { name: t.name, description: t.description, parameters: t.parameters },
 		}));
 
-	const parseToolCall = (msg: Record<string, unknown>): StreamChunk["toolCall"] => {
+	const parseToolCalls = (msg: Record<string, unknown>): ToolCallDelta[] => {
 		const calls = msg.tool_calls as Array<Record<string, unknown>> | undefined;
-		const tc = calls?.[0];
-		if (!tc) return undefined;
-		const fn = tc.function as Record<string, unknown>;
-		return {
-			index: 0,
-			id: tc.id as string,
-			name: fn.name as string,
-			argumentsFragment: JSON.stringify(fn.arguments),
-		};
+		if (!calls?.length) return [];
+		return calls.map((tc, idx) => {
+			const fn = tc.function as Record<string, unknown>;
+			return {
+				index: idx,
+				id: (tc.id as string) ?? "",
+				name: (fn.name as string) ?? "",
+				argumentsFragment: JSON.stringify(fn.arguments),
+			};
+		});
 	};
 
 	const parseUsage = (data: Record<string, unknown>): StreamChunk["usage"] => {
@@ -74,27 +76,29 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 		return { promptTokens: prompt, totalTokens: prompt + eval_ };
 	};
 
-	const buildChunk = (data: Record<string, unknown>): StreamChunk => {
+	const buildChunks = (data: Record<string, unknown>): StreamChunk[] => {
 		const msg = (data.message ?? {}) as Record<string, unknown>;
-		const chunk: StreamChunk = { done: data.done === true };
-		if (msg.content) chunk.content = msg.content as string;
-		if (msg.thinking) chunk.reasoning = msg.thinking as string;
-		if (data.done_reason) chunk.finishReason = data.done_reason as string;
-		const toolCall = parseToolCall(msg);
-		if (toolCall) chunk.toolCall = toolCall;
+		const base: StreamChunk = { done: data.done === true };
+		if (msg.content) base.content = msg.content as string;
+		if (msg.thinking) base.reasoning = msg.thinking as string;
+		if (data.done_reason) base.finishReason = data.done_reason as string;
 		if (data.done) {
 			const usage = parseUsage(data);
-			if (usage) chunk.usage = usage;
+			if (usage) base.usage = usage;
 		}
-		return chunk;
+		const toolCalls = parseToolCalls(msg);
+		if (toolCalls.length === 0) return [base];
+		return toolCalls.map((tc, i) =>
+			i === 0 ? { ...base, toolCall: tc } : { done: false, toolCall: tc },
+		);
 	};
 
-	const parseChunk = (line: string): StreamChunk | undefined => {
-		if (!line.trim()) return undefined;
+	const parseChunks = (line: string): StreamChunk[] => {
+		if (!line.trim()) return [];
 		try {
-			return buildChunk(JSON.parse(line));
+			return buildChunks(JSON.parse(line));
 		} catch {
-			return undefined;
+			return [];
 		}
 	};
 
@@ -148,8 +152,7 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 
 	const parseLines = function* (lines: string[]): Generator<StreamChunk> {
 		for (const line of lines) {
-			const chunk = parseChunk(line);
-			if (chunk) yield chunk;
+			yield* parseChunks(line);
 		}
 	};
 
