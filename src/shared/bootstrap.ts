@@ -229,7 +229,7 @@ const loadConfigOrExit = (configPath: string) => {
 	return { config, defaultEntry: entry };
 };
 
-/** Ping each provider's /models endpoint, return health map. */
+/** Ping each provider to check reachability, return health map. */
 export const validateProviders = async (
 	providers: Record<string, ProviderEntry>,
 	connectTimeout: number,
@@ -247,8 +247,10 @@ export const pingProvider = async (
 	entry: ProviderEntry,
 	timeout: number,
 ): Promise<ProviderHealth> => {
+	const endpoint = entry.endpoint.replace(/\/$/, "");
+	const pingUrl = isOllamaEndpoint(endpoint) ? `${endpoint}/api/tags` : `${endpoint}/models`;
 	try {
-		const res = await fetch(`${entry.endpoint}/models`, {
+		const res = await fetch(pingUrl, {
 			headers: entry.apiKey ? { Authorization: `Bearer ${entry.apiKey}` } : {},
 			signal: AbortSignal.timeout(timeout),
 		});

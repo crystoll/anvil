@@ -1,4 +1,4 @@
-import { HttpResponse, http } from "msw";
+import { HttpResponse, http, passthrough } from "msw";
 import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createOllamaProvider } from "./ollama-native.js";
@@ -295,6 +295,7 @@ describe("ollama-native provider", () => {
 		});
 
 		it("returns connection error for refused connection", async () => {
+			server.use(http.post("http://localhost:19999/api/chat", () => passthrough()));
 			const badConfig: ProviderConfig = {
 				endpoint: "http://localhost:19999",
 				streamTimeout: 2,

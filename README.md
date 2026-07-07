@@ -162,7 +162,8 @@ See [docs/architecture.md](docs/architecture.md) for design details.
 pnpm install
 pnpm dev               # Launch interactive CLI (TUI default)
 pnpm build             # Bundle to dist/
-pnpm test              # Run unit tests (131 tests)
+pnpm test              # Run unit tests (133 tests)
+pnpm test:integration  # Run integration tests (requires Ollama)
 pnpm check             # Type-check
 pnpm lint              # Biome + oxlint
 pnpm format            # Biome (code) + dprint (markdown)
