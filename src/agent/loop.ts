@@ -71,6 +71,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		engine.addUser(userMessage);
 		originalGoal = userMessage;
 		rounds = 0;
+		recentCalls.length = 0;
 		yield* runLoop();
 	}
 
@@ -158,7 +159,10 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		engine.addToolResult(callId, finalResult);
 		return {
 			action: "executed",
-			events: [setState("executing"), { kind: "tool_result", name: tool.name, result }],
+			events: [
+				setState("executing"),
+				{ kind: "tool_result", name: tool.name, result: finalResult },
+			],
 		};
 	};
 
@@ -278,7 +282,6 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		return true;
 	};
 
-	/** Check if round ended without tool call. */
 	/** Attempt to recover a tool call from content (LiteLLM streaming quirk). */
 	const tryRecoverToolCall = (): boolean => {
 		const msgs = engine.messages();

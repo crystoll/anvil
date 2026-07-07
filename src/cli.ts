@@ -581,6 +581,7 @@ const handleCommand = async (
 		"/usage": showUsage,
 		"/context": showContext,
 		"/new": () => {
+			engine.reset();
 			setId(undefined);
 			sessionTokens = { prompt: 0, total: 0 };
 			lastPromptTokens = 0;

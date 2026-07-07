@@ -38,7 +38,7 @@ export const isOverflow = (signals: OverflowSignals): boolean => {
 	// finish_reason: "length" needs additional context to distinguish from
 	// intentional max_tokens limit vs context overflow
 	if (signals.finishReason === "length") {
-		// Ollama native: eval_count <= 1 means prompt filled the entire context
+		// enhancement: eval_count from Ollama could distinguish output-limit vs context-full
 		if (signals.evalCount !== undefined && signals.evalCount <= 1) return true;
 		// OpenAI-compat: empty or minimal content means no room for output
 		if (signals.content !== undefined && signals.content.length < 10) return true;

@@ -12,8 +12,6 @@ import type {
 	ToolSchema,
 } from "./types.js";
 
-const DEFAULT_STREAM_TIMEOUT = 30_000;
-
 /** Creates an OpenAI-compatible provider (works with Ollama, LM Studio, llama.cpp, LiteLLM). */
 export const createProvider = (name: string, config: ProviderConfig): Provider => {
 	const streamTimeout = (config.streamTimeout ?? 30) * 1000;
@@ -119,7 +117,7 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 				method: "POST",
 				headers: headers(),
 				body: JSON.stringify(body),
-				signal: AbortSignal.timeout(connectTimeout + DEFAULT_STREAM_TIMEOUT),
+				signal: AbortSignal.timeout(connectTimeout + streamTimeout),
 			}).then((r) => {
 				if (!r.ok) throw { kind: "api", status: r.status, message: `API returned ${r.status}` };
 				return r.json();

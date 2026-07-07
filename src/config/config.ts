@@ -156,5 +156,9 @@ export const validateProviderEntries = (providers: Record<string, ProviderEntry>
 
 const toNumber = (value: unknown, fallback: number): number => {
 	if (typeof value === "number") return value;
+	if (typeof value === "string") {
+		const n = Number(value);
+		if (!Number.isNaN(n)) return n;
+	}
 	return fallback;
 };

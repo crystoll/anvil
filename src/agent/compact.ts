@@ -30,19 +30,21 @@ export const compactHistory = (
 	const toKeep = nonSystem.slice(-KEEP_RECENT);
 
 	// Build summarization input — exclude reasoning (too verbose)
+	// Truncate input to prevent the summarization itself from overflowing
+	const MAX_SUMMARY_INPUT_CHARS = 40_000; // ~10k tokens — safe for any context size
+	const summaryContent = toSummarize
+		.filter((m) => m.role === "user" || m.role === "assistant")
+		.map((m) => `[${m.role}]: ${m.content}`)
+		.join("\n")
+		.slice(0, MAX_SUMMARY_INPUT_CHARS);
+
 	const summaryInput: Message[] = [
 		{ role: "system", content: SUMMARY_PROMPT },
-		{
-			role: "user",
-			content: toSummarize
-				.filter((m) => m.role === "user" || m.role === "assistant")
-				.map((m) => `[${m.role}]: ${m.content}`)
-				.join("\n"),
-		},
+		{ role: "user", content: summaryContent },
 	];
 
 	return provider
-		.completeChat(model, summaryInput, [], {})
+		.completeChat(model, summaryInput, [], { maxTokens: 1024 })
 		.map((result) => [
 			...system,
 			{ role: "user" as const, content: `[Previous conversation summary]\n${result.content}` },

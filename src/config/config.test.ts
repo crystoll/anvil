@@ -127,6 +127,17 @@ providers:
 		expect(config.providers.litellm?.apiKey).toBe("resolved-key-456");
 		delete process.env.TEST_ANVIL_KEY;
 	});
+	it("parses ANVIL_CONTEXT_SIZE from env var string", () => {
+		process.env.ANVIL_CONTEXT_SIZE = "131072";
+		writeFileSync(
+			CONFIG_PATH,
+			`default_provider: ollama\ndefault_model: test\nproviders:\n  ollama:\n    endpoint: http://localhost:11434\n`,
+		);
+		const result = loadConfig(CONFIG_PATH);
+		expect(result.isOk()).toBe(true);
+		expect(result._unsafeUnwrap().contextSize).toBe(131072);
+		delete process.env.ANVIL_CONTEXT_SIZE;
+	});
 });
 
 describe("validateProviderEntries", async () => {
