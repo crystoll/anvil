@@ -13,8 +13,8 @@ Be brief — this summary replaces the conversation history. Use bullet points.`
 
 /** Minimum messages before compaction is worthwhile. */
 const MIN_MESSAGES = 6;
-/** Number of recent user+assistant exchanges to keep verbatim. */
-const KEEP_RECENT = 4;
+/** Number of recent messages to keep verbatim (accounts for tool-call interleaving). */
+const KEEP_RECENT = 6;
 
 /** Compact conversation history by summarizing old messages and keeping recent ones. */
 export const compactHistory = (
@@ -33,7 +33,7 @@ export const compactHistory = (
 	// Truncate input to prevent the summarization itself from overflowing
 	const MAX_SUMMARY_INPUT_CHARS = 40_000; // ~10k tokens — safe for any context size
 	const summaryContent = toSummarize
-		.filter((m) => m.role === "user" || m.role === "assistant")
+		.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
 		.map((m) => `[${m.role}]: ${m.content}`)
 		.join("\n")
 		.slice(0, MAX_SUMMARY_INPUT_CHARS);

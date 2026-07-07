@@ -47,7 +47,7 @@ describe("compactHistory", () => {
 		expect(summaryMsg).toBeDefined();
 		expect(summaryMsg?.role).toBe("user");
 
-		// Should retain recent messages (last 2 exchanges = 4 messages)
+		// Should retain recent messages (last KEEP_RECENT messages)
 		const lastMsg = compacted[compacted.length - 1];
 		expect(lastMsg?.content).toBe("Create a tsconfig.json file.");
 	});

@@ -243,7 +243,7 @@ const contextBar = (pct: number, width = 20): string => {
 
 const contextColor = (pct: number): string => {
 	if (pct >= 90) return "\x1b[31m"; // red
-	if (pct >= 80) return "\x1b[33m"; // yellow/orange
+	if (pct >= 80) return "\x1b[38;5;208m"; // orange
 	if (pct >= 60) return "\x1b[33m"; // yellow
 	return "\x1b[2m"; // dim
 };
