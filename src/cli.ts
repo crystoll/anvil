@@ -26,6 +26,7 @@ const { config, projectRoot, engine, registry, agent, historyDir } = ctx;
 // === State ===
 
 let sessionTokens = { prompt: 0, total: 0 };
+let lastPromptTokens = 0;
 let pendingUsageDisplay = "";
 let busy = false;
 const debugMode = flags.debug;
@@ -41,6 +42,7 @@ const displayEvent = (event: AgentEvent): void => {
 	if (event.kind === "usage") {
 		sessionTokens.prompt += event.promptTokens;
 		sessionTokens.total += event.totalTokens;
+		lastPromptTokens = event.promptTokens;
 		const completion = event.totalTokens - event.promptTokens;
 		const reason = debugMode && event.finishReason ? ` ${event.finishReason}` : "";
 		pendingUsageDisplay = showTokens
@@ -76,17 +78,15 @@ const flushUsage = (): void => {
 const renderStatusBar = (): void => {
 	const model = engine.model();
 	const ctxPct =
-		sessionTokens.prompt > 0 ? Math.round((sessionTokens.prompt / config.contextSize) * 100) : 0;
+		lastPromptTokens > 0 ? Math.round((lastPromptTokens / config.contextSize) * 100) : 0;
 	const ctxUsed =
-		sessionTokens.prompt > 1000
-			? `${(sessionTokens.prompt / 1000).toFixed(1)}k`
-			: `${sessionTokens.prompt}`;
+		lastPromptTokens > 1000 ? `${(lastPromptTokens / 1000).toFixed(1)}k` : `${lastPromptTokens}`;
 	const ctxMax =
 		config.contextSize > 1000
 			? `${(config.contextSize / 1000).toFixed(0)}k`
 			: `${config.contextSize}`;
-	const warn = ctxPct >= 80 ? " ⚠ /new" : "";
-	const right = `${model} • ctx: ${ctxUsed}/${ctxMax} (${ctxPct}%)${warn} • ${sessionTokens.total} tok`;
+	const indicator = ctxPct >= 90 ? "⚡" : ctxPct >= 80 ? "⚠" : "";
+	const right = `${model} • ctx: ${ctxUsed}/${ctxMax} (${ctxPct}%${indicator}) • ${sessionTokens.total} tok`;
 	statusBar.render(projectRoot, right);
 };
 
@@ -207,15 +207,37 @@ const showUsage = (): void => {
 	);
 };
 
+const contextBar = (pct: number, width = 20): string => {
+	const filled = Math.round((pct / 100) * width);
+	return "█".repeat(filled) + "░".repeat(width - filled);
+};
+
+const contextColor = (pct: number): string => {
+	if (pct >= 90) return "\x1b[31m"; // red
+	if (pct >= 80) return "\x1b[33m"; // yellow/orange
+	if (pct >= 60) return "\x1b[33m"; // yellow
+	return "\x1b[2m"; // dim
+};
+
 const showContext = (): void => {
-	const pct =
-		sessionTokens.prompt > 0 ? Math.round((sessionTokens.prompt / config.contextSize) * 100) : 0;
+	const used = lastPromptTokens;
+	const limit = config.contextSize;
+	const pct = used > 0 ? Math.round((used / limit) * 100) : 0;
+	const trimAt = Math.round(limit * 0.8);
 	const toolTokens = Math.round(JSON.stringify(registry.schemas()).length / 4);
-	console.log(`Context window: ${config.contextSize.toLocaleString()} tokens`);
-	console.log(`Last prompt:    ${sessionTokens.prompt.toLocaleString()} tokens (${pct}% used)`);
+	const color = contextColor(pct);
+	const reset = "\x1b[0m";
+
+	console.log("[context]");
+	console.log(`  limit:     ${limit.toLocaleString()} tokens`);
 	console.log(
-		`Tools loaded:   ${registry.all().length} (~${toolTokens.toLocaleString()} tokens)\n`,
+		`  used:      ~${used.toLocaleString()} (${color}${pct}%${reset})  ${color}${contextBar(pct)}${reset}`,
 	);
+	console.log(`  tools:     ${registry.all().length} (~${toolTokens.toLocaleString()} tokens)`);
+	console.log(`  trim at:   80% (~${trimAt.toLocaleString()} tokens)`);
+	console.log(`  compact:   on overflow (auto)`);
+	if (pct >= 60) console.log(`\n  hint: /compact to manually free context`);
+	console.log();
 };
 
 const collectModels = async (): Promise<string[]> => {
@@ -519,6 +541,7 @@ const handleCommand = async (
 	if (trimmed === "/new") {
 		setId(undefined);
 		sessionTokens = { prompt: 0, total: 0 };
+		lastPromptTokens = 0;
 		console.log("New session started.\n");
 		return "handled";
 	}

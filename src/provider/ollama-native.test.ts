@@ -263,6 +263,80 @@ describe("ollama-native provider", () => {
 			});
 		});
 
+		it("resolves tool_name as 'unknown' when toolCallId has no match", async () => {
+			let capturedBody: Record<string, unknown> = {};
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, async ({ request }) => {
+					capturedBody = (await request.json()) as Record<string, unknown>;
+					const body = ndjson([
+						{
+							model: "m",
+							message: { role: "assistant", content: "ok" },
+							done: true,
+							done_reason: "stop",
+							prompt_eval_count: 10,
+							eval_count: 2,
+						},
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const messages = [
+				{ role: "user" as const, content: "hi" },
+				{ role: "tool" as const, content: "result", toolCallId: "nonexistent_id" },
+			];
+
+			const result = await provider.streamChat("m", messages, [], {});
+			await collect(result._unsafeUnwrap());
+
+			const sent = capturedBody.messages as Record<string, unknown>[];
+			expect(sent[1]).toEqual({ role: "tool", content: "result", tool_name: "unknown" });
+		});
+
+		it("resolves tool_name from multiple tool calls in assistant message", async () => {
+			let capturedBody: Record<string, unknown> = {};
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, async ({ request }) => {
+					capturedBody = (await request.json()) as Record<string, unknown>;
+					const body = ndjson([
+						{
+							model: "m",
+							message: { role: "assistant", content: "ok" },
+							done: true,
+							done_reason: "stop",
+							prompt_eval_count: 10,
+							eval_count: 2,
+						},
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const messages = [
+				{ role: "user" as const, content: "do both" },
+				{
+					role: "assistant" as const,
+					content: "",
+					toolCalls: [
+						{ id: "call_a", name: "search", arguments: '{"q":"foo"}' },
+						{ id: "call_b", name: "read_file", arguments: '{"path":"/x"}' },
+					],
+				},
+				{ role: "tool" as const, content: "found it", toolCallId: "call_a" },
+				{ role: "tool" as const, content: "file content", toolCallId: "call_b" },
+			];
+
+			const result = await provider.streamChat("m", messages, [], {});
+			await collect(result._unsafeUnwrap());
+
+			const sent = capturedBody.messages as Record<string, unknown>[];
+			expect(sent[2]).toMatchObject({ role: "tool", tool_name: "search" });
+			expect(sent[3]).toMatchObject({ role: "tool", tool_name: "read_file" });
+		});
+
 		it("parses tool calls as complete objects", async () => {
 			server.use(
 				http.post(`${BASE_URL}/api/chat`, () => {

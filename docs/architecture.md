@@ -27,7 +27,7 @@ graph TB
 
     %% Runtime data flow
     eng -->|stream chunks| prov
-    prov -->|OpenAI API| endpoints[Ollama / LiteLLM / OpenRouter]
+    prov -->|native + OpenAI-compat| endpoints[Ollama / LiteLLM / OpenRouter]
     agent -->|messages| eng
     agent -->|execute| reg
 

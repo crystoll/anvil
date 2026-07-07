@@ -52,18 +52,27 @@ function StatusBar({
 	provider,
 	model,
 	tokens,
+	lastPrompt,
+	contextSize,
 	busy,
 }: {
 	provider: string;
 	model: string;
 	tokens: number;
+	lastPrompt: number;
+	contextSize: number;
 	busy: boolean;
 }) {
 	const label = `${provider}/${model}`;
+	const pct = lastPrompt > 0 ? Math.round((lastPrompt / contextSize) * 100) : 0;
+	const ctxColor = pct >= 90 ? "red" : pct >= 80 ? "yellow" : pct >= 60 ? "yellow" : "gray";
+	const indicator = pct >= 90 ? "⚡" : "";
 	return (
 		<Box borderStyle="single" borderColor="gray" paddingX={1}>
 			<Text color="cyan">{label}</Text>
 			<Text> │ </Text>
+			<Text color={ctxColor}>{pct > 0 ? `[${pct}%${indicator}]` : ""}</Text>
+			{pct > 0 && <Text> │ </Text>}
 			<Text dimColor>
 				{busy ? "~" : ""}
 				{tokens} tok
@@ -87,6 +96,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	const [messages, setMessages] = useState<Msg[]>(initMsgs);
 	const [input, setInput] = useState("");
 	const [tokens, setTokens] = useState(0);
+	const [lastPrompt, setLastPrompt] = useState(0);
 	const [streaming, setStreaming] = useState("");
 	const [busy, setBusyState] = useState(false);
 	const busyRef = useRef(false);
@@ -224,8 +234,12 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 				case "tool_result":
 					addMsg(`  ↳ ${event.name}: ${truncate(event.result)}`, true);
 					break;
+				case "trimmed":
+					addMsg(`  [trimmed ${event.count} old messages]`, true);
+					break;
 				case "usage":
 					setTokens((t) => t + event.totalTokens);
+					setLastPrompt(event.promptTokens);
 					if (event.finishReason) finishReason = event.finishReason;
 					break;
 				case "error":
@@ -445,10 +459,16 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 
 	const cmdContext = () => {
 		const contextSize = config.contextSize ?? 128000;
-		const pct = tokens > 0 ? Math.round((tokens / contextSize) * 100) : 0;
+		const pct = lastPrompt > 0 ? Math.round((lastPrompt / contextSize) * 100) : 0;
 		const toolCount = registry.all().length;
+		const toolTokens = Math.round(JSON.stringify(registry.schemas()).length / 4);
+		const trimAt = Math.round(contextSize * 0.8);
+		const barWidth = 20;
+		const filled = Math.round((pct / 100) * barWidth);
+		const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
+		const hint = pct >= 60 ? "\n  hint: /compact to manually free context" : "";
 		addMsg(
-			`[context: ${contextSize.toLocaleString()} tok | used: ~${tokens} (${pct}%) | tools: ${toolCount}]`,
+			`[context]\n  limit:     ${contextSize.toLocaleString()} tokens\n  used:      ~${lastPrompt.toLocaleString()} (${pct}%)  ${bar}\n  tools:     ${toolCount} (~${toolTokens.toLocaleString()} tokens)\n  trim at:   80% (~${trimAt.toLocaleString()} tokens)\n  compact:   on overflow (auto)${hint}`,
 			true,
 		);
 	};
@@ -460,6 +480,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			engine.reset();
 			setMessages([]);
 			setTokens(0);
+			setLastPrompt(0);
 			sessionId = undefined;
 			addMsg("[new session]", true);
 		},
@@ -574,7 +595,14 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 				))}
 				{streaming && <Text color="gray">{streaming}</Text>}
 			</Box>
-			<StatusBar provider={activeProviderName} model={engine.model()} tokens={tokens} busy={busy} />
+			<StatusBar
+				provider={activeProviderName}
+				model={engine.model()}
+				tokens={tokens}
+				lastPrompt={lastPrompt}
+				contextSize={config.contextSize}
+				busy={busy}
+			/>
 			<Box paddingX={1}>
 				{picker ? (
 					<Box flexDirection="column">

@@ -138,7 +138,7 @@ This is sent as `options.num_ctx` in every request. No custom Modelfile needed.
 
 ```
 src/
-├── provider/   # Stream from any OpenAI-compatible API (Ollama, LM Studio, llama.cpp)
+├── provider/   # Ollama native + OpenAI-compatible streaming
 ├── engine/     # Chat engine — messages, streaming, cancellation, model switching
 ├── tools/      # Tool registry + built-in tools (files, shell, web)
 ├── agent/      # Agent loop — state machine with approval gating and round cap
