@@ -38,7 +38,7 @@ pnpm install
 pnpm dev
 ```
 
-On first run, creates `~/.anvil/config.yaml` pointing at Ollama on localhost. Then you're chatting:
+On first run, creates `~/.anvil/config.yaml` pointing at Ollama on localhost. Default context window is 32k tokens — for large codebases, increase `context_size` in the config (see [Configuration](#ollama-context-size)). Then you're chatting:
 
 ```
 anvil — ollama/gemma4:e4b
