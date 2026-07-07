@@ -5,6 +5,7 @@ import { Box, render, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
 import { useRef, useState } from "react";
+import { compactHistory } from "../agent/compact.js";
 import type { AgentEvent } from "../agent/loop.js";
 import { listSessions, loadSession, saveSession } from "../session/index.js";
 import {
@@ -236,6 +237,18 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 					break;
 				case "trimmed":
 					addMsg(`  [trimmed ${event.count} old messages]`, true);
+					break;
+				case "overflow":
+					addMsg("⚠ context overflow detected — consider /compact or /new", true);
+					break;
+				case "compacting":
+					addMsg("  [compacting context...]", true);
+					break;
+				case "compacted":
+					addMsg(
+						`  ⚡ compacted: ~${event.before.toLocaleString()} → ~${event.after.toLocaleString()} tokens`,
+						true,
+					);
 					break;
 				case "usage":
 					setTokens((t) => t + event.totalTokens);
@@ -473,6 +486,25 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		);
 	};
 
+	const cmdCompact = () => {
+		const messages = [...engine.messages()];
+		const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
+		addMsg("  [compacting context...]", true);
+		compactHistory(ctx.provider, engine.model(), messages).then((result) => {
+			if (result.isErr()) {
+				addMsg(`  ⚠ compaction failed: ${result.error.message}`, true);
+				return;
+			}
+			engine.loadMessages(result.value);
+			const afterTokens = Math.round(result.value.map((m) => m.content).join("").length / 4);
+			setLastPrompt(afterTokens);
+			addMsg(
+				`  ⚡ compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens`,
+				true,
+			);
+		});
+	};
+
 	const simpleCommands: Record<string, () => void> = {
 		"/quit": () => process.exit(0),
 		"/exit": () => process.exit(0),
@@ -497,6 +529,10 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			return true;
 		}
 		if (cmd.startsWith("/model")) return cmdModel(cmd.slice(6).trim());
+		if (cmd === "/compact") {
+			cmdCompact();
+			return true;
+		}
 		if (cmd.startsWith("/skill")) return cmdSkill(cmd.slice(6).trim());
 		if (cmd.startsWith("/rewind")) {
 			cmdRewind(cmd.slice(7).trim());

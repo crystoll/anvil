@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
+import { compactHistory } from "./agent/compact.js";
 import type { AgentEvent } from "./agent/loop.js";
 import { listSessions, loadSession, saveSession } from "./session/index.js";
 import {
@@ -35,25 +36,53 @@ const statusBar = createStatusBar();
 
 // === Display ===
 
+const formatUsageDisplay = (event: AgentEvent & { kind: "usage" }): string => {
+	const completion = event.totalTokens - event.promptTokens;
+	const reason = debugMode && event.finishReason ? ` ${event.finishReason}` : "";
+	return showTokens ? `\n\x1b[2m[${event.promptTokens}→${completion} tok${reason}]\x1b[0m` : "";
+};
+
 const displayEvent = (event: AgentEvent): void => {
-	if (event.kind === "reasoning") stdout.write(`\x1b[2m${event.text}\x1b[0m`);
-	if (event.kind === "content") stdout.write(event.text);
-	if (event.kind === "tool_result") displayToolResult(event);
-	if (event.kind === "usage") {
-		sessionTokens.prompt += event.promptTokens;
-		sessionTokens.total += event.totalTokens;
-		lastPromptTokens = event.promptTokens;
-		const completion = event.totalTokens - event.promptTokens;
-		const reason = debugMode && event.finishReason ? ` ${event.finishReason}` : "";
-		pendingUsageDisplay = showTokens
-			? `\n\x1b[2m[${event.promptTokens}→${completion} tok${reason}]\x1b[0m`
-			: "";
+	switch (event.kind) {
+		case "reasoning":
+			stdout.write(`\x1b[2m${event.text}\x1b[0m`);
+			break;
+		case "content":
+			stdout.write(event.text);
+			break;
+		case "tool_result":
+			displayToolResult(event);
+			break;
+		case "usage":
+			sessionTokens.prompt += event.promptTokens;
+			sessionTokens.total += event.totalTokens;
+			lastPromptTokens = event.promptTokens;
+			pendingUsageDisplay = formatUsageDisplay(event);
+			break;
+		case "done":
+			stdout.write(`\n✓ ${event.message}`);
+			break;
+		case "stuck":
+			stdout.write(`\n✗ ${event.message}`);
+			break;
+		case "error":
+			stdout.write(`\n[error: ${event.message}]`);
+			break;
+		case "trimmed":
+			stdout.write(`\x1b[2m[trimmed ${event.count} old messages]\x1b[0m\n`);
+			break;
+		case "overflow":
+			stdout.write("\x1b[31m⚠ context overflow detected\x1b[0m\n");
+			break;
+		case "compacting":
+			stdout.write("\x1b[2m[compacting context...]\x1b[0m\n");
+			break;
+		case "compacted":
+			stdout.write(
+				`\x1b[32m⚡ compacted: ~${event.before.toLocaleString()} → ~${event.after.toLocaleString()} tokens\x1b[0m\n`,
+			);
+			break;
 	}
-	if (event.kind === "done") stdout.write(`\n✓ ${event.message}`);
-	if (event.kind === "stuck") stdout.write(`\n✗ ${event.message}`);
-	if (event.kind === "error") stdout.write(`\n[error: ${event.message}]`);
-	if (event.kind === "trimmed")
-		stdout.write(`\x1b[2m[trimmed ${event.count} old messages]\x1b[0m\n`);
 };
 
 const displayToolResult = (event: AgentEvent & { kind: "tool_result" }): void => {
@@ -238,6 +267,23 @@ const showContext = (): void => {
 	console.log(`  compact:   on overflow (auto)`);
 	if (pct >= 60) console.log(`\n  hint: /compact to manually free context`);
 	console.log();
+};
+
+const handleCompact = async (): Promise<void> => {
+	const messages = [...engine.messages()];
+	const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
+	stdout.write("\x1b[2m[compacting context...]\x1b[0m\n");
+	const result = await compactHistory(ctx.provider, engine.model(), messages);
+	if (result.isErr()) {
+		stdout.write(`\x1b[31m⚠ compaction failed: ${result.error.message}\x1b[0m\n`);
+		return;
+	}
+	engine.loadMessages(result.value);
+	const afterTokens = Math.round(result.value.map((m) => m.content).join("").length / 4);
+	lastPromptTokens = afterTokens;
+	stdout.write(
+		`\x1b[32m⚡ compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens\x1b[0m\n`,
+	);
 };
 
 const collectModels = async (): Promise<string[]> => {
@@ -530,19 +576,25 @@ const handleCommand = async (
 	setId: (id: string | undefined) => void,
 ): Promise<"handled" | "quit" | "message"> => {
 	if (trimmed === "/quit" || trimmed === "/exit") return "quit";
-	if (trimmed === "/usage") {
-		showUsage();
+
+	const syncCommands: Record<string, () => void> = {
+		"/usage": showUsage,
+		"/context": showContext,
+		"/new": () => {
+			setId(undefined);
+			sessionTokens = { prompt: 0, total: 0 };
+			lastPromptTokens = 0;
+			console.log("New session started.\n");
+		},
+	};
+	const syncCmd = syncCommands[trimmed];
+	if (syncCmd) {
+		syncCmd();
 		return "handled";
 	}
-	if (trimmed === "/context") {
-		showContext();
-		return "handled";
-	}
-	if (trimmed === "/new") {
-		setId(undefined);
-		sessionTokens = { prompt: 0, total: 0 };
-		lastPromptTokens = 0;
-		console.log("New session started.\n");
+
+	if (trimmed === "/compact") {
+		await handleCompact();
 		return "handled";
 	}
 	if (trimmed.startsWith("/model")) {

@@ -384,6 +384,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		maxRounds: config.maxRounds,
 		projectRoot,
 		systemPrompt: buildPrompt(),
+		provider,
 		streamOpts: { contextSize: bootEntry.contextSize ?? config.contextSize },
 		onBeforeToolUse: async (toolName, args) =>
 			runHooks(agentHooks.preToolUse ?? [], {

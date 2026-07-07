@@ -1,4 +1,4 @@
-import { okAsync } from "neverthrow";
+import { errAsync, okAsync } from "neverthrow";
 import { describe, expect, it } from "vitest";
 import { createEngine } from "../engine/engine.js";
 import type { Provider, StreamChunk } from "../provider/types.js";
@@ -354,4 +354,123 @@ it("injects goal reminder every 5 rounds after round 5", async () => {
 	);
 	expect(goalReminder).toBeDefined();
 	expect(goalReminder?.content).toContain("find all TODO comments");
+});
+
+it("auto-compacts on overflow and retries", async () => {
+	let callIdx = 0;
+	const provider: Provider = {
+		name: "mock",
+		streamChat: () => {
+			callIdx++;
+			async function* gen() {
+				if (callIdx === 1) {
+					// First call: simulate overflow (finish_reason: length + no content = context full)
+					yield {
+						content: "",
+						finishReason: "length",
+						done: true,
+						usage: { promptTokens: 30000, totalTokens: 30001 },
+					} satisfies StreamChunk;
+				} else {
+					// After compaction: normal response
+					yield { content: "Success after compaction", done: false } satisfies StreamChunk;
+					yield {
+						done: true,
+						usage: { promptTokens: 5000, totalTokens: 5100 },
+					} satisfies StreamChunk;
+				}
+			}
+			return okAsync(gen());
+		},
+		completeChat: () => okAsync({ content: "Summary of conversation.", toolCalls: [] }),
+		supportsTools: () => true,
+		listModels: () => okAsync([]),
+	};
+
+	const engine = createEngine(provider, "test");
+	const registry = createRegistry();
+	// Seed enough messages so compaction is worthwhile
+	engine.addUser("First message");
+	engine.loadMessages([
+		{ role: "user", content: "msg1" },
+		{ role: "assistant", content: "resp1" },
+		{ role: "user", content: "msg2" },
+		{ role: "assistant", content: "resp2" },
+		{ role: "user", content: "msg3" },
+		{ role: "assistant", content: "resp3" },
+		{ role: "user", content: "msg4" },
+		{ role: "assistant", content: "resp4" },
+	]);
+
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 5,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+		provider,
+		streamOpts: { contextSize: 32768 },
+	});
+
+	const events = await collect(loop.send("hello"));
+	const kinds = events.map((e) => e.kind);
+
+	expect(kinds).toContain("overflow");
+	expect(kinds).toContain("compacting");
+	expect(kinds).toContain("compacted");
+	expect(kinds).toContain("content");
+});
+
+it("continues without retry when compaction fails", async () => {
+	let callIdx = 0;
+	const provider: Provider = {
+		name: "mock",
+		streamChat: () => {
+			callIdx++;
+			async function* gen() {
+				// Always overflow
+				yield {
+					content: "",
+					finishReason: "length",
+					done: true,
+					usage: { promptTokens: 30000, totalTokens: 30001 },
+				} satisfies StreamChunk;
+			}
+			return okAsync(gen());
+		},
+		completeChat: () =>
+			errAsync({ kind: "api" as const, status: 500, message: "model overloaded" }),
+		supportsTools: () => true,
+		listModels: () => okAsync([]),
+	};
+
+	const engine = createEngine(provider, "test");
+	const registry = createRegistry();
+	engine.loadMessages([
+		{ role: "user", content: "msg1" },
+		{ role: "assistant", content: "resp1" },
+		{ role: "user", content: "msg2" },
+		{ role: "assistant", content: "resp2" },
+		{ role: "user", content: "msg3" },
+		{ role: "assistant", content: "resp3" },
+		{ role: "user", content: "msg4" },
+		{ role: "assistant", content: "resp4" },
+	]);
+
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 2,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+		provider,
+		streamOpts: { contextSize: 32768 },
+	});
+
+	const events = await collect(loop.send("hello"));
+	const kinds = events.map((e) => e.kind);
+
+	// Should detect overflow and attempt compaction but not crash
+	expect(kinds).toContain("overflow");
+	expect(kinds).toContain("compacting");
+	// Should NOT have compacted (it failed)
+	expect(kinds).not.toContain("compacted");
+	// Should not infinitely loop — stops at round cap
+	expect(callIdx).toBeLessThanOrEqual(2);
 });

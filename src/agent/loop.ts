@@ -1,6 +1,9 @@
 import type { Engine, EngineEvent } from "../engine/engine.js";
+import type { Provider } from "../provider/types.js";
 import type { Registry, Tool } from "../tools/registry.js";
 import { parseToolArgs } from "../tools/registry.js";
+import { compactHistory } from "./compact.js";
+import { isOverflow } from "./overflow.js";
 
 /** Agent loop states. */
 export type AgentState = "idle" | "streaming" | "pending" | "executing" | "done" | "stuck";
@@ -25,12 +28,16 @@ export type AgentEvent =
 	| { kind: "stuck"; message: string }
 	| { kind: "error"; message: string }
 	| { kind: "round"; current: number; max: number }
-	| { kind: "trimmed"; count: number };
+	| { kind: "trimmed"; count: number }
+	| { kind: "overflow" }
+	| { kind: "compacting" }
+	| { kind: "compacted"; before: number; after: number };
 
 export type AgentConfig = {
 	maxRounds: number;
 	projectRoot: string;
 	systemPrompt: string;
+	provider?: Provider;
 	onBeforeToolUse?: (
 		toolName: string,
 		args: Record<string, unknown>,
@@ -195,19 +202,42 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		return autoExecute(tool, argsResult.value, call.id);
 	};
 
+	type RoundSignals = {
+		finishReason?: string;
+		promptTokens?: number;
+		content: string;
+		errorMessage?: string;
+	};
+
+	const checkRoundOverflow = (signals: RoundSignals): AgentEvent | undefined => {
+		const contextSize = config.streamOpts?.contextSize ?? 0;
+		if (contextSize <= 0) return undefined;
+		return isOverflow({ ...signals, contextSize }) ? { kind: "overflow" } : undefined;
+	};
+
+	const accumulateSignal = (signals: RoundSignals, event: EngineEvent): void => {
+		if (event.kind === "chunk") {
+			if (event.chunk.finishReason) signals.finishReason = event.chunk.finishReason;
+			if (event.chunk.content) signals.content += event.chunk.content;
+			if (event.chunk.usage) signals.promptTokens = event.chunk.usage.promptTokens;
+		}
+		if (event.kind === "error") signals.errorMessage = event.error.message;
+	};
+
 	/** Stream one round and collect engine events into agent events. */
 	async function* streamRound(): AsyncGenerator<AgentEvent> {
 		const trimEvent = maybeTrimContext(engine, config);
 		if (trimEvent) yield trimEvent;
 		const contextSize = config.streamOpts?.contextSize ?? 0;
 		const schemas = contextSize ? registry.filteredSchemas(contextSize) : registry.schemas();
-		let lastFinishReason: string | undefined;
+		const signals: RoundSignals = { content: "" };
 		for await (const event of engine.stream(schemas, config.streamOpts)) {
-			if (event.kind === "chunk" && event.chunk.finishReason)
-				lastFinishReason = event.chunk.finishReason;
-			const mapped = mapStreamEvent(event, lastFinishReason);
+			accumulateSignal(signals, event);
+			const mapped = mapStreamEvent(event, signals.finishReason);
 			if (mapped) yield mapped;
 		}
+		const overflowEvent = checkRoundOverflow(signals);
+		if (overflowEvent) yield overflowEvent;
 	}
 
 	/** Track and detect repeated identical tool calls. */
@@ -301,29 +331,66 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		return result.loop ? "continue" : "stop";
 	}
 
+	/** Attempt compaction and retry the round. Returns false if compaction failed. */
+	async function* tryCompact(): AsyncGenerator<AgentEvent, boolean> {
+		if (!config.provider) return false;
+		yield { kind: "compacting" };
+		const messages = [...engine.messages()];
+		const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
+		const result = await compactHistory(config.provider, engine.model(), messages);
+		if (result.isErr()) return false;
+		const compacted = result.value;
+		engine.loadMessages(compacted);
+		const afterTokens = Math.round(compacted.map((m) => m.content).join("").length / 4);
+		yield { kind: "compacted", before: beforeTokens, after: afterTokens };
+		return true;
+	}
+
+	/** Stream a round; on overflow attempt compaction once. Returns "retry" if compacted. */
+	async function* streamWithCompaction(compacted: {
+		done: boolean;
+	}): AsyncGenerator<AgentEvent, "continue" | "ok"> {
+		let overflowed = false;
+		for await (const event of streamRound()) {
+			if (event.kind === "overflow") overflowed = true;
+			yield event;
+		}
+		if (overflowed && !compacted.done) {
+			compacted.done = true;
+			const success = yield* tryCompact();
+			if (success) return "continue";
+		}
+		return "ok";
+	}
+
+	const checkCancelled = (): AgentEvent | undefined => {
+		if (!cancelled) return undefined;
+		cancelled = false;
+		return setState("idle");
+	};
+
 	/** Core agent loop. */
 	async function* runLoop(): AsyncGenerator<AgentEvent> {
 		let nudged = false;
+		const compacted = { done: false };
 
 		while (rounds < config.maxRounds) {
-			if (cancelled) {
-				cancelled = false;
-				yield setState("idle");
+			const cancelEvent = checkCancelled();
+			if (cancelEvent) {
+				yield cancelEvent;
 				return;
 			}
 			rounds++;
 			yield { kind: "round", current: rounds, max: config.maxRounds };
 			injectRoundContext();
 			yield setState("streaming");
-			yield* streamRound();
 
-			const action = yield* processRoundEnd(nudged);
-			if (action === "nudge") {
-				nudged = true;
-				continue;
-			}
+			const streamResult = yield* streamWithCompaction(compacted);
+			if (streamResult === "continue") continue;
+
+			const action: "continue" | "nudge" | "stop" = yield* processRoundEnd(nudged);
+			nudged = action === "nudge";
 			if (action === "stop") return;
-			nudged = false;
 		}
 
 		yield { kind: "error", message: `Round cap reached (${config.maxRounds})` };
