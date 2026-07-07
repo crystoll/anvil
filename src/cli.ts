@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { stdin, stdout } from "node:process";
+import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
 import { compactHistory } from "./agent/compact.js";
 import type { AgentEvent } from "./agent/loop.js";
@@ -729,17 +730,32 @@ if (flags.command) {
 	console.log(`anvil — ${ctx.activeProviderName}/${engine.model()} — ${projectRoot}`);
 	if (ctx.activeAgent) console.log(`agent: ${ctx.activeAgent.name}`);
 	if (ctx.activeSkill) console.log(`skill: ${ctx.activeSkill.name}`);
-	console.log("Type /quit to exit, /skill to list, /model <name> to switch\n");
+	console.log("Type /quit to exit, /skill to list, /model <name> to switch");
+	console.log("Press Esc to interrupt agent, Ctrl+C twice to exit\n");
 
+	emitKeypressEvents(stdin);
 	const rl = createInterface({ input: stdin, output: stdout });
 
+	let lastCtrlC = 0;
 	rl.on("SIGINT", () => {
+		const now = Date.now();
 		if (busy) {
+			if (now - lastCtrlC < 500) {
+				rl.close();
+			} else {
+				lastCtrlC = now;
+				stdout.write("\n  \x1b[2m(press Esc to interrupt, Ctrl+C again to exit)\x1b[0m\n");
+			}
+		} else {
+			rl.close();
+		}
+	});
+
+	stdin.on("keypress", (_str: string, key: { name?: string }) => {
+		if (key?.name === "escape" && busy) {
 			agent.cancel();
 			busy = false;
 			stdout.write("\n  [cancelled]\n\n");
-		} else {
-			rl.close();
 		}
 	});
 

@@ -65,6 +65,7 @@ On first run, creates `~/.anvil/config.yaml` pointing at Ollama on localhost. De
 ```
 anvil — ollama/gemma4:e4b
 Type /quit to exit, /skill to list, /model <name> to switch
+Press Esc to interrupt agent, Ctrl+C twice to exit
 
 you: What files are in this directory?
 anvil:
@@ -95,6 +96,14 @@ Here are the top results: ...
 | `/rewind N`         | Rewind conversation to turn N                |
 | `/plan <task>`      | Generate plan, execute step by step          |
 | `/transcript`       | Export session as markdown                   |
+
+## Keyboard Shortcuts
+
+| Key        | Context       | Action                       |
+| ---------- | ------------- | ---------------------------- |
+| `Esc`      | Agent running | Interrupt current agent turn |
+| `Ctrl+C`   | Idle          | Exit                         |
+| `Ctrl+C×2` | Agent running | Force exit                   |
 
 ## CLI Flags
 

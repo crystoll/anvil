@@ -212,9 +212,7 @@ describe("ollama-native provider", () => {
 							message: {
 								role: "assistant",
 								content: "",
-								tool_calls: [
-									{ id: "call_1", function: { name: "grep", arguments: {} } },
-								],
+								tool_calls: [{ id: "call_1", function: { name: "grep", arguments: {} } }],
 							},
 							done: false,
 						},
