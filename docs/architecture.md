@@ -171,6 +171,7 @@ idle → streaming → pending → executing → streaming → ...
 - **Approval gating**: Side-effecting tools require user confirmation
 - **Read-only tools auto-execute**: `list_dir`, `glob`, `search`, `read_file`
 - **Retry on malformed tool calls**: Send error back to model, let it retry
+- **Context management**: Pre-trim at 80%, overflow detection after each round, auto-compaction with one retry per turn
 
 ## Tool Registry
 

@@ -57,21 +57,22 @@ Here are the top results: ...
 
 ## Commands
 
-| Command             | Description                            |
-| ------------------- | -------------------------------------- |
-| `/quit`, `/exit`    | Exit                                   |
-| `/new`              | Start fresh session                    |
-| `/history`          | Browse and load past sessions          |
-| `/usage`            | Show session token usage               |
-| `/context`          | Show context window + tool token usage |
-| `/model <name>`     | Switch model (no arg = list available) |
-| `/model @provider`  | List models from another provider      |
-| `/model set <name>` | Set default model (persists to config) |
-| `/skill <name>`     | Activate a skill (no arg = list all)   |
-| `/agent`            | List available agents                  |
-| `/rewind N`         | Rewind conversation to turn N          |
-| `/plan <task>`      | Generate plan, execute step by step    |
-| `/transcript`       | Export session as markdown             |
+| Command             | Description                                  |
+| ------------------- | -------------------------------------------- |
+| `/quit`, `/exit`    | Exit                                         |
+| `/new`              | Start fresh session                          |
+| `/history`          | Browse and load past sessions                |
+| `/usage`            | Show session token usage                     |
+| `/context`          | Show context usage, limits, and thresholds   |
+| `/compact`          | Manually compact context (summarize history) |
+| `/model <name>`     | Switch model (no arg = list available)       |
+| `/model @provider`  | List models from another provider            |
+| `/model set <name>` | Set default model (persists to config)       |
+| `/skill <name>`     | Activate a skill (no arg = list all)         |
+| `/agent`            | List available agents                        |
+| `/rewind N`         | Rewind conversation to turn N                |
+| `/plan <task>`      | Generate plan, execute step by step          |
+| `/transcript`       | Export session as markdown                   |
 
 ## CLI Flags
 
@@ -162,7 +163,7 @@ See [docs/architecture.md](docs/architecture.md) for design details.
 pnpm install
 pnpm dev               # Launch interactive CLI (TUI default)
 pnpm build             # Bundle to dist/
-pnpm test              # Run unit tests (133 tests)
+pnpm test              # Run unit tests (165 tests)
 pnpm test:integration  # Run integration tests (requires Ollama)
 pnpm check             # Type-check
 pnpm lint              # Biome + oxlint
