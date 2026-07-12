@@ -380,10 +380,10 @@ const parseCompletionResponse = (json: unknown): CompletionResult => {
 
 const toConnectionError = (e: unknown): ProviderError => {
 	if (e instanceof Error && e.name === "TimeoutError") {
-		return { kind: "timeout", message: "Connection timed out" };
+		return { kind: "timeout", message: "Request timed out" };
 	}
 	if (e instanceof DOMException && e.name === "AbortError") {
-		return { kind: "timeout", message: "Connection timed out" };
+		return { kind: "timeout", message: "Connection timed out (model may be loading)" };
 	}
 	return { kind: "connection", message: e instanceof Error ? e.message : String(e) };
 };

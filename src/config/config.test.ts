@@ -63,7 +63,7 @@ providers:
 		expect(result.isOk()).toBe(true);
 		const config = result._unsafeUnwrap();
 		expect(config.streamTimeout).toBe(120);
-		expect(config.connectTimeout).toBe(120);
+		expect(config.connectTimeout).toBe(300);
 		expect(config.maxRounds).toBe(25);
 	});
 

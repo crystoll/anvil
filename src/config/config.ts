@@ -31,7 +31,7 @@ const DEFAULT_CONFIG: AnvilConfig = {
 		ollama: { endpoint: "http://localhost:11434" },
 	},
 	streamTimeout: 120,
-	connectTimeout: 120,
+	connectTimeout: 300,
 	maxRounds: 25,
 	showTokens: true,
 	contextSize: 32768,
@@ -40,7 +40,7 @@ const DEFAULT_CONFIG: AnvilConfig = {
 const DEFAULT_YAML = `default_provider: ollama
 default_model: gemma4:e4b
 stream_timeout: 120
-connect_timeout: 120
+connect_timeout: 300
 context_size: 32768
 max_rounds: 25
 
@@ -102,7 +102,7 @@ const validateConfig = (raw: Record<string, unknown>): Result<AnvilConfig, Confi
 		defaultModel,
 		providers: providers.value,
 		streamTimeout: toNumber(raw.stream_timeout, 120),
-		connectTimeout: toNumber(raw.connect_timeout, 120),
+		connectTimeout: toNumber(raw.connect_timeout, 300),
 		maxRounds: toNumber(raw.max_rounds, 25),
 		contextSize: toNumber(process.env.ANVIL_CONTEXT_SIZE ?? raw.context_size, 32768),
 		showTokens: raw.show_tokens !== false,
