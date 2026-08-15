@@ -160,22 +160,13 @@ export const glob: Tool = {
 	timeout: 10_000,
 	execute: async (args, projectRoot) => {
 		const pattern = String(args.pattern ?? "");
-		return new Promise<string>((res) => {
-			execFile(
-				"find",
-				[projectRoot, "-path", `*/${pattern}`.replace("**/", ""), "-type", "f"],
-				{ timeout: 10_000 },
-				(_, stdout) => {
-					const files = stdout
-						.trim()
-						.split("\n")
-						.filter(Boolean)
-						.map((f) => relative(projectRoot, f))
-						.slice(0, 100);
-					res(files.length > 0 ? files.join("\n") : "No files found");
-				},
-			);
-		});
+		const { glob: fsGlob } = await import("node:fs/promises");
+		const files: string[] = [];
+		for await (const f of fsGlob(pattern, { cwd: projectRoot })) {
+			files.push(f);
+			if (files.length >= 100) break;
+		}
+		return files.length > 0 ? files.join("\n") : "No files found";
 	},
 };
 

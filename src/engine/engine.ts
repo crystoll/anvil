@@ -45,6 +45,18 @@ type Accumulator = {
 	toolCalls: Map<number, ToolCallAccum>;
 };
 
+/** Process a single stream chunk. Returns a terminal event if streaming should stop, undefined to continue. */
+const processChunk = (
+	chunk: StreamChunk,
+	abortController: AbortController,
+	accumulator: Accumulator,
+): EngineEvent | undefined => {
+	if (abortController.signal.aborted) return { kind: "cancelled" };
+	if (chunk.error) return { kind: "error", error: chunk.error };
+	accumulateChunk(accumulator, chunk);
+	return undefined;
+};
+
 const createAccumulator = (): Accumulator => ({
 	content: "",
 	reasoning: "",
@@ -152,19 +164,12 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 
 		try {
 			for await (const chunk of result.value) {
-				if (abortController.signal.aborted) {
+				const terminal = processChunk(chunk, abortController, accumulator);
+				if (terminal) {
 					currentState = "idle";
-					yield { kind: "cancelled" };
+					yield terminal;
 					return;
 				}
-
-				if (chunk.error) {
-					currentState = "idle";
-					yield { kind: "error", error: chunk.error };
-					return;
-				}
-
-				accumulateChunk(accumulator, chunk);
 				yield { kind: "chunk", chunk };
 			}
 		} catch (e) {

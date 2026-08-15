@@ -197,6 +197,9 @@ export const createLspClient = (config: LspLanguageConfig): LspClient => {
 			} catch {
 				/* ignore */
 			}
+			// Reject all in-flight requests so callers don't hang
+			for (const [, p] of pending) p.reject(new Error("LSP client shut down"));
+			pending.clear();
 			proc.kill();
 			proc = undefined;
 		},
@@ -206,30 +209,28 @@ export const createLspClient = (config: LspLanguageConfig): LspClient => {
 /** Wait for diagnostics to arrive (server pushes them async after changes). */
 export const waitForDiagnostics = (client: LspClient, timeoutMs = 2000): Promise<Diagnostic[]> =>
 	new Promise((resolve) => {
-		// Check immediately — might already have diagnostics
 		const current = client.getDiagnostics();
 		if (current.length > 0) {
 			resolve(current);
 			return;
 		}
 
-		const timer = setTimeout(() => resolve(client.getDiagnostics()), timeoutMs);
+		let interval: ReturnType<typeof setInterval> | undefined;
+		const done = (diags: Diagnostic[]) => {
+			clearInterval(interval);
+			resolve(diags);
+		};
 
-		// Monkey-patch: watch for diagnostics to arrive
+		const timer = setTimeout(() => done(client.getDiagnostics()), timeoutMs);
+
 		const orig = client.getDiagnostics;
-		const check = () => {
+		interval = setInterval(() => {
 			const diags = orig();
 			if (diags.length > 0) {
 				clearTimeout(timer);
-				resolve(diags);
+				done(diags);
 			}
-		};
-
-		// Poll briefly (diagnostics arrive via notification handler)
-		const interval = setInterval(() => {
-			check();
 		}, 100);
-		setTimeout(() => clearInterval(interval), timeoutMs);
 	});
 
 const SEVERITY_MAP = ["error", "warning", "info", "hint"] as const;

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { load as yamlLoad } from "js-yaml";
 import type { Result } from "neverthrow";
 import { err, ok } from "neverthrow";
-import { type Registry, type Tool } from "../tools/registry.js";
+import type { Registry, Tool } from "../tools/registry.js";
 
 export type ToolSettings = {
 	read_file?: { deniedPaths?: string[] };
@@ -95,11 +95,19 @@ export const discoverAgents = (dirs: string[]): AgentDef[] => {
 	return agents;
 };
 
-/** Apply agent config to a registry in-place (guards, approval overrides). */
-export const applyAgentToRegistry = (registry: Registry, agent: AgentDef): void => {
+/** Apply agent config to a registry in-place (guards, approval overrides).
+ * Restores from baseTools first so multiple calls are idempotent. */
+export const applyAgentToRegistry = (
+	registry: Registry,
+	agent: AgentDef,
+	baseTools: readonly Tool[] = registry.all(),
+): void => {
 	const allowedSet = new Set(agent.allowedTools ?? []);
 	const useAll = agent.tools.includes("*");
 	const toolSet = new Set(agent.tools);
+
+	// Restore full tool set before filtering so switching agents is non-destructive
+	for (const t of baseTools) registry.register(t);
 
 	for (const tool of registry.all()) {
 		if (!useAll && !toolSet.has(tool.name)) {

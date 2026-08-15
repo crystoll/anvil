@@ -212,7 +212,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 
 	const save = () => {
 		sessionId = saveSession(historyDir, [...engine.messages()], sessionId, {
-			promptTokens: tokens,
+			promptTokens: lastPrompt,
 			totalTokens: tokens,
 		});
 		ctx.fireStopHooks().catch(() => {});
@@ -236,72 +236,91 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		return response.length;
 	};
 
+	const clearThinking = () => {
+		thinkingStart.current = null;
+		setIsThinking(false);
+		setStreaming("");
+	};
+
+	const startThinking = () => {
+		if (thinkingStart.current === null) {
+			thinkingStart.current = Date.now();
+			setElapsed(0);
+		}
+		setIsThinking(true);
+		setStreaming("");
+	};
+
+	/** Handle streaming content/reasoning/pending/tool_result events.
+	 * Returns a number to short-circuit, false if unhandled, undefined to continue. */
+	const handleStreamEvent = async (
+		event: AgentEvent,
+		state: { response: string },
+	): Promise<number | false | undefined> => {
+		if (event.kind === "content") {
+			state.response += event.text;
+			thinkingStart.current = null;
+			setIsThinking(false);
+			setStreaming(`anvil: ${state.response}`);
+			return undefined;
+		}
+		if (event.kind === "reasoning") {
+			startThinking();
+			return undefined;
+		}
+		if (event.kind === "pending") {
+			clearThinking();
+			return handlePendingEvent(event, state.response);
+		}
+		if (event.kind === "tool_result") {
+			clearThinking();
+			addMsg(`  ↳ ${event.name}: ${truncate(event.result)}`, true);
+			return undefined;
+		}
+		return false;
+	};
+
+	/** Handle non-streaming agent events (usage, error, state, info).
+	 * Returns a number to short-circuit, or undefined to continue. */
+	const handleMetaEvent = (
+		event: AgentEvent,
+		state: { finishReason: string | undefined },
+	): number | undefined => {
+		if (event.kind === "usage") {
+			setTokens((t) => t + event.totalTokens);
+			setLastPrompt(event.promptTokens);
+			if (event.finishReason) state.finishReason = event.finishReason;
+			return undefined;
+		}
+		if (event.kind === "error") {
+			addMsg(`  ⚠ ${event.message}`, true);
+			return -1;
+		}
+		if (event.kind === "state" && event.state === "streaming") setStreaming("anvil: [generating…]");
+		else handleInfoEvent(event, addMsg);
+		return undefined;
+	};
+
+	const finalizeResponse = (state: { response: string; finishReason: string | undefined }) => {
+		if (state.response) addMsg(`anvil: ${state.response}`);
+		setStreaming("");
+		if (!state.response && state.finishReason)
+			addMsg(`  [no content — finish_reason: ${state.finishReason}]`, true);
+	};
+
 	const processEvents = async (events: AsyncGenerator<AgentEvent>): Promise<number> => {
-		let response = "";
-		let finishReason: string | undefined;
+		const state = { response: "", finishReason: undefined as string | undefined };
 		for await (const event of events) {
-			switch (event.kind) {
-				case "content":
-					response += event.text;
-					thinkingStart.current = null;
-					setIsThinking(false);
-					setStreaming(`anvil: ${response}`);
-					break;
-				case "reasoning":
-					if (thinkingStart.current === null) {
-						thinkingStart.current = Date.now();
-						setElapsed(0);
-					}
-					setIsThinking(true);
-					setStreaming("");
-					break;
-				case "pending":
-					thinkingStart.current = null;
-					setIsThinking(false);
-					setStreaming("");
-					return handlePendingEvent(event, response);
-				case "tool_result":
-					thinkingStart.current = null;
-					setIsThinking(false);
-					setStreaming("");
-					addMsg(`  ↳ ${event.name}: ${truncate(event.result)}`, true);
-					break;
-				case "trimmed":
-					addMsg(`  [trimmed ${event.count} old messages]`, true);
-					break;
-				case "overflow":
-					addMsg("⚠ context overflow detected — consider /compact or /new", true);
-					break;
-				case "compacting":
-					addMsg("  [compacting context...]", true);
-					break;
-				case "compacted":
-					addMsg(
-						`  ⚡ compacted: ~${event.before.toLocaleString()} → ~${event.after.toLocaleString()} tokens`,
-						true,
-					);
-					break;
-				case "usage":
-					setTokens((t) => t + event.totalTokens);
-					setLastPrompt(event.promptTokens);
-					if (event.finishReason) finishReason = event.finishReason;
-					break;
-				case "error":
-					addMsg(`  ⚠ ${event.message}`, true);
-					return -1;
-				case "state":
-					if (event.state === "streaming") setStreaming("anvil: [generating…]");
-					break;
-				default:
-					break;
+			const streamResult = await handleStreamEvent(event, state);
+			if (streamResult === false) {
+				const metaResult = handleMetaEvent(event, state);
+				if (metaResult !== undefined) return metaResult;
+			} else if (streamResult !== undefined) {
+				return streamResult;
 			}
 		}
-		if (response) addMsg(`anvil: ${response}`);
-		setStreaming("");
-		if (!response && finishReason) {
-			addMsg(`  [no content — finish_reason: ${finishReason}]`, true);
-		}
-		return response.length;
+		finalizeResponse(state);
+		return state.response.length;
 	};
 
 	// === Commands ===
@@ -402,7 +421,13 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			}
 			const cfgPath = join(homedir(), ".anvil", "config.yaml");
 			const raw = readFileSync(cfgPath, "utf-8");
-			writeFileSync(cfgPath, raw.replace(/^default_model:.*/m, `default_model: ${fq}`));
+			const updated = raw.includes("default_model:")
+				? raw.replace(/^default_model:.*/m, `default_model: ${fq}`)
+				: `${raw.trimEnd()}\ndefault_model: ${fq}\n`;
+			if (updated === raw && !raw.includes("default_model:")) {
+				addMsg(`[warning: default_model key not found in config — added it]`, true);
+			}
+			writeFileSync(cfgPath, updated);
 			addMsg(`[default → ${fq}]`, true);
 		} else if (arg.startsWith("@")) {
 			listModels(arg.slice(1));
@@ -547,6 +572,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			setMessages([]);
 			setTokens(0);
 			setLastPrompt(0);
+			setBusy(false);
 			sessionId = undefined;
 			addMsg("[new session]", true);
 		},
@@ -704,6 +730,31 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		</Box>
 	);
 }
+
+/** Handle informational agent events that only require addMsg — extracted to reduce processEvents complexity. */
+const handleInfoEvent = (
+	event: AgentEvent,
+	addMsg: (text: string, dim?: boolean) => void,
+): void => {
+	if (event.kind === "trimmed") {
+		addMsg(`  [trimmed ${event.count} old messages]`, true);
+		return;
+	}
+	if (event.kind === "overflow") {
+		addMsg("⚠ context overflow detected — consider /compact or /new", true);
+		return;
+	}
+	if (event.kind === "compacting") {
+		addMsg("  [compacting context...]", true);
+		return;
+	}
+	if (event.kind === "compacted") {
+		addMsg(
+			`  ⚡ compacted: ~${event.before.toLocaleString()} → ~${event.after.toLocaleString()} tokens`,
+			true,
+		);
+	}
+};
 
 function Root() {
 	return <App providerWarning={providerWarning} />;

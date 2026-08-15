@@ -368,12 +368,16 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	let activeAgent: AgentDef | undefined = flags.agent
 		? availableAgents.find((a) => a.name === flags.agent)
 		: availableAgents.find((a) => a.name === "default");
-	if (activeAgent) applyAgentToRegistry(registry, activeAgent);
 	if (activeAgent?.model) engine.setModel(activeAgent.model);
 
 	// MCP + LSP
 	const mcpServers = await setupMcp(p.mcpPaths, registry);
 	const { lspManager, diagnosticInjector } = setupLsp(projectRoot, registry);
+
+	// Apply agent filter after all tools are registered (MCP + LSP included)
+	// Snapshot the full tool set so agent switching can always start from the complete set
+	const baseTools = registry.all().map((t) => t);
+	if (activeAgent) applyAgentToRegistry(registry, activeAgent, baseTools);
 
 	// Prompt
 	const projectPrompt = existsSync(p.promptPath)
@@ -447,7 +451,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		},
 		setActiveAgent: (a) => {
 			activeAgent = a;
-			applyAgentToRegistry(registry, a);
+			applyAgentToRegistry(registry, a, baseTools);
 		},
 		shutdown: async () => {
 			await Promise.all(mcpServers.map(disconnectServer));

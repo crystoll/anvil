@@ -348,11 +348,12 @@ const handleModelCommand = async (
 	if (arg.startsWith("set ")) {
 		const model = arg.slice(4).trim();
 		if (!model) return;
-		const raw = readFileSync(join(homedir(), ".anvil", "config.yaml"), "utf-8");
-		writeFileSync(
-			join(homedir(), ".anvil", "config.yaml"),
-			raw.replace(/^default_model:.*/m, `default_model: ${model}`),
-		);
+		const cfgPath = join(homedir(), ".anvil", "config.yaml");
+		const raw = readFileSync(cfgPath, "utf-8");
+		const updated = raw.includes("default_model:")
+			? raw.replace(/^default_model:.*/m, `default_model: ${model}`)
+			: `${raw.trimEnd()}\ndefault_model: ${model}\n`;
+		writeFileSync(cfgPath, updated);
 		engine.setModel(model);
 		console.log(`Default model set to: ${model}`);
 		return;
