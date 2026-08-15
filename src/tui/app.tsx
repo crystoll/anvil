@@ -754,6 +754,8 @@ const handleInfoEvent = (
 			true,
 		);
 	}
+	if (event.kind === "done" && event.message) addMsg(`✓ ${event.message}`);
+	if (event.kind === "stuck" && event.message) addMsg(`✗ ${event.message}`, true);
 };
 
 function Root() {

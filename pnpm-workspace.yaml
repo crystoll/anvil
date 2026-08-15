@@ -5,3 +5,8 @@ allowBuilds:
   msw: true
 overrides:
   anvil: 'link:'
+  fast-uri: '>=3.1.5'
+  ip-address: '>=10.3.1'
+  hono: '>=4.13.2'
+  '@hono/node-server': '>=2.1.1'
+  body-parser: '>=2.3.0'

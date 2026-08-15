@@ -41,13 +41,13 @@
 		"check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.29.0",
+		"@modelcontextprotocol/sdk": "^1.30.0",
 		"@mozilla/readability": "0.6.0",
 		"anvil": "link:",
 		"ink": "^7.1.0",
 		"ink-spinner": "^5.0.0",
 		"ink-text-input": "^6.0.0",
-		"js-yaml": "5.1.0",
+		"js-yaml": "5.3.0",
 		"linkedom": "0.18.9",
 		"neverthrow": "8.2.0",
 		"react": "^19.2.7",

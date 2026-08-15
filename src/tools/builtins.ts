@@ -161,8 +161,12 @@ export const glob: Tool = {
 	execute: async (args, projectRoot) => {
 		const pattern = String(args.pattern ?? "");
 		const { glob: fsGlob } = await import("node:fs/promises");
+		const excluded = new Set(["node_modules", ".git", "dist", "build", ".anvil"]);
 		const files: string[] = [];
-		for await (const f of fsGlob(pattern, { cwd: projectRoot })) {
+		for await (const f of fsGlob(pattern, {
+			cwd: projectRoot,
+			exclude: (p) => excluded.has(p),
+		})) {
 			files.push(f);
 			if (files.length >= 100) break;
 		}

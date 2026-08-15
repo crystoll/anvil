@@ -152,15 +152,20 @@ const wrapWithGuards = (tool: Tool, settings: ToolSettings | undefined): Tool =>
 
 type CmdSettings = { allowedCommands?: string[]; deniedCommands?: string[] };
 
-/** Check command against allow/deny regex lists. Returns denial reason or undefined if allowed. */
+/** Convert a command pattern to a regex. Patterns are treated as regex anchored at start and end.
+ * Supports full regex syntax (e.g. `git (diff|log|status).*`, `rm -rf.*`).
+ * Note: patterns from agent config YAML are trusted (loaded from the project or user config). */
+const commandPatternToRegex = (pattern: string): RegExp => new RegExp(`^${pattern}$`);
+
+/** Check command against allow/deny glob lists. Returns denial reason or undefined if allowed. */
 export const checkCommand = (command: string, settings: CmdSettings): string | undefined => {
 	for (const pattern of settings.deniedCommands ?? []) {
-		if (new RegExp(`^${pattern}$`).test(command)) {
+		if (commandPatternToRegex(pattern).test(command)) {
 			return `DENIED: command matches deny pattern: ${pattern}`;
 		}
 	}
 	if (settings.allowedCommands && settings.allowedCommands.length > 0) {
-		const allowed = settings.allowedCommands.some((p) => new RegExp(`^${p}$`).test(command));
+		const allowed = settings.allowedCommands.some((p) => commandPatternToRegex(p).test(command));
 		if (!allowed) return `DENIED: command not in allowedCommands`;
 	}
 	return undefined;
