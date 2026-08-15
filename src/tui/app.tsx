@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Box, render, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { compactHistory } from "../agent/compact.js";
 import type { AgentEvent } from "../agent/loop.js";
 import { listSessions, loadSession, saveSession } from "../session/index.js";
@@ -99,12 +99,30 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	const [tokens, setTokens] = useState(0);
 	const [lastPrompt, setLastPrompt] = useState(0);
 	const [streaming, setStreaming] = useState("");
+	const [elapsed, setElapsed] = useState(0);
+	const [isThinking, setIsThinking] = useState(false);
+	const thinkingStart = useRef<number | null>(null);
 	const [busy, setBusyState] = useState(false);
 	const busyRef = useRef(false);
 	const setBusy = (v: boolean) => {
 		busyRef.current = v;
 		setBusyState(v);
+		if (!v) {
+			thinkingStart.current = null;
+			setIsThinking(false);
+		}
 	};
+
+	// Tick elapsed seconds while the model is thinking (reasoning phase)
+	useEffect(() => {
+		const interval = setInterval(() => {
+			if (thinkingStart.current !== null) {
+				setElapsed(Math.floor((Date.now() - thinkingStart.current) / 1000));
+			}
+		}, 1000);
+		return () => clearInterval(interval);
+	}, []);
+
 	const [pendingTool, setPendingTool] = useState<string | null>(null);
 	const pendingToolName = useRef<string | null>(null);
 	const autoApproved = useRef(new Set<string>());
@@ -225,14 +243,27 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			switch (event.kind) {
 				case "content":
 					response += event.text;
+					thinkingStart.current = null;
+					setIsThinking(false);
 					setStreaming(`anvil: ${response}`);
 					break;
 				case "reasoning":
-					setStreaming("anvil: [thinking…]");
+					if (thinkingStart.current === null) {
+						thinkingStart.current = Date.now();
+						setElapsed(0);
+					}
+					setIsThinking(true);
+					setStreaming("");
 					break;
 				case "pending":
+					thinkingStart.current = null;
+					setIsThinking(false);
+					setStreaming("");
 					return handlePendingEvent(event, response);
 				case "tool_result":
+					thinkingStart.current = null;
+					setIsThinking(false);
+					setStreaming("");
 					addMsg(`  ↳ ${event.name}: ${truncate(event.result)}`, true);
 					break;
 				case "trimmed":
@@ -258,6 +289,9 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 				case "error":
 					addMsg(`  ⚠ ${event.message}`, true);
 					return -1;
+				case "state":
+					if (event.state === "streaming") setStreaming("anvil: [generating…]");
+					break;
 				default:
 					break;
 			}
@@ -630,6 +664,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 					</Text>
 				))}
 				{streaming && <Text color="gray">{streaming}</Text>}
+				{isThinking && !streaming && <Text color="gray">anvil: [thinking… {elapsed}s]</Text>}
 			</Box>
 			<StatusBar
 				provider={activeProviderName}

@@ -233,7 +233,7 @@ pnpm format            # Biome (code) + dprint (markdown)
 | ------------------------------------------- | --------------------------------------------------------- |
 | [architecture.md](docs/architecture.md)     | Provider layer, agent loop, tool registry, error handling |
 | [multi-provider.md](docs/multi-provider.md) | LiteLLM, OpenRouter, remote provider setup                |
-| [models.md](docs/models.md)                 | Model benchmarks and recommendations                      |
+| [models.md](docs/models.md)                 | Model benchmarks, recommendations, hardware setup guides  |
 | [hooks.md](docs/hooks.md)                   | Agent lifecycle hooks and guardrails                      |
 | [mcp.md](docs/mcp.md)                       | MCP server configuration (stdio + HTTP)                   |
 | [lsp.md](docs/lsp.md)                       | Language server integration and tools                     |
