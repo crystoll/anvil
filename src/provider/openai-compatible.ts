@@ -183,7 +183,9 @@ async function* readWithTimeout(
 					yield "end";
 					return;
 				}
-				throw e;
+				// Network drop (TypeError: failed to fetch, etc.) — end stream cleanly
+				yield "end";
+				return;
 			}
 			if (readResult.done) {
 				yield "end";

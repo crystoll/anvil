@@ -89,7 +89,7 @@ Ollama uses unified memory — the same pool serves both CPU and GPU. This means
 | `qwen3:32b-q4_K_M`                   | 20GB  | ✅            | Good quality/size tradeoff |
 | `qwen3:30b-a3b-instruct-2507-q4_K_M` | 19GB  | ✅            | Fast MoE, 3B active params |
 
-**KV cache is the hidden cost.** At 128k context, a 27B model needs ~10-12GB for KV cache on top of the weights — leaving little headroom on 36GB. Keep `context_size: 32768` for agentic work unless you specifically need long context.
+**KV cache is the hidden cost.** At 128k context, a 27B model needs ~10-12GB for KV cache on top of the weights — leaving little headroom on 36GB. At 64k context, `qwen3.6:35b` uses ~28GB total — fits comfortably with headroom to spare.
 
 #### Ollama environment variables
 
@@ -105,10 +105,10 @@ export OLLAMA_CONTEXT_LENGTH=32000  # default context for models (Anvil override
 
 ```yaml
 default_provider: ollama
-default_model: gemma4:e4b           # or qwen3.6:35b for heavier tasks
+default_model: qwen3.6:35b          # fast MoE, best speed+capability on 36GB; gemma4:e4b for lighter tasks
 stream_timeout: 120
 connect_timeout: 300                # cold model load from disk can take 30-60s
-context_size: 32768                 # 32k sufficient for agentic work; saves ~8GB vs 128k
+context_size: 65536                 # 64k — qwen3.6:35b at 64k uses ~28GB total, fits in 36GB
 
 providers:
   ollama:
@@ -132,25 +132,41 @@ With a discrete GPU, VRAM is the constraint — not system RAM. Model weights pl
 
 #### Example: RTX 5080 (16GB VRAM) + 64GB system RAM
 
-| Model                                | Size  | Fits in 16GB VRAM? | Notes                           |
-| ------------------------------------ | ----- | ------------------ | ------------------------------- |
-| `gemma4:e4b`                         | 9.6GB | ✅ easily          | Leaves ~5GB for KV cache at 32k |
-| `qwen3:14b-q4_K_M`                   | 9.3GB | ✅ easily          | Good quality, fully on GPU      |
-| `qwen3:30b-a3b-instruct-2507-q4_K_M` | 19GB  | ⚠ partial          | ~3GB offloads; still fast (MoE) |
-| `qwen3:32b-q4_K_M`                   | 20GB  | ⚠ partial          | ~4GB offloads; dense, slower    |
-| `qwen3:32b-q8_0`                     | 35GB  | ❌                 | Too large for 16GB VRAM         |
+The key constraint: at 64k context with q4_0 KV cache, the cache alone takes ~3-4GB, leaving ~12GB for model weights. Anything larger offloads to CPU.
 
-**Best pick for 16GB VRAM:** `qwen3.8:27b` — released August 2025, 18GB q4_K_M by default. ~2GB offloads to system RAM (irrelevant with 64GB available). Supports vision, tools, and thinking mode. Stronger than qwen3 for agentic tasks.
+| Model                | Size  | Full GPU at 32k? | Full GPU at 64k? | Notes                           |
+| -------------------- | ----- | ---------------- | ---------------- | ------------------------------- |
+| `qwen3.5:9b-q4_K_M`  | 6.6GB | ✅               | ✅               | Fastest, plenty of headroom     |
+| `qwen3.5:9b-q8_0`    | 11GB  | ✅               | ✅               | Best quality that fits fully    |
+| `gemma4:e4b`         | 9.6GB | ✅               | ✅               | Good all-rounder                |
+| `qwen3.8:27b`        | 18GB  | ⚠ ~30% CPU       | ⚠ ~40% CPU       | Capable but slower with offload |
+| `qwen3.5:27b-q4_K_M` | 17GB  | ⚠ ~25% CPU       | ⚠ ~40% CPU       | Same tradeoff                   |
+| `muse-glimmer:30b`   | 18GB  | ⚠ ~30% CPU       | ⚠ ~40% CPU       | Meta agentic model, partial     |
 
-```bash
-ollama pull qwen3.8:27b   # default tag is already q4_K_M at 18GB
-```
-
-Alternative if you prefer the MoE architecture (lower active params = faster token generation):
+**For 16GB VRAM with long context (64k+):** the sweet spot is `qwen3.5:9b-q8_0` — latest generation, 11GB, fully in VRAM with room for KV cache, fast. The quality gap vs 27B models is real but qwen3.5 is meaningfully stronger than qwen3 at the same size.
 
 ```bash
-ollama pull qwen3:30b-a3b-instruct-2507-q4_K_M   # 19GB MoE, 3B active params per token
+ollama pull qwen3.5:9b-q8_0
 ```
+
+If you need a larger model and can tolerate slower generation, `qwen3.8:27b` (default q4_K_M, 18GB) is the most capable option — ~30-40% of layers offload to CPU but 64GB system RAM handles it without swapping.
+
+```bash
+ollama pull qwen3.8:27b
+```
+
+#### With 32GB VRAM (e.g. RTX 5090)
+
+32GB is the tier where capability, long context, and full-GPU inference coexist without compromise:
+
+| Model              | Size | Full GPU at 64k? | Notes                              |
+| ------------------ | ---- | ---------------- | ---------------------------------- |
+| `qwen3.8:27b`      | 18GB | ✅               | Fully on GPU, 256k context capable |
+| `qwen3.5:27b-q8_0` | 30GB | ✅ at 32k        | High quality, tight at 64k         |
+| `qwen3.5:35b-a3b`  | 24GB | ✅               | MoE — fast + capable               |
+| `muse-glimmer:30b` | 18GB | ✅               | Meta agentic model, full GPU       |
+
+`qwen3.8:27b` fits fully at 64k context with comfortable headroom on 32GB — that's the upgrade that resolves the 16GB tradeoff entirely.
 
 #### Running Ollama inside WSL2
 
@@ -245,10 +261,10 @@ ollama ps               # check context size and GPU/CPU split
 
 ```yaml
 default_provider: ollama
-default_model: qwen3.8:27b
+default_model: qwen3.5:9b-q8_0   # fully in VRAM at 64k; swap for qwen3.8:27b if you prefer capability over speed
 stream_timeout: 120
-connect_timeout: 60           # GPU loads models fast; 60s is sufficient
-context_size: 32768           # keeps KV cache within 16GB VRAM
+connect_timeout: 60               # GPU loads models fast; 60s is sufficient
+context_size: 65536               # 64k — fits fully in 16GB VRAM with 9b-q8_0; expect CPU offload with 27b
 
 providers:
   ollama:

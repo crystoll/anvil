@@ -150,21 +150,34 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 
 		const accumulator = createAccumulator();
 
-		for await (const chunk of result.value) {
-			if (abortController.signal.aborted) {
-				currentState = "idle";
-				yield { kind: "cancelled" };
-				return;
-			}
+		try {
+			for await (const chunk of result.value) {
+				if (abortController.signal.aborted) {
+					currentState = "idle";
+					yield { kind: "cancelled" };
+					return;
+				}
 
-			if (chunk.error) {
-				currentState = "idle";
-				yield { kind: "error", error: chunk.error };
-				return;
-			}
+				if (chunk.error) {
+					currentState = "idle";
+					yield { kind: "error", error: chunk.error };
+					return;
+				}
 
-			accumulateChunk(accumulator, chunk);
-			yield { kind: "chunk", chunk };
+				accumulateChunk(accumulator, chunk);
+				yield { kind: "chunk", chunk };
+			}
+		} catch (e) {
+			currentState = "idle";
+			abortController = null;
+			yield {
+				kind: "error",
+				error: {
+					kind: "connection",
+					message: `Stream interrupted: ${e instanceof Error ? e.message : String(e)}`,
+				},
+			};
+			return;
 		}
 
 		const message = finalizeMessage(accumulator);

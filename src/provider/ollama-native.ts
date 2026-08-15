@@ -201,9 +201,14 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 		reader: ReadableStreamDefaultReader<Uint8Array>,
 	): AsyncGenerator<Uint8Array> {
 		while (true) {
-			const { done, value } = await reader.read();
-			if (done) return;
-			yield value;
+			let result: ReadableStreamReadResult<Uint8Array>;
+			try {
+				result = await reader.read();
+			} catch {
+				return; // connection dropped — end stream cleanly, stream timeout or error chunk handles it
+			}
+			if (result.done) return;
+			yield result.value;
 		}
 	}
 
