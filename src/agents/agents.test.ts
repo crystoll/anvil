@@ -123,11 +123,11 @@ describe("applyAgentToRegistry", () => {
 		reg.register(fakeTool("run_cmd", true));
 
 		const agent: AgentDef = { name: "test", tools: ["glob", "read_file"] };
-		const filtered = applyAgentToRegistry(reg, agent);
+		applyAgentToRegistry(reg, agent);
 		expect(
-			filtered
+			reg
 				.all()
-				.map((t) => t.name)
+				.map((t: Tool) => t.name)
 				.sort(),
 		).toEqual(["glob", "read_file"]);
 	});
@@ -138,8 +138,8 @@ describe("applyAgentToRegistry", () => {
 		reg.register(fakeTool("run_cmd", true));
 
 		const agent: AgentDef = { name: "test", tools: ["*"] };
-		const filtered = applyAgentToRegistry(reg, agent);
-		expect(filtered.all()).toHaveLength(2);
+		applyAgentToRegistry(reg, agent);
+		expect(reg.all()).toHaveLength(2);
 	});
 
 	it("allowedTools overrides needsApproval to false", () => {
@@ -148,9 +148,9 @@ describe("applyAgentToRegistry", () => {
 		reg.register(fakeTool("write_file", true));
 
 		const agent: AgentDef = { name: "test", tools: ["*"], allowedTools: ["run_cmd"] };
-		const filtered = applyAgentToRegistry(reg, agent);
-		expect(filtered.get("run_cmd")?.needsApproval).toBe(false);
-		expect(filtered.get("write_file")?.needsApproval).toBe(true);
+		applyAgentToRegistry(reg, agent);
+		expect(reg.get("run_cmd")?.needsApproval).toBe(false);
+		expect(reg.get("write_file")?.needsApproval).toBe(true);
 	});
 });
 
@@ -235,8 +235,8 @@ describe("applyAgentToRegistry with toolSettings guards", () => {
 			tools: ["*"],
 			toolSettings: { run_cmd: { deniedCommands: ["rm -rf.*", "sudo.*"] } },
 		};
-		const filtered = applyAgentToRegistry(reg, agent);
-		const tool = filtered.get("run_cmd") as Tool;
+		applyAgentToRegistry(reg, agent);
+		const tool = reg.get("run_cmd") as Tool;
 		expect(await tool.execute({ command: "rm -rf /" }, "/tmp")).toContain("DENIED");
 		expect(await tool.execute({ command: "git status" }, "/tmp")).toBe("ran: git status");
 	});
@@ -254,8 +254,8 @@ describe("applyAgentToRegistry with toolSettings guards", () => {
 			tools: ["*"],
 			toolSettings: { read_file: { deniedPaths: ["**/.env*", "**/secret/**"] } },
 		};
-		const filtered = applyAgentToRegistry(reg, agent);
-		const tool = filtered.get("read_file") as Tool;
+		applyAgentToRegistry(reg, agent);
+		const tool = reg.get("read_file") as Tool;
 		expect(await tool.execute({ path: "/project/.env.local" }, "/tmp")).toContain("DENIED");
 		expect(await tool.execute({ path: "/project/src/main.ts" }, "/tmp")).toBe(
 			"content of /project/src/main.ts",
@@ -275,8 +275,8 @@ describe("applyAgentToRegistry with toolSettings guards", () => {
 			tools: ["*"],
 			toolSettings: { write_file: { allowedPaths: ["/project/**"] } },
 		};
-		const filtered = applyAgentToRegistry(reg, agent);
-		const tool = filtered.get("write_file") as Tool;
+		applyAgentToRegistry(reg, agent);
+		const tool = reg.get("write_file") as Tool;
 		expect(await tool.execute({ path: "/etc/passwd" }, "/tmp")).toContain("DENIED");
 		expect(await tool.execute({ path: "/project/new.ts" }, "/tmp")).toBe("wrote /project/new.ts");
 	});

@@ -18,6 +18,7 @@ export type Tool = {
 /** Tool registry — lookup and schema generation for providers. */
 export type Registry = {
 	register: (tool: Tool) => void;
+	unregister: (name: string) => void;
 	get: (name: string) => Tool | undefined;
 	all: () => readonly Tool[];
 	schemas: () => ToolSchema[];
@@ -56,6 +57,9 @@ export const createRegistry = (): Registry => {
 	return {
 		register: (tool) => {
 			tools.set(tool.name, tool);
+		},
+		unregister: (name) => {
+			tools.delete(name);
 		},
 		get: (name) => tools.get(name),
 		all: () => [...tools.values()],

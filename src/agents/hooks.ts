@@ -29,6 +29,7 @@ const fireAndForget = (command: string, context: HookContext): void => {
 		stdio: ["pipe", "ignore", "ignore"],
 		detached: true,
 	});
+	child.stdin.on("error", () => {});
 	child.stdin.write(JSON.stringify(context));
 	child.stdin.end();
 	child.unref();

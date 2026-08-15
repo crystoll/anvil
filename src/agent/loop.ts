@@ -249,6 +249,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		const hash = `${toolName}:${JSON.stringify(args)}`;
 		recentCalls.push(hash);
 		if (recentCalls.length > 6) recentCalls.shift();
+		// Check after push so the current call is included in the count
 		return recentCalls.filter((h) => h === hash).length >= 3;
 	};
 
@@ -311,11 +312,31 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 
 	/** Process tool call outcome. Returns events + whether to continue looping. */
 	const processOutcome = async (): Promise<{ loop: boolean; events: AgentEvent[] }> => {
-		const call = engine.messages()[engine.messages().length - 1]?.toolCalls?.[0];
-		if (!call) return { loop: false, events: [setState("idle")] };
-		const outcome = await handleToolCall(call);
-		if (outcome.action === "error_fed_back") return { loop: true, events: [] };
-		return { loop: outcome.action === "executed", events: outcome.events };
+		const toolCalls = engine.messages()[engine.messages().length - 1]?.toolCalls;
+		if (!toolCalls?.length) return { loop: false, events: [setState("idle")] };
+
+		const allEvents: AgentEvent[] = [];
+		let shouldLoop = false;
+
+		for (const call of toolCalls) {
+			const outcome = await handleToolCall(call);
+			if (outcome.action === "error_fed_back") {
+				shouldLoop = true;
+				continue;
+			}
+			if (outcome.action === "pending") {
+				// Stop at the first tool needing approval — can only handle one at a time
+				return { loop: false, events: [...allEvents, ...outcome.events] };
+			}
+			if (outcome.action === "done" || outcome.action === "stuck") {
+				return { loop: false, events: [...allEvents, ...outcome.events] };
+			}
+			// executed
+			allEvents.push(...outcome.events);
+			shouldLoop = true;
+		}
+
+		return { loop: shouldLoop, events: allEvents };
 	};
 
 	/** Process one round's outcome after streaming. Returns whether to continue looping. */
@@ -461,18 +482,23 @@ const executeTool = async (
 	args: Record<string, unknown>,
 	projectRoot: string,
 ): Promise<string> => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
 	try {
 		return await Promise.race([
-			tool.execute(args, projectRoot),
-			timeout(tool.timeout, `Tool "${tool.name}" timed out after ${tool.timeout}ms`),
+			tool.execute(args, projectRoot).finally(() => clearTimeout(timer)),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(
+					() => reject(new Error(`Tool "${tool.name}" timed out after ${tool.timeout}ms`)),
+					tool.timeout,
+				);
+			}),
 		]);
 	} catch (e) {
 		return `Error: ${e instanceof Error ? e.message : String(e)}`;
+	} finally {
+		clearTimeout(timer);
 	}
 };
-
-const timeout = (ms: number, message: string): Promise<never> =>
-	new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms));
 
 const extractMessage = (argsJson: string): string => {
 	try {

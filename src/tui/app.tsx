@@ -215,7 +215,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			promptTokens: tokens,
 			totalTokens: tokens,
 		});
-		ctx.fireStopHooks();
+		ctx.fireStopHooks().catch(() => {});
 	};
 
 	const handlePendingEvent = async (

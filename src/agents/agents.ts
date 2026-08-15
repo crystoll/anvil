@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { load as yamlLoad } from "js-yaml";
 import type { Result } from "neverthrow";
 import { err, ok } from "neverthrow";
-import { createRegistry, type Registry, type Tool } from "../tools/registry.js";
+import { type Registry, type Tool } from "../tools/registry.js";
 
 export type ToolSettings = {
 	read_file?: { deniedPaths?: string[] };
@@ -95,20 +95,21 @@ export const discoverAgents = (dirs: string[]): AgentDef[] => {
 	return agents;
 };
 
-/** Create a filtered registry based on agent config. */
-export const applyAgentToRegistry = (source: Registry, agent: AgentDef): Registry => {
+/** Apply agent config to a registry in-place (guards, approval overrides). */
+export const applyAgentToRegistry = (registry: Registry, agent: AgentDef): void => {
 	const allowedSet = new Set(agent.allowedTools ?? []);
 	const useAll = agent.tools.includes("*");
 	const toolSet = new Set(agent.tools);
-	const filtered = createRegistry();
 
-	for (const tool of source.all()) {
-		if (!useAll && !toolSet.has(tool.name)) continue;
+	for (const tool of registry.all()) {
+		if (!useAll && !toolSet.has(tool.name)) {
+			registry.unregister(tool.name);
+			continue;
+		}
 		const wrapped = wrapWithGuards(tool, agent.toolSettings);
 		const override = allowedSet.has(wrapped.name) ? { ...wrapped, needsApproval: false } : wrapped;
-		filtered.register(override);
+		registry.register(override);
 	}
-	return filtered;
 };
 
 const wrapWithGuards = (tool: Tool, settings: ToolSettings | undefined): Tool => {
@@ -149,6 +150,10 @@ export const checkCommand = (command: string, settings: CmdSettings): string | u
 		if (new RegExp(`^${pattern}$`).test(command)) {
 			return `DENIED: command matches deny pattern: ${pattern}`;
 		}
+	}
+	if (settings.allowedCommands && settings.allowedCommands.length > 0) {
+		const allowed = settings.allowedCommands.some((p) => new RegExp(`^${p}$`).test(command));
+		if (!allowed) return `DENIED: command not in allowedCommands`;
 	}
 	return undefined;
 };
