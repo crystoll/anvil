@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { Box, render, Text, useInput } from "ink";
+import { Box, render, Static, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
 import { useEffect, useRef, useState } from "react";
@@ -47,6 +47,21 @@ type Msg = { id: number; text: string; dim?: boolean };
 const truncate = (s: string, max = 80): string => {
 	const one = s.replace(/\n/g, " ").trim();
 	return one.length > max ? `${one.slice(0, max)}…` : one;
+};
+
+/** Produce a single-line summary of tool args for the approval prompt. */
+const summarizeArgs = (args: Record<string, unknown>): string => {
+	// For common tools, show the most meaningful argument
+	const primary =
+		(args.command as string | undefined) ??
+		(args.path as string | undefined) ??
+		(args.query as string | undefined) ??
+		(args.url as string | undefined);
+	if (primary) return truncate(primary, 120);
+	// Fallback: show first key=value, truncated
+	const first = Object.entries(args)[0];
+	if (!first) return "";
+	return truncate(`${first[0]}=${JSON.stringify(first[1])}`, 120);
 };
 
 function StatusBar({
@@ -228,7 +243,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			return len > 0 ? len : response.length;
 		}
 		pendingToolName.current = event.call.tool.name;
-		setPendingTool(`${event.call.tool.name}(${JSON.stringify(event.call.args)})`);
+		setPendingTool(`${event.call.tool.name}: ${summarizeArgs(event.call.args)}`);
 		if (response) {
 			addMsg(`anvil: ${response}`);
 			setStreaming("");
@@ -683,12 +698,14 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 
 	return (
 		<Box flexDirection="column" height="100%">
-			<Box flexDirection="column" flexGrow={1} paddingX={1}>
-				{messages.map((m) => (
-					<Text key={m.id} dimColor={m.dim ?? false}>
-						{m.text}
-					</Text>
-				))}
+			<Static items={messages}>
+				{(m) => (
+					<Box key={m.id} paddingX={1}>
+						<Text dimColor={m.dim ?? false}>{m.text}</Text>
+					</Box>
+				)}
+			</Static>
+			<Box paddingX={1} flexDirection="column">
 				{streaming && <Text color="gray">{streaming}</Text>}
 				{isThinking && !streaming && <Text color="gray">anvil: [thinking… {elapsed}s]</Text>}
 			</Box>
@@ -713,13 +730,10 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 						))}
 					</Box>
 				) : pendingTool ? (
-					<>
-						<Text color="yellow">
-							{"⚡ "}
-							{pendingTool}
-						</Text>
-						<Text dimColor> [y]es [n]o [a]lways </Text>
-					</>
+					<Box flexDirection="column">
+						<Text color="yellow">⚡ {pendingTool}</Text>
+						<Text dimColor>Allow? [y]es [n]o [a]lways </Text>
+					</Box>
 				) : (
 					<>
 						<Text color="green">{"❯ "}</Text>
