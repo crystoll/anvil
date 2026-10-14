@@ -231,7 +231,7 @@ Do this before writing the many new tests in M3–M8.
   - Artifacts go to `.vitest/`; add it to `.gitignore`.
 
   Run both `pnpm test` and `pnpm test:integration`; the test count must stay at 178 or more.
-- [ ] **M2.2 MSW 3.0.x** (3.0.3 today; ESM-only, Node 22.12+, TypeScript 5.9+).
+- [x] **M2.2 MSW 3.0.x** (3.0.3 today; ESM-only, Node 22.12+, TypeScript 5.9+).
   - Rename `onUnhandledRequest` to `onUnhandledFrame` in the four `server.listen()` calls (bootstrap and the three provider tests).
   - MSW 3 no longer manages cookies in Node, so the `localStorage` shim in `vitest.setup.ts` is probably obsolete. Remove it if the tests pass without it.
   - MSW no longer patches `setTimeout`. No test uses fake timers today.

@@ -3,7 +3,6 @@ minimumReleaseAge: 1440
 allowBuilds:
   dprint: true
   esbuild: true
-  msw: true
 overrides:
   fast-uri: '>=3.1.5'
   ip-address: '>=10.3.1'
@@ -11,3 +10,7 @@ overrides:
   '@hono/node-server': '>=2.1.1'
   body-parser: '>=2.3.0'
   proxy-addr: '>=2.0.8'
+peerDependencyRules:
+  allowedVersions:
+    # vitest's mocker only needs msw 2 for browser mode; our tests run in node
+    '@vitest/mocker>msw': '3'
