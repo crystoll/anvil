@@ -27,10 +27,13 @@ type StreamFormat = {
 	end: string;
 };
 
+type MockStreamServerOptions = { healthPath?: string };
+
 export const startMockStreamServer = async (
 	path: string,
 	script: StreamFaultScript,
 	format: StreamFormat,
+	options: MockStreamServerOptions = {},
 ): Promise<MockStreamServer> => {
 	const requests: unknown[] = [];
 	let currentScript = script;
@@ -41,6 +44,12 @@ export const startMockStreamServer = async (
 	});
 
 	const server = createServer(async (request, response) => {
+		if (request.method === "GET" && request.url === options.healthPath) {
+			response
+				.writeHead(200, { "Content-Type": "application/json" })
+				.end(JSON.stringify({ models: [] }));
+			return;
+		}
 		if (request.url !== path) {
 			response.writeHead(404).end();
 			return;

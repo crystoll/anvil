@@ -460,10 +460,11 @@ type SessionController = {
     - `/retry` never duplicates the user message (F17).
     - `/model`, `/skill` and `/agent` take effect on the next request (built on M6.9).
     - `/rewind N` counts user turns, as the CLI does today. The TUI keeps `n*2` messages, which splits tool groups.
-- [ ] **M8.2 Port the readline CLI first.** It's smaller, so it validates the API.
+- [x] **M8.2 Port the readline CLI first.** It's smaller, so it validates the API.
   - It fixes F17's dropped second pending call and the preview reading `search`/`replace`.
   - Queue lines that arrive during a turn (F21). Only the `> ` prompt takes them, never an approval. Ctrl+C clears the queue, and EOF on piped stdin runs what's queued before exiting.
   - **E2E test:** spawn `node dist/main.js` with piped stdio and `HOME=<tmp>`, against the mock server. Simple mode is chosen automatically when stdout isn't a TTY. Pipe in two prompts and `/quit`; both prompts must run.
+  - **Done:** the shared controller now owns CLI turns and approvals; queued prompts drain through EOF, approval input is fresh-only, Ctrl+C clears buffered input, and an E2E test covers successive approvals and `edit_file` previews.
 - [ ] **M8.3 Port the TUI.**
   - Split `src/tui/app.tsx` into an exported `App({ controller })` view and an entry module that bootstraps and renders. Today the module bootstraps at import time, which makes it untestable.
   - Subscribe to state with `useSyncExternalStore`, which removes the stale closures (F8).
