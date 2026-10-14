@@ -125,6 +125,7 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
   - Only the first 8,000 characters are kept, so errors at the end of long output are lost.
   - Fixed in M7.2 and M10.9.
 - **F20. Closing the readline CLI skips shutdown.** ✅ Ctrl+C or Ctrl+D at any prompt closes readline, but Node never settles a pending `question()`. The process dies with exit code 13 and a "Detected unsettled top-level await" warning, and `ctx.shutdown()` never runs. Fixed in M3.12.
+- **F21. The readline CLI drops input that arrives during a turn.** ✅ Readline hands each line to a pending `question()` and otherwise emits a `'line'` event, which nothing listens to. A prompt typed while the model works is echoed into the answer, then lost. Piped input runs only its first prompt, and its closing `/quit` is lost too. The TUI keeps the text in its input box. Fixed in M8.2.
 
 ## Milestones
 
@@ -456,7 +457,8 @@ type SessionController = {
     - `/rewind N` counts user turns, as the CLI does today. The TUI keeps `n*2` messages, which splits tool groups.
 - [ ] **M8.2 Port the readline CLI first.** It's smaller, so it validates the API.
   - It fixes F17's dropped second pending call and the preview reading `search`/`replace`.
-  - **E2E test:** spawn `node dist/main.js` with piped stdio and `HOME=<tmp>`, against the mock server. Simple mode is chosen automatically when stdout isn't a TTY.
+  - Queue lines that arrive during a turn (F21). Only the `> ` prompt takes them, never an approval. Ctrl+C clears the queue, and EOF on piped stdin runs what's queued before exiting.
+  - **E2E test:** spawn `node dist/main.js` with piped stdio and `HOME=<tmp>`, against the mock server. Simple mode is chosen automatically when stdout isn't a TTY. Pipe in two prompts and `/quit`; both prompts must run.
 - [ ] **M8.3 Port the TUI.**
   - Split `src/tui/app.tsx` into an exported `App({ controller })` view and an entry module that bootstraps and renders. Today the module bootstraps at import time, which makes it untestable.
   - Subscribe to state with `useSyncExternalStore`, which removes the stale closures (F8).
@@ -652,7 +654,7 @@ type SessionController = {
   - Use piped stdio for conversations.
   - Use `-c "<prompt>" --yes` for one-shot runs.
   - Send SIGTERM mid-stream to check that the session file is valid and complete up to the last commit.
-- **Regression mapping:** every finding F1–F20 gets at least one test named after it, for example `it("F1: next send after cancel reaches the provider")`.
+- **Regression mapping:** every finding F1–F21 gets at least one test named after it, for example `it("F1: next send after cancel reaches the provider")`.
 
 ## Parking lot (not scheduled)
 
