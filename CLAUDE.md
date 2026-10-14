@@ -168,6 +168,7 @@ pnpm dev          # Launch interactive CLI (agent mode with tools)
 pnpm build        # Production build (tsup)
 pnpm test         # Run tests (vitest)
 pnpm test:watch   # Tests in watch mode
+pnpm test:coverage # Tests with a v8 coverage report
 pnpm lint         # Biome check + oxlint
 pnpm format       # Biome format (code) + dprint (markdown)
 pnpm format:md    # Format markdown only (dprint)

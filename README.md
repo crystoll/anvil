@@ -216,6 +216,7 @@ pnpm dev               # Launch interactive CLI (TUI default)
 pnpm build             # Bundle to dist/
 pnpm test              # Run unit tests (165 tests)
 pnpm test:integration  # Run integration tests (requires Ollama)
+pnpm test:coverage     # Unit tests with a v8 coverage report
 pnpm check             # Type-check
 pnpm lint              # Biome + oxlint
 pnpm format            # Biome (code) + dprint (markdown)

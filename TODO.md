@@ -235,7 +235,8 @@ Do this before writing the many new tests in M3–M8.
   - Rename `onUnhandledRequest` to `onUnhandledFrame` in the four `server.listen()` calls (bootstrap and the three provider tests).
   - MSW 3 no longer manages cookies in Node, so the `localStorage` shim in `vitest.setup.ts` is probably obsolete. Remove it if the tests pass without it.
   - MSW no longer patches `setTimeout`. No test uses fake timers today.
-- [ ] **M2.3 Coverage baseline.** Add `@vitest/coverage-v8` and a `test:coverage` script. Report on `src/{agent,engine,provider,session,lsp,tools}/**`, with no thresholds yet. Vitest 5 matches coverage patterns against root-relative paths.
+- [x] **M2.3 Coverage baseline.** Add `@vitest/coverage-v8` and a `test:coverage` script. Report on `src/{agent,engine,provider,session,lsp,tools}/**`, with no thresholds yet. Vitest 5 matches coverage patterns against root-relative paths.
+  - Baseline, as % lines / % branches: agent 91 / 83, engine 87 / 69, session 85 / 67, provider 76 / 52, tools 48 / 24, lsp 7 / 0. Overall 59 / 43.
 
 **Validation stop:** the gate passes, and the coverage baseline is recorded.
 
