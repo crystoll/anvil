@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { extractReadable } from "./web-fetch.js";
+import { describe, expect, it, vi } from "vitest";
+import { extractReadable, fetchAndExtract } from "./web-fetch.js";
 
 describe("web_fetch extractReadable", () => {
 	it("extracts article content from HTML", () => {
@@ -61,5 +61,34 @@ describe("web_fetch extractReadable", () => {
 	it("returns err for unparseable content", () => {
 		const result = extractReadable("", "https://example.com");
 		expect(result.isErr()).toBe(true);
+	});
+
+	it("combines caller cancellation with the request timeout", async () => {
+		const controller = new AbortController();
+		let requestSignal: AbortSignal | undefined;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((_url: string | URL, options?: RequestInit) => {
+				requestSignal = options?.signal instanceof AbortSignal ? options.signal : undefined;
+				return new Promise<Response>((_resolve, reject) => {
+					requestSignal?.addEventListener(
+						"abort",
+						() => reject(new DOMException("The operation was aborted", "AbortError")),
+						{ once: true },
+					);
+				});
+			}),
+		);
+
+		try {
+			const resultPromise = fetchAndExtract("https://example.com", 8000, controller.signal);
+			controller.abort();
+			const result = await resultPromise;
+
+			expect(result.isErr()).toBe(true);
+			expect(requestSignal?.aborted).toBe(true);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });

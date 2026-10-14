@@ -394,8 +394,8 @@ Do this before writing the many new tests in M3–M8.
   - `KEEP_RECENT` snaps to group boundaries.
   - The original task and the latest user message survive verbatim.
   - The summary input is budgeted from `contextSize`, keeping head and tail. Today `.slice(0, MAX_SUMMARY_INPUT_CHARS)` (40,000 characters) keeps only the oldest content.
-- [ ] **M6.8 Compaction on overflow still runs after an error event** in the TUI.
-- [ ] **M6.9 Live loop settings** (F18). The loop reads the system prompt, provider and `contextSize` through getters instead of boot-time values. **Test first:**
+- [x] **M6.8 Compaction on overflow still runs after an error event** in the TUI.
+- [x] **M6.9 Live loop settings** (F18). The loop reads the system prompt, provider and `contextSize` through getters instead of boot-time values. **Test first:**
   - After a provider switch, compaction calls the new provider.
   - After `setActiveSkill`, the next request's system message contains the skill body.
 
@@ -404,7 +404,7 @@ Do this before writing the many new tests in M3–M8.
 ## M7 — Cancellation all the way down (1.5 d)
 
 - [x] **M7.1 Tool context.** Thread `execute(args, { signal, projectRoot })` through the registry and `executeTool`. An aborted tool returns `"[cancelled by user]"`.
-- [ ] **M7.2 `run_cmd`** (F7, F19).
+- [x] **M7.2 `run_cmd`** (F7, F19).
   - **Change:**
     - Spawn with `detached: true` so the command gets its own process group, and with `stdio: ["ignore", "pipe", "pipe"]`.
     - On abort or timeout, send SIGTERM to the group, then SIGKILL after 2 s.
@@ -413,14 +413,15 @@ Do this before writing the many new tests in M3–M8.
   - **Test first,** with real child processes:
     - A `node -e "setInterval(()=>{},1e3)"` child is gone within 3 s of the abort.
     - A grandchild from `sh -c "sleep 100 & wait"` is killed too.
+    - A process group that ignores SIGTERM is killed after the grace period.
     - A child that reads stdin doesn't hang.
     - A command that prints 2 MB runs to completion and reports exit code 0.
-- [ ] **M7.3 Web tools.**
+- [x] **M7.3 Web tools.**
   - **Change:** `web_fetch` and `web_search` use `AbortSignal.any([signal, AbortSignal.timeout(ms)])`.
-  - **Test first:** a delayed MSW response gets aborted.
-- [ ] **M7.4 MCP.** Pass `{ signal }` to `callTool`. **Test first** with M1's `hang` tool.
-- [ ] **M7.5 LSP injection honors the signal.** Skip diagnostics when the turn is aborted.
-- [ ] **M7.6 Loop-level test.** Cancel during a 3-tool message:
+  - **Test first:** delayed fetch promises reject on the propagated abort signal.
+- [x] **M7.4 MCP.** Pass `{ signal }` to `callTool`. **Test first** with M1's `hang` tool.
+- [x] **M7.5 LSP injection honors the signal.** Skip diagnostics when the turn is aborted and return promptly if cancellation occurs while diagnostics are pending.
+- [x] **M7.6 Loop-level test.** Cancel during a 3-tool message:
   - No further tools run.
   - Synthesized results are recorded.
   - `await cancel()` returns in under 1 s for in-process tools and under 3 s for `run_cmd`.

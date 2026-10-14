@@ -26,6 +26,7 @@ export type EngineEvent =
 export type Engine = {
 	messages: () => readonly Message[];
 	model: () => string;
+	getProvider: () => Provider;
 	state: () => EngineState;
 	setSystem: (content: string) => void;
 	setModel: (m: string) => void;
@@ -368,6 +369,7 @@ export const createEngine = (
 	return {
 		messages: () => history,
 		model: () => model,
+		getProvider: () => provider,
 		state: () => currentState,
 		setSystem,
 		setModel: (m: string) => {

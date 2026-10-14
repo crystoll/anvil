@@ -39,8 +39,11 @@ export type AgentConfig = {
 	maxRounds: number;
 	projectRoot: string;
 	systemPrompt: string;
+	getSystemPrompt?: () => string;
 	debug?: boolean;
 	provider?: Provider;
+	getProvider?: () => Provider;
+	getContextSize?: () => number;
 	onBeforeToolUse?: (
 		toolName: string,
 		args: Record<string, unknown>,
@@ -50,6 +53,7 @@ export type AgentConfig = {
 		toolName: string,
 		args: Record<string, unknown>,
 		result: string,
+		signal: AbortSignal,
 	) => Promise<string>;
 	streamOpts?: { contextSize?: number };
 };
@@ -86,6 +90,11 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	const recentCalls: string[] = [];
 	let originalGoal = "";
 
+	const currentSystemPrompt = (): string => config.getSystemPrompt?.() ?? config.systemPrompt;
+	const currentProvider = (): Provider | undefined => config.getProvider?.() ?? config.provider;
+	const currentContextSize = (): number =>
+		config.getContextSize?.() ?? config.streamOpts?.contextSize ?? 0;
+
 	const setState = (s: AgentState): AgentEvent => {
 		state = s;
 		return { kind: "state", state: s };
@@ -97,9 +106,15 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		toolName: string,
 		args: Record<string, unknown>,
 		result: string,
+		signal: AbortSignal,
 	): ResultAsync<string, string> =>
 		config.transformToolResult
-			? ResultAsync.fromThrowable(config.transformToolResult, errorText)(toolName, args, result)
+			? ResultAsync.fromThrowable(config.transformToolResult, errorText)(
+					toolName,
+					args,
+					result,
+					signal,
+				)
 			: okAsync(result);
 
 	const activeRunError = (): AsyncGenerator<AgentEvent> =>
@@ -162,7 +177,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			signal,
 			projectRoot: config.projectRoot,
 		});
-		const run = await transformResult(tool.name, args, result).match<ToolRun>(
+		const run = await transformResult(tool.name, args, result, signal).match<ToolRun>(
 			(transformed) => ({ result: transformed, warnings: [] }),
 			(message) => ({
 				result,
@@ -176,7 +191,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	/** Start a new agent turn with a user message. */
 	const send = (userMessage: string): AsyncGenerator<AgentEvent> =>
 		startRun(async function* (signal) {
-			engine.setSystem(config.systemPrompt);
+			engine.setSystem(currentSystemPrompt());
 			engine.addUser(userMessage);
 			originalGoal = userMessage;
 			rounds = 0;
@@ -407,7 +422,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	const checkRoundOverflow = (signals: RoundSignals): AgentEvent | undefined => {
-		const contextSize = config.streamOpts?.contextSize ?? 0;
+		const contextSize = currentContextSize();
 		if (contextSize <= 0) return undefined;
 		return isOverflow({ ...signals, contextSize }) ? { kind: "overflow" } : undefined;
 	};
@@ -426,14 +441,14 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		signal: AbortSignal,
 		requestMessages: readonly Message[],
 	): AsyncGenerator<AgentEvent> {
-		const trimEvent = maybeTrimContext(engine, config);
+		const trimEvent = maybeTrimContext(engine, currentContextSize());
 		if (trimEvent) yield trimEvent;
-		const contextSize = config.streamOpts?.contextSize ?? 0;
+		const contextSize = currentContextSize();
 		const schemas = contextSize ? registry.filteredSchemas(contextSize) : registry.schemas();
 		const signals: RoundSignals = { content: "" };
 		for await (const event of engine.stream(
 			schemas,
-			{ ...config.streamOpts, signal },
+			{ ...(contextSize > 0 ? { contextSize } : {}), signal },
 			requestMessages,
 		)) {
 			accumulateSignal(signals, event);
@@ -554,14 +569,15 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 
 	/** Attempt compaction and retry the round. Returns false if compaction failed. */
 	async function* tryCompact(): AsyncGenerator<AgentEvent, boolean> {
-		if (!config.provider) return false;
+		const provider = currentProvider();
+		if (!provider) return false;
 		yield { kind: "compacting" };
 		const messages = [...engine.messages()];
 		const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
-		const contextSize = config.streamOpts?.contextSize;
-		const result = await compactHistory(config.provider, engine.model(), messages, {
+		const contextSize = currentContextSize();
+		const result = await compactHistory(provider, engine.model(), messages, {
 			debug: config.debug ?? false,
-			...(contextSize === undefined ? {} : { contextSize }),
+			...(contextSize > 0 ? { contextSize } : {}),
 		});
 		if (result.isErr()) return false;
 		const compacted = result.value;
@@ -686,9 +702,8 @@ const mapStreamEvent = (event: EngineEvent, lastFinishReason?: string): AgentEve
 
 const maybeTrimContext = (
 	engine: Engine,
-	config: AgentConfig,
+	contextSize: number,
 ): (AgentEvent & { kind: "trimmed" }) | undefined => {
-	const contextSize = config.streamOpts?.contextSize ?? 0;
 	if (contextSize <= 0) return undefined;
 	const budget = Math.round(contextSize * 0.8);
 	const trimmed = engine.trimToFit(budget);

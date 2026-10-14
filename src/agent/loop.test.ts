@@ -651,6 +651,51 @@ describe("agent loop", () => {
 		expect(loop.state()).toBe("idle");
 	});
 
+	it("stops later calls and completes every tool result when cancelling a tool queue", async () => {
+		let markStarted: () => void = () => undefined;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		let executionCount = 0;
+		const tool: Tool = {
+			...listDirTool,
+			execute: async () => {
+				executionCount++;
+				markStarted();
+				return new Promise<string>(() => undefined);
+			},
+		};
+		const provider = mockProvider([
+			multiToolCallChunks(
+				{ id: "call_1", name: "list_dir", args: '{"path":"one"}' },
+				{ id: "call_2", name: "list_dir", args: '{"path":"two"}' },
+				{ id: "call_3", name: "list_dir", args: '{"path":"three"}' },
+			),
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(tool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+		const activeRun = collect(loop.send("list three directories"));
+		await started;
+		const startedAt = Date.now();
+
+		await loop.cancel();
+		const events = await activeRun;
+		const results = engine.messages().filter((message) => message.role === "tool");
+
+		expect(Date.now() - startedAt).toBeLessThan(1000);
+		expect(executionCount).toBe(1);
+		expect(results.map((result) => result.toolCallId)).toEqual(["call_1", "call_2", "call_3"]);
+		expect(results.every((result) => result.content === "[cancelled by user]")).toBe(true);
+		expect(events.filter((event) => event.kind === "tool_result")).toHaveLength(1);
+		expect(validateHistory(engine.messages()).isOk()).toBe(true);
+	});
+
 	it("does not cancel the engine when no agent turn is active", async () => {
 		const engine = createEngine(mockProvider([]), "test");
 		const cancelEngine = vi.spyOn(engine, "cancel");
@@ -967,6 +1012,59 @@ it("auto-compacts on overflow and retries", async () => {
 	expect(kinds).toContain("compacting");
 	expect(kinds).toContain("compacted");
 	expect(kinds).toContain("content");
+});
+
+it("uses live prompt, provider, and context size after switching settings", async () => {
+	const requests: Message[][] = [];
+	const oldProvider: Provider = {
+		...mockProvider([]),
+		completeChat: vi.fn(() => okAsync({ content: "Old summary", toolCalls: [] })),
+	};
+	const activeProvider: Provider = {
+		...mockProvider(
+			[
+				[
+					{
+						error: { kind: "api", status: 400, message: "prompt exceeds max context length" },
+						done: true,
+					},
+				],
+				[{ content: "Recovered after compaction", done: false }, { done: true }],
+			],
+			(messages) => requests.push(messages),
+		),
+		completeChat: vi.fn(() => okAsync({ content: "Current summary", toolCalls: [] })),
+	};
+	const engine = createEngine(oldProvider, "test");
+	engine.setProvider(activeProvider);
+	engine.loadMessages([
+		{ role: "user", content: "msg1" },
+		{ role: "assistant", content: "resp1" },
+		{ role: "user", content: "msg2" },
+		{ role: "assistant", content: "resp2" },
+		{ role: "user", content: "msg3" },
+		{ role: "assistant", content: "resp3" },
+		{ role: "user", content: "msg4" },
+		{ role: "assistant", content: "resp4" },
+	]);
+	const loop = createAgentLoop(engine, createRegistry(), {
+		maxRounds: 5,
+		projectRoot: "/tmp",
+		systemPrompt: "boot prompt",
+		provider: oldProvider,
+		getSystemPrompt: () => "live skill prompt",
+		getProvider: () => engine.getProvider(),
+		getContextSize: () => 32768,
+	});
+
+	const events = await collect(loop.send("continue"));
+
+	expect(requests[0]?.[0]).toMatchObject({ role: "system", content: "live skill prompt" });
+	expect(activeProvider.completeChat).toHaveBeenCalledOnce();
+	expect(oldProvider.completeChat).not.toHaveBeenCalled();
+	expect(
+		events.some((event) => event.kind === "content" && event.text === "Recovered after compaction"),
+	).toBe(true);
 });
 
 it("continues without retry when compaction fails", async () => {

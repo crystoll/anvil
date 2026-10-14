@@ -31,14 +31,16 @@ export const parseSearchResults = (html: string, maxResults = 10): SearchResult[
 export const searchWeb = async (
 	query: string,
 	maxResults = 10,
+	signal?: AbortSignal,
 ): Promise<Result<SearchResult[], string>> => {
 	try {
 		const body = new URLSearchParams({ q: query });
+		const timeoutSignal = AbortSignal.timeout(10000);
 		const response = await fetch(DDG_URL, {
 			method: "POST",
 			headers: { "User-Agent": USER_AGENT, "Content-Type": "application/x-www-form-urlencoded" },
 			body: body.toString(),
-			signal: AbortSignal.timeout(10000),
+			signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
 		});
 		if (!response.ok) return err(`Search failed: HTTP ${response.status}`);
 		const html = await response.text();

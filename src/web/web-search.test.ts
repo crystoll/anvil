@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { parseSearchResults } from "./web-search.js";
+import { describe, expect, it, vi } from "vitest";
+import { parseSearchResults, searchWeb } from "./web-search.js";
 
 const SAMPLE_HTML = `
 <div class="results">
@@ -59,5 +59,34 @@ describe("web_search parseSearchResults", () => {
 
 		const results = parseSearchResults(html, 5);
 		expect(results).toHaveLength(5);
+	});
+
+	it("combines caller cancellation with the request timeout", async () => {
+		const controller = new AbortController();
+		let requestSignal: AbortSignal | undefined;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn((_url: string | URL, options?: RequestInit) => {
+				requestSignal = options?.signal instanceof AbortSignal ? options.signal : undefined;
+				return new Promise<Response>((_resolve, reject) => {
+					requestSignal?.addEventListener(
+						"abort",
+						() => reject(new DOMException("The operation was aborted", "AbortError")),
+						{ once: true },
+					);
+				});
+			}),
+		);
+
+		try {
+			const resultPromise = searchWeb("query", 5, controller.signal);
+			controller.abort();
+			const result = await resultPromise;
+
+			expect(result.isErr()).toBe(true);
+			expect(requestSignal?.aborted).toBe(true);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });

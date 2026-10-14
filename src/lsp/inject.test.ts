@@ -53,6 +53,30 @@ describe("createDiagnosticInjector", () => {
 		expect(await inject("write_file", { path: "a.ts" }, "Wrote a.ts")).toBe("Wrote a.ts");
 	});
 
+	it("skips diagnostics when the agent turn is already cancelled", async () => {
+		const fileChanged = vi.fn(async () => [typeError]);
+		const inject = createDiagnosticInjector(fakeManager(fileChanged), "/project");
+		const controller = new AbortController();
+		controller.abort();
+
+		const result = await inject("write_file", { path: "a.ts" }, "Wrote a.ts", controller.signal);
+
+		expect(result).toBe("Wrote a.ts");
+		expect(fileChanged).not.toHaveBeenCalled();
+	});
+
+	it("returns promptly when the agent turn is cancelled during diagnostics", async () => {
+		const fileChanged = vi.fn(() => new Promise<Diagnostic[]>(() => undefined));
+		const inject = createDiagnosticInjector(fakeManager(fileChanged), "/project");
+		const controller = new AbortController();
+
+		const execution = inject("write_file", { path: "a.ts" }, "Wrote a.ts", controller.signal);
+		controller.abort();
+
+		await expect(execution).resolves.toBe("Wrote a.ts");
+		expect(fileChanged).toHaveBeenCalledOnce();
+	});
+
 	it("F4: returns the original result when diagnostics don't arrive within 3 s", async () => {
 		vi.useFakeTimers();
 		try {

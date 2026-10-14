@@ -17,6 +17,7 @@ import {
 } from "../shared/bootstrap.js";
 import { guardProcess } from "../shared/crash-guard.js";
 import { createGracefulExit } from "../shared/graceful-exit.js";
+import { consumeAgentEvents } from "./consume-events.js";
 
 const flags = parseFlags(process.argv);
 const ctx = await bootstrap(flags);
@@ -47,6 +48,12 @@ const providerWarning =
 
 // === UI ===
 type Msg = { id: number; text: string; dim?: boolean };
+type TuiTurnState = {
+	response: string;
+	finishReason: string | undefined;
+	failed: boolean;
+	recoveryPending: boolean;
+};
 
 const truncate = (s: string, max = 80): string => {
 	const one = s.replace(/\n/g, " ").trim();
@@ -347,10 +354,26 @@ function App({
 
 	/** Handle non-streaming agent events (usage, error, state, info).
 	 * Returns a number to short-circuit, or undefined to continue. */
-	const handleMetaEvent = (
-		event: AgentEvent,
-		state: { finishReason: string | undefined; response: string },
-	): number | undefined => {
+	const handleStreamError = (event: AgentEvent & { kind: "error" }, state: TuiTurnState): void => {
+		showPartialResponseStatus(state, event.status);
+		state.response = "";
+		state.finishReason = undefined;
+		state.failed = true;
+		state.recoveryPending = false;
+		setStreaming("");
+		addMsg(`  ⚠ ${event.message}`, true);
+	};
+
+	const updateRecoveryState = (event: AgentEvent, state: TuiTurnState): void => {
+		if (event.kind === "compacted") state.recoveryPending = true;
+		if (event.kind === "round" && state.recoveryPending) {
+			state.failed = false;
+			state.recoveryPending = false;
+		}
+	};
+
+	const handleMetaEvent = (event: AgentEvent, state: TuiTurnState): number | undefined => {
+		updateRecoveryState(event, state);
 		if (event.kind === "usage") {
 			setTokens((t) => t + event.totalTokens);
 			setLastPrompt(event.promptTokens);
@@ -358,10 +381,8 @@ function App({
 			return undefined;
 		}
 		if (event.kind === "error") {
-			showPartialResponseStatus(state, event.status);
-			setStreaming("");
-			addMsg(`  ⚠ ${event.message}`, true);
-			return -1;
+			handleStreamError(event, state);
+			return undefined;
 		}
 		if (event.kind === "state" && event.state === "streaming") setStreaming("anvil: [generating…]");
 		else handleInfoEvent(event, addMsg);
@@ -379,18 +400,19 @@ function App({
 		const state = {
 			response: "",
 			finishReason: undefined as string | undefined,
+			failed: false,
+			recoveryPending: false,
 		};
-		for await (const event of events) {
+		const earlyResult = await consumeAgentEvents(events, async (event) => {
 			const streamResult = await handleStreamEvent(event, state);
 			if (streamResult === false) {
-				const metaResult = handleMetaEvent(event, state);
-				if (metaResult !== undefined) return metaResult;
-			} else if (streamResult !== undefined) {
-				return streamResult;
+				return handleMetaEvent(event, state);
 			}
-		}
+			return streamResult;
+		});
+		if (earlyResult !== undefined) return earlyResult;
 		finalizeResponse(state);
-		return state.response.length;
+		return state.failed ? -1 : state.response.length;
 	};
 
 	/** A turn that throws ends like an error event, so the TUI stays usable and the turn is saved. */

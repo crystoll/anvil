@@ -28,11 +28,13 @@ export const extractReadable = (
 export const fetchAndExtract = async (
 	url: string,
 	maxLength = DEFAULT_MAX_LENGTH,
+	signal?: AbortSignal,
 ): Promise<Result<string, string>> => {
 	try {
+		const timeoutSignal = AbortSignal.timeout(10000);
 		const response = await fetch(url, {
 			headers: { "User-Agent": "Mozilla/5.0 (compatible; Anvil/1.0)" },
-			signal: AbortSignal.timeout(10000),
+			signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
 		});
 		if (!response.ok) return err(`HTTP ${response.status}: ${response.statusText}`);
 		const html = await response.text();

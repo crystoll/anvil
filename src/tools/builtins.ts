@@ -1,8 +1,9 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fetchAndExtract } from "../web/web-fetch.js";
 import { searchWeb } from "../web/web-search.js";
 import type { Tool } from "./registry.js";
@@ -10,6 +11,9 @@ import type { Tool } from "./registry.js";
 const expandTilde = (p: string): string => (p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
 
 const HISTORY_DIR = ".anvil/file-history";
+const RUN_CMD_TIMEOUT_MS = 300_000;
+const PROCESS_KILL_GRACE_MS = 2000;
+const MAX_RUN_CMD_OUTPUT_LENGTH = 8000;
 
 /** Save a backup of a file before overwriting it. */
 export const backupFile = async (fullPath: string, projectRoot: string): Promise<void> => {
@@ -30,27 +34,158 @@ const objSchema = (required: string[], properties: Record<string, unknown>) => (
 const strProp = (description: string) => ({ type: "string", description });
 const intProp = (description: string) => ({ type: "integer", description });
 
-/** Execute a shell command with timeout. */
+/** Execute a shell command and terminate its process group on cancellation or timeout. */
 export const runCmd: Tool = {
 	name: "run_cmd",
 	description: "Execute a shell command and return stdout/stderr with exit code",
 	schema: objSchema(["command"], { command: strProp("Shell command to execute") }),
 	needsApproval: true,
-	timeout: 300_000,
-	execute: (args, context) =>
-		new Promise((res) => {
-			const command = String(args.command ?? "");
-			execFile(
-				"sh",
-				["-c", command],
-				{ cwd: context.projectRoot, timeout: 300_000 },
-				(error, stdout, stderr) => {
-					const exitCode = error && "code" in error ? (error.code as number) : 0;
-					const output = (stdout + stderr).slice(0, 8000);
-					res(`$ ${command}\nExit code: ${exitCode}\n${output ? `Output:\n${output}` : ""}`);
-				},
-			);
-		}),
+	timeout: RUN_CMD_TIMEOUT_MS + PROCESS_KILL_GRACE_MS + 1000,
+	execute: (args, context) => executeCommand(String(args.command ?? ""), context),
+};
+
+const executeCommand = (
+	command: string,
+	context: Parameters<Tool["execute"]>[1],
+): Promise<string> => {
+	if (context.signal.aborted) return Promise.resolve(`$ ${command}\nCancelled by user`);
+
+	return new Promise((resolveResult) => {
+		const child = spawn("sh", ["-c", command], {
+			cwd: context.projectRoot,
+			detached: true,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		const stdoutDecoder = new StringDecoder("utf8");
+		const stderrDecoder = new StringDecoder("utf8");
+		let output = "";
+		let outputTruncated = false;
+		let termination: "cancelled" | "timeout" | undefined;
+		let processError: Error | undefined;
+		let terminationError: Error | undefined;
+		let killTimer: ReturnType<typeof setTimeout> | undefined;
+		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+
+		const appendOutput = (chunk: string): void => {
+			const available = MAX_RUN_CMD_OUTPUT_LENGTH - output.length;
+			if (chunk.length > available) outputTruncated = true;
+			if (available > 0) output += chunk.slice(0, available);
+		};
+
+		const sendSignal = (signal: NodeJS.Signals): void => {
+			const error = signalProcessGroup(child.pid, signal);
+			if (error) terminationError = error;
+		};
+
+		const scheduleKill = (): void => {
+			clearTimeout(killTimer);
+			killTimer = setTimeout(() => sendSignal("SIGKILL"), PROCESS_KILL_GRACE_MS);
+		};
+
+		const terminate = (reason: "cancelled" | "timeout"): void => {
+			if (termination) return;
+			termination = reason;
+			sendSignal("SIGTERM");
+			if (child.pid !== undefined) scheduleKill();
+		};
+
+		const abortHandler = (): void => terminate("cancelled");
+		context.signal.addEventListener("abort", abortHandler, { once: true });
+		timeoutTimer = setTimeout(() => terminate("timeout"), RUN_CMD_TIMEOUT_MS);
+		if (context.signal.aborted) abortHandler();
+
+		child.once("spawn", () => {
+			if (termination) {
+				sendSignal("SIGTERM");
+				scheduleKill();
+			}
+		});
+		child.stdout?.on("data", (chunk: Buffer) => appendOutput(stdoutDecoder.write(chunk)));
+		child.stderr?.on("data", (chunk: Buffer) => appendOutput(stderrDecoder.write(chunk)));
+		child.on("error", (error) => {
+			processError = error;
+		});
+		child.on("close", (exitCode, signal) => {
+			clearTimeout(timeoutTimer);
+			if (!termination || !isProcessGroupRunning(child.pid)) clearTimeout(killTimer);
+			context.signal.removeEventListener("abort", abortHandler);
+			appendOutput(stdoutDecoder.end());
+			appendOutput(stderrDecoder.end());
+
+			const outcome = commandOutcome(command, {
+				exitCode,
+				signal,
+				termination,
+				timeoutMs: RUN_CMD_TIMEOUT_MS,
+				processError,
+				terminationError,
+				output,
+				outputTruncated,
+			});
+			resolveResult(outcome);
+		});
+	});
+};
+
+type CommandOutcome = {
+	exitCode: number | null;
+	signal: NodeJS.Signals | null;
+	termination: "cancelled" | "timeout" | undefined;
+	timeoutMs: number;
+	processError: Error | undefined;
+	terminationError: Error | undefined;
+	output: string;
+	outputTruncated: boolean;
+};
+
+const signalProcessGroup = (pid: number | undefined, signal: NodeJS.Signals): Error | undefined => {
+	if (pid === undefined) return undefined;
+	try {
+		process.kill(-pid, signal);
+		return undefined;
+	} catch (error) {
+		if (isMissingProcessError(error)) return undefined;
+		return error instanceof Error ? error : new Error(String(error));
+	}
+};
+
+const isMissingProcessError = (error: unknown): boolean =>
+	error instanceof Error && "code" in error && error.code === "ESRCH";
+
+const isProcessGroupRunning = (pid: number | undefined): boolean => {
+	if (pid === undefined) return false;
+	try {
+		process.kill(-pid, 0);
+		return true;
+	} catch (error) {
+		return !isMissingProcessError(error);
+	}
+};
+
+const commandStatus = (outcome: CommandOutcome): string => {
+	const signal = outcome.signal ? ` (${outcome.signal})` : "";
+	if (outcome.termination === "cancelled") return `Cancelled by user${signal}`;
+	if (outcome.termination === "timeout")
+		return `Timed out after ${Math.ceil(outcome.timeoutMs / 1000)} s${signal}`;
+	if (outcome.processError) return `Error: ${outcome.processError.message}`;
+	if (outcome.signal) return `Signal: ${outcome.signal}`;
+	return `Exit code: ${outcome.exitCode ?? "unknown"}`;
+};
+
+const commandOutput = (outcome: CommandOutcome): string =>
+	[
+		outcome.output,
+		outcome.outputTruncated
+			? `[output truncated after ${MAX_RUN_CMD_OUTPUT_LENGTH} characters]`
+			: "",
+		outcome.terminationError ? `Termination error: ${outcome.terminationError.message}` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+
+const commandOutcome = (command: string, outcome: CommandOutcome): string => {
+	const output = commandOutput(outcome);
+	return `$ ${command}\n${commandStatus(outcome)}\n${output ? `Output:\n${output}` : ""}`;
 };
 
 /** Read a file with pagination. */
@@ -372,10 +507,10 @@ export const webSearch: Tool = {
 	}),
 	needsApproval: false,
 	timeout: 15_000,
-	execute: async (args) => {
+	execute: async (args, context) => {
 		const query = String(args.query ?? "");
 		const max = Number(args.max_results ?? 5);
-		const result = await searchWeb(query, max);
+		const result = await searchWeb(query, max, context.signal);
 		if (result.isErr()) return `Error: ${result.error}`;
 		return result.value
 			.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`)
@@ -393,10 +528,10 @@ export const webFetch: Tool = {
 	}),
 	needsApproval: false,
 	timeout: 15_000,
-	execute: async (args) => {
+	execute: async (args, context) => {
 		const url = String(args.url ?? "");
 		const maxLength = Number(args.max_length ?? 8000);
-		const result = await fetchAndExtract(url, maxLength);
+		const result = await fetchAndExtract(url, maxLength, context.signal);
 		if (result.isErr()) return `Error: ${result.error}`;
 		return result.value;
 	},
