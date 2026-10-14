@@ -221,7 +221,7 @@ The total is about 21.5 focused days.
 
 Do this before writing the many new tests in M3–M8.
 
-- [ ] **M2.1 Vitest 5.0.x** (5.0.3 today; needs Node `^22.12`, 24 or 26+, and Vite 6.4+). Sweep for the breaking changes that can affect this repo:
+- [x] **M2.1 Vitest 5.0.x** (5.0.3 today; needs Node `^22.12`, 24 or 26+, and Vite 6.4+). Sweep for the breaking changes that can affect this repo:
   - `clearMocks` is on by default, so a test that reads mock calls made in an earlier test breaks.
   - An un-awaited `expect(...).resolves` or `.rejects` now fails the test. None exist today.
   - `vi.mock` inside a function or `describe` now throws. None exist today.
