@@ -33,13 +33,32 @@ export type TextEdit = {
 };
 export type WorkspaceEdit = { uri: string; edits: TextEdit[] }[];
 
+/** Deadlines that turn a stuck or missing server into an error instead of a hung tool call. */
+export type LspTimeouts = { requestMs: number; initializeMs: number; shutdownMs: number };
+
+const DEFAULT_TIMEOUTS: LspTimeouts = {
+	requestMs: 10_000,
+	initializeMs: 30_000,
+	shutdownMs: 2_000,
+};
+
+type PendingRequest = {
+	resolve: (value: unknown) => void;
+	reject: (error: Error) => void;
+	timer: NodeJS.Timeout;
+};
+
 /** Create an LSP client that spawns a language server and communicates via JSON-RPC over stdio. */
-export const createLspClient = (config: LspLanguageConfig): LspClient => {
+export const createLspClient = (
+	config: LspLanguageConfig,
+	timeouts: LspTimeouts = DEFAULT_TIMEOUTS,
+): LspClient => {
 	let proc: ChildProcess | undefined;
+	let stopped: Error | undefined;
 	let nextId = 1;
 	let buffer = "";
 	let diagnostics: Diagnostic[] = [];
-	const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+	const pending = new Map<number, PendingRequest>();
 	const diagnosticListeners: Array<() => void> = [];
 
 	const send = (msg: object) => {
@@ -48,12 +67,34 @@ export const createLspClient = (config: LspLanguageConfig): LspClient => {
 		proc?.stdin?.write(frame);
 	};
 
-	const request = (method: string, params: object): Promise<unknown> => {
+	const takePending = (id: number): PendingRequest | undefined => {
+		const entry = pending.get(id);
+		pending.delete(id);
+		if (entry) clearTimeout(entry.timer);
+		return entry;
+	};
+
+	const stop = (reason: Error) => {
+		stopped ??= reason;
+		for (const id of pending.keys()) takePending(id)?.reject(reason);
+	};
+
+	const request = (
+		method: string,
+		params: object,
+		timeoutMs = timeouts.requestMs,
+	): Promise<unknown> => {
+		if (stopped) return Promise.reject(stopped);
 		const id = nextId++;
-		send({ jsonrpc: "2.0", id, method, params });
-		return new Promise((resolve, reject) => {
-			pending.set(id, { resolve, reject });
+		const response = new Promise<unknown>((resolve, reject) => {
+			const timeoutError = new Error(
+				`${config.command} did not answer ${method} within ${timeoutMs}ms`,
+			);
+			const timer = setTimeout(() => takePending(id)?.reject(timeoutError), timeoutMs);
+			pending.set(id, { resolve, reject, timer });
 		});
+		send({ jsonrpc: "2.0", id, method, params });
+		return response;
 	};
 
 	const notify = (method: string, params: object) => {
@@ -63,9 +104,8 @@ export const createLspClient = (config: LspLanguageConfig): LspClient => {
 	const handleMessage = (msg: Record<string, unknown>) => {
 		// Response to a request
 		if (typeof msg.id === "number") {
-			const p = pending.get(msg.id);
+			const p = takePending(msg.id);
 			if (!p) return;
-			pending.delete(msg.id);
 			if (msg.error) p.reject(new Error(String((msg.error as Record<string, unknown>).message)));
 			else p.resolve(msg.result);
 			return;
@@ -102,32 +142,42 @@ export const createLspClient = (config: LspLanguageConfig): LspClient => {
 	};
 
 	const startProcess = () => {
-		proc = spawn(config.command, config.args, { stdio: ["pipe", "pipe", "pipe"] });
-		proc.stdout?.on("data", (chunk: Buffer) => {
+		// stderr is never read, and a full pipe would block a chatty server.
+		const child = spawn(config.command, config.args, { stdio: ["pipe", "pipe", "ignore"] });
+		child.stdout?.on("data", (chunk: Buffer) => {
 			buffer += chunk.toString();
 			parseFrames();
 		});
-		proc.on("error", () => {
-			/* server crashed */
+		child.stdin?.on("error", () => {
+			/* writes to a dead server fail; the error and exit handlers report it */
 		});
+		child.on("error", (error) => stop(startError(config.command, error)));
+		child.on("exit", (code, signal) =>
+			stop(new Error(`${config.command} exited with ${signal ?? `code ${code}`}`)),
+		);
+		proc = child;
 	};
 
 	return {
 		initialize: async (rootUri) => {
 			startProcess();
-			await request("initialize", {
-				processId: process.pid,
-				rootUri,
-				capabilities: {
-					textDocument: {
-						publishDiagnostics: { relatedInformation: true },
-						synchronization: { didSave: true, dynamicRegistration: false },
+			await request(
+				"initialize",
+				{
+					processId: process.pid,
+					rootUri,
+					capabilities: {
+						textDocument: {
+							publishDiagnostics: { relatedInformation: true },
+							synchronization: { didSave: true, dynamicRegistration: false },
+						},
 					},
+					...(config.initializationOptions
+						? { initializationOptions: config.initializationOptions }
+						: {}),
 				},
-				...(config.initializationOptions
-					? { initializationOptions: config.initializationOptions }
-					: {}),
-			});
+				timeouts.initializeMs,
+			);
 			notify("initialized", {});
 		},
 
@@ -190,21 +240,25 @@ export const createLspClient = (config: LspLanguageConfig): LspClient => {
 		},
 
 		shutdown: async () => {
-			if (!proc) return;
-			try {
-				await request("shutdown", {});
-				notify("exit", {});
-			} catch {
-				/* ignore */
+			const child = proc;
+			if (!child) return;
+			if (!stopped) {
+				await request("shutdown", {}, timeouts.shutdownMs).then(
+					() => notify("exit", {}),
+					() => undefined,
+				);
 			}
-			// Reject all in-flight requests so callers don't hang
-			for (const [, p] of pending) p.reject(new Error("LSP client shut down"));
-			pending.clear();
-			proc.kill();
+			stop(new Error("LSP client shut down"));
+			child.kill();
 			proc = undefined;
 		},
 	};
 };
+
+const startError = (command: string, error: NodeJS.ErrnoException): Error =>
+	new Error(
+		error.code === "ENOENT" ? `${command} not found` : `${command} failed: ${error.message}`,
+	);
 
 /** Wait for diagnostics to arrive (server pushes them async after changes). */
 export const waitForDiagnostics = (client: LspClient, timeoutMs = 2000): Promise<Diagnostic[]> =>

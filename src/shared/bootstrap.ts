@@ -306,7 +306,9 @@ const setupMcp = async (
 const setupLsp = (projectRoot: string, registry: ReturnType<typeof createRegistry>) => {
 	const cfg = loadLspConfig(projectRoot);
 	if (!cfg) return { lspManager: undefined, diagnosticInjector: undefined };
-	const manager = createLspManager(cfg, projectRoot);
+	const manager = createLspManager(cfg, projectRoot, {
+		onUnavailable: (message) => console.error(`⚠ ${message}`),
+	});
 	registry.register(createLspDiagnosticsTool(manager));
 	registry.register(createLspDefinitionTool(manager));
 	registry.register(createLspReferencesTool(manager));

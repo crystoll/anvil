@@ -6,11 +6,12 @@ import {
 	type Diagnostic,
 	type Location,
 	type LspClient,
+	type LspTimeouts,
 	type SymbolInfo,
 	type WorkspaceEdit,
 	waitForDiagnostics,
 } from "./client.js";
-import { detectLanguages, type LspConfig } from "./config.js";
+import { detectLanguages, type LspConfig, type LspLanguageConfig } from "./config.js";
 
 export type LspManager = {
 	/** Get diagnostics for a file (starts server lazily if needed). */
@@ -38,8 +39,18 @@ export type LspManager = {
 	shutdown: () => Promise<void>;
 };
 
+export type LspManagerOptions = {
+	/** Told once per language whose server can't start, so the user knows why diagnostics are missing. */
+	onUnavailable?: (message: string) => void;
+	timeouts?: LspTimeouts;
+};
+
 /** Create the LSP manager. Starts servers lazily on first relevant file operation. */
-export const createLspManager = (config: LspConfig, projectRoot: string): LspManager => {
+export const createLspManager = (
+	config: LspConfig,
+	projectRoot: string,
+	options: LspManagerOptions = {},
+): LspManager => {
 	const detected = detectLanguages(config, projectRoot);
 	const rootUri = pathToFileURL(projectRoot).href;
 
@@ -51,19 +62,31 @@ export const createLspManager = (config: LspConfig, projectRoot: string): LspMan
 		for (const ext of lc.fileExtensions) extToLang.set(ext, lang);
 	}
 
-	// Running clients
 	const clients = new Map<string, LspClient>();
+	// One start per language for the whole session, so a failed server isn't respawned on every edit.
+	const starts = new Map<string, Promise<LspClient>>();
 	const openFiles = new Set<string>();
+	let closing = false;
 
-	const getClient = async (lang: string): Promise<LspClient | undefined> => {
-		const existing = clients.get(lang);
-		if (existing) return existing;
-		const lc = config[lang];
-		if (!lc) return undefined;
-		const client = createLspClient(lc);
-		await client.initialize(rootUri);
+	const startClient = (lang: string, lc: LspLanguageConfig): Promise<LspClient> => {
+		const client = createLspClient(lc, options.timeouts);
 		clients.set(lang, client);
-		return client;
+		return client.initialize(rootUri).then(
+			() => client,
+			async (error: Error) => {
+				if (!closing) options.onUnavailable?.(`LSP unavailable: ${error.message}`);
+				await client.shutdown();
+				throw error;
+			},
+		);
+	};
+
+	const getClient = (lang: string): Promise<LspClient | undefined> => {
+		const lc = config[lang];
+		if (!lc) return Promise.resolve(undefined);
+		const started = starts.get(lang) ?? startClient(lang, lc);
+		starts.set(lang, started);
+		return started;
 	};
 
 	const langFor = (filePath: string): string | undefined => {
@@ -151,8 +174,10 @@ export const createLspManager = (config: LspConfig, projectRoot: string): LspMan
 		},
 
 		shutdown: async () => {
+			closing = true;
 			await Promise.all([...clients.values()].map((c) => c.shutdown()));
 			clients.clear();
+			starts.clear();
 			openFiles.clear();
 		},
 	};

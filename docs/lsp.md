@@ -27,6 +27,8 @@ File written successfully.
 
 The model sees errors in the same turn and can fix immediately.
 
+Diagnostics are best-effort: failed edits get none, and a server that takes longer than 3 s never holds up the tool result.
+
 ## Configuration
 
 Stored in `.anvil/lsp.json` (project) or `~/.anvil/lsp.json` (global):
@@ -60,3 +62,5 @@ Stored in `.anvil/lsp.json` (project) or `~/.anvil/lsp.json` (global):
 - Python: `pipx install basedpyright`
 
 Language servers are started lazily on first relevant file operation and kept warm for the session.
+
+If a server can't start (for example, it isn't installed), anvil prints one `⚠ LSP unavailable: …` notice and carries on without it, and the `lsp_*` tools report the error to the model. Requests that get no answer time out after 10 s (30 s for startup).

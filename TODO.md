@@ -242,17 +242,19 @@ Do this before writing the many new tests in M3–M8.
 
 ## M3 — Stop the hangs and crashes (1.5 d)
 
-- [ ] **M3.1 LSP fails soft** (F4).
-  - **Test first,** using a fake LSP fixture (Content-Length-framed stdio):
+- [x] **M3.1 LSP fails soft** (F4).
+  - **Test first,** using a fake LSP fixture (Content-Length-framed stdio, `src/test-support/fake-lsp-server.mjs`):
     - `initialize` against a missing binary resolves to an error within the timeout. Today it hangs forever.
     - A request to a silent server times out.
     - Pending requests reject when the server exits.
     - `shutdown()` on an unresponsive server returns within 3 s and kills the process.
+    - A server that floods stderr still answers. Today nothing reads its stderr pipe, so the server blocks once it fills.
   - **Change `lsp/client.ts`** (`startProcess`, `request`, `shutdown`):
     - Handle the child's `error` and `exit` events.
     - Add per-request timeouts: 10 s, or 30 s for `initialize`.
     - Bound shutdown: send the `shutdown` request (2 s), then the `exit` notification, then kill.
-  - **Change `lsp/manager.ts`** (`getClient`): cache a failed start per language for the session and emit one notice, "LSP unavailable: typescript-language-server not found".
+    - Ignore the server's stderr.
+  - **Change `lsp/manager.ts`** (`getClient`): share one start per language for the session, failures included, and emit one notice, "LSP unavailable: typescript-language-server not found". A shutdown during a start isn't reported as unavailable.
 - [x] **M3.2 The diagnostic injector never blocks or throws** (F4, F5).
   - **Test first:** the original result comes back when the tool result is an error, when `ensureOpen` fails with ENOENT, and when no diagnostics arrive within 3 s.
   - **Change:** add a guard, a timeout and a catch in `lsp/inject.ts`. `ensureOpen` keeps throwing on a missing file, so the LSP tools report it instead of claiming "no errors".
@@ -282,6 +284,11 @@ Do this before writing the many new tests in M3–M8.
   - **Test first:** an async hook whose shell can't start doesn't crash the process, and a hook that can't start (e.g. a malformed command) counts as failed instead of rejecting.
   - **Change:** `runHooks` never rejects, so callers that don't await it are safe, and fire-and-forget hooks handle spawn errors.
 - [ ] **M3.10 Bounded shutdown.** `ctx.shutdown()` races LSP and MCP teardown against a 3 s timeout. Today `cli.ts` can hang on exit.
+- [ ] **M3.11 LSP protocol fixes.** Found during M3.1.
+  - **Test first,** with the fake server:
+    - A response with non-ASCII text (e.g. hover docs containing "→") is parsed. Today the client measures a byte-based `Content-Length` in characters and waits for the rest of the frame until the request times out.
+    - A server request that reuses a pending id (e.g. `workspace/configuration` with id 1 during `initialize`) gets an answer, and `initialize` still resolves with the real response. Today the request is taken as the response and never answered.
+  - **Change `lsp/client.ts`:** buffer bytes instead of strings, and answer server requests (`null`, or one `null` per `workspace/configuration` item) instead of matching them to pending requests.
 
 **Validation stop:** the gate passes, plus S2, S3 and S6.
 
@@ -645,3 +652,4 @@ type SessionController = {
 - **Per-model capability profiles** in `docs/models.md`: tool-calling reliability, recommended `num_ctx` and temperature.
 - **Real-pty TUI smoke test.** `node-pty` needs a native build, so add it only if the component tests miss regressions.
 - **Session retention policy** (`max_sessions`, `max_age_days`).
+- **Restart a crashed language server.** Today, after a crash the LSP tools return "exited with …" until anvil restarts.

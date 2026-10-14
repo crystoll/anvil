@@ -2,6 +2,7 @@ export type {
 	Diagnostic,
 	Location,
 	LspClient,
+	LspTimeouts,
 	SymbolInfo,
 	TextEdit,
 	WorkspaceEdit,
@@ -10,7 +11,7 @@ export { createLspClient, waitForDiagnostics } from "./client.js";
 export type { LspConfig, LspLanguageConfig } from "./config.js";
 export { detectLanguages, loadLspConfig } from "./config.js";
 export { createDiagnosticInjector } from "./inject.js";
-export type { LspManager } from "./manager.js";
+export type { LspManager, LspManagerOptions } from "./manager.js";
 export { createLspManager, formatDiagnostics } from "./manager.js";
 export {
 	createLspDefinitionTool,
