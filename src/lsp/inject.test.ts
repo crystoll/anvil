@@ -34,7 +34,7 @@ describe("createDiagnosticInjector", () => {
 		expect(result).toContain("Type mismatch");
 	});
 
-	it("skips diagnostics when the write failed", async () => {
+	it("F5: skips diagnostics when the write failed", async () => {
 		const fileChanged = vi.fn(async () => [typeError]);
 		const inject = createDiagnosticInjector(fakeManager(fileChanged), "/project");
 
@@ -44,7 +44,7 @@ describe("createDiagnosticInjector", () => {
 		expect(fileChanged).not.toHaveBeenCalled();
 	});
 
-	it("returns the original result when the server fails", async () => {
+	it("F5: returns the original result when the server fails", async () => {
 		const failing = fakeManager(async () => {
 			throw new Error("ENOENT: no such file or directory");
 		});
@@ -53,7 +53,7 @@ describe("createDiagnosticInjector", () => {
 		expect(await inject("write_file", { path: "a.ts" }, "Wrote a.ts")).toBe("Wrote a.ts");
 	});
 
-	it("returns the original result when diagnostics don't arrive within 3 s", async () => {
+	it("F4: returns the original result when diagnostics don't arrive within 3 s", async () => {
 		vi.useFakeTimers();
 		try {
 			const silent = fakeManager(() => new Promise(() => {}));

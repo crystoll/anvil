@@ -223,7 +223,7 @@ describe("agent loop", () => {
 		expect(loop.state()).toBe("idle");
 	});
 
-	it("answers the next message after an interrupted answer", async () => {
+	it("F1: answers the next message after an interrupted answer", async () => {
 		const provider = mockProvider([
 			[{ content: "Partial", done: false }, { content: " answer", done: false }, { done: true }],
 			[{ content: "Second answer", done: false }, { done: true }],
@@ -243,7 +243,7 @@ describe("agent loop", () => {
 		expect(events.some((e) => e.kind === "content" && e.text === "Second answer")).toBe(true);
 	});
 
-	it("continues after approval when cancel was pressed while pending", async () => {
+	it("F1: continues after approval when cancel was pressed while pending", async () => {
 		const provider = mockProvider([
 			toolCallChunks("call_1", "read_file", '{"path":"index.ts"}'),
 			[{ content: "I read the file", done: false }, { done: true }],
@@ -264,7 +264,7 @@ describe("agent loop", () => {
 		expect(events.some((e) => e.kind === "content" && e.text === "I read the file")).toBe(true);
 	});
 
-	it("continues after rejection when cancel was pressed while pending", async () => {
+	it("F1: continues after rejection when cancel was pressed while pending", async () => {
 		const provider = mockProvider([
 			toolCallChunks("call_1", "read_file", '{"path":"secret.env"}'),
 			[{ content: "OK, skipping that", done: false }, { done: true }],

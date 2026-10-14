@@ -40,7 +40,7 @@ describe("file history", () => {
 });
 
 describe("edit_file", () => {
-	it("writes the replacement literally, without $ patterns", async () => {
+	it("F10: writes the replacement literally, without $ patterns", async () => {
 		writeFileSync(join(ROOT, "price.txt"), "price: X");
 		await editFileTool.execute({ path: "price.txt", search: "X", replace: "$&100 $$ $1" }, ROOT);
 
