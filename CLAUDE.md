@@ -149,12 +149,17 @@ anvil/
 │   ├── mcp/            # MCP client — external tool servers (stdio + HTTP)
 │   ├── web/            # Web search (DuckDuckGo) + fetch (Readability)
 │   ├── ui/             # Terminal UI helpers (status bar)
-│   ├── cli.ts          # Interactive CLI entry point with commands
+│   ├── controller/     # Headless session controller + shared command registry
+│   ├── tui/            # Importable Ink App + TUI bootstrap/render entry
+│   ├── cli/            # Readline frontend + queued input helper
+│   ├── shared/         # Shared application bootstrap
+│   ├── cli.ts          # Readline entry shim
+│   ├── main.ts         # Interactive entry point — routes to TUI or CLI
 │   └── index.ts        # Library entry point + VERSION
 ├── docs/               # Feature documentation (architecture, hooks, LSP, MCP)
 ├── biome.json          # Biome config (code formatting + linting)
 ├── dprint.json         # dprint config (markdown formatting)
-├── tsup.config.ts      # Build config (bundles cli.ts → dist/)
+├── tsup.config.ts      # Build config (main, CLI and TUI entries → dist/)
 ├── vitest.config.ts
 ├── tsconfig.json
 ├── package.json

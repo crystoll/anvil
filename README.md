@@ -65,7 +65,7 @@ On first run, creates `~/.anvil/config.yaml` pointing at Ollama on localhost. De
 ```
 anvil — ollama/gemma4:e4b
 Type /quit to exit, /skill to list, /model <name> to switch
-Press Esc to interrupt agent, Ctrl+C twice to exit
+Press Esc to cancel the current turn. In the TUI, press Ctrl+C twice quickly while idle to exit.
 
 you: What files are in this directory?
 anvil:
@@ -99,11 +99,13 @@ Here are the top results: ...
 
 ## Keyboard Shortcuts
 
-| Key        | Context       | Action                       |
-| ---------- | ------------- | ---------------------------- |
-| `Esc`      | Agent running | Interrupt current agent turn |
-| `Ctrl+C`   | Idle          | Exit                         |
-| `Ctrl+C×2` | Agent running | Force exit                   |
+| Key                         | Context                   | Action                  |
+| --------------------------- | ------------------------- | ----------------------- |
+| `Esc`                       | Agent running or approval | Cancel the current turn |
+| `Ctrl+C`                    | Agent running or approval | Cancel the current turn |
+| `Ctrl+C` twice within 1.5 s | TUI idle                  | Exit                    |
+| `Ctrl+C`                    | Readline CLI idle         | Exit                    |
+| `Ctrl+C` again within 0.5 s | Readline CLI after cancel | Force exit              |
 
 ## CLI Flags
 
@@ -192,6 +194,7 @@ Anvil detects context overflow (repeated empty responses, error messages) and wi
 
 ```
 src/
+├── controller/ # Headless session controller and shared command registry
 ├── provider/   # Ollama native + OpenAI-compatible streaming
 ├── engine/     # Chat engine — messages, streaming, cancellation, model switching
 ├── tools/      # Tool registry + built-in tools (files, shell, web)
@@ -203,11 +206,15 @@ src/
 ├── session/    # Session persistence (auto-save, resume, history)
 ├── skills/     # Skill parser + multi-directory discovery
 ├── web/        # Web search (DuckDuckGo) + fetch (Readability extraction)
-├── tui/        # Ink-based terminal UI (default) — status bar, streaming, tool display
-├── cli.ts      # Readline-based CLI (--simple fallback)
-└── main.ts     # Entry point — routes to TUI or CLI based on flags/environment
+├── tui/        # Importable Ink view and TUI entry point
+├── cli/        # Readline frontend and queued input helper
+├── shared/     # Shared application bootstrap
+├── cli.ts      # Readline entry shim
+└── main.ts     # Routes to TUI or CLI based on flags/environment
 ```
 
+The controller owns turns, approval queues, and session persistence. Both UIs submit input and
+render controller state/events; their keyboard handling and presentation remain frontend-specific.
 See [docs/architecture.md](docs/architecture.md) for design details.
 
 ## Development
@@ -232,12 +239,12 @@ pnpm format            # Biome (code) + dprint (markdown)
 
 ## Documentation
 
-| Doc                                         | Content                                                   |
-| ------------------------------------------- | --------------------------------------------------------- |
-| [architecture.md](docs/architecture.md)     | Provider layer, agent loop, tool registry, error handling |
-| [multi-provider.md](docs/multi-provider.md) | LiteLLM, OpenRouter, remote provider setup                |
-| [models.md](docs/models.md)                 | Model benchmarks, recommendations, hardware setup guides  |
-| [hooks.md](docs/hooks.md)                   | Agent lifecycle hooks and guardrails                      |
-| [mcp.md](docs/mcp.md)                       | MCP server configuration (stdio + HTTP)                   |
-| [lsp.md](docs/lsp.md)                       | Language server integration and tools                     |
-| [ideas.md](docs/ideas.md)                   | Future development ideas                                  |
+| Doc                                         | Content                                                  |
+| ------------------------------------------- | -------------------------------------------------------- |
+| [architecture.md](docs/architecture.md)     | Shared controller, provider layer, agent loop, tools     |
+| [multi-provider.md](docs/multi-provider.md) | LiteLLM, OpenRouter, remote provider setup               |
+| [models.md](docs/models.md)                 | Model benchmarks, recommendations, hardware setup guides |
+| [hooks.md](docs/hooks.md)                   | Agent lifecycle hooks and guardrails                     |
+| [mcp.md](docs/mcp.md)                       | MCP server configuration (stdio + HTTP)                  |
+| [lsp.md](docs/lsp.md)                       | Language server integration and tools                    |
+| [ideas.md](docs/ideas.md)                   | Future development ideas                                 |

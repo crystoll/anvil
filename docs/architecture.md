@@ -8,7 +8,7 @@ graph TB
     main[main.ts] -->|TTY| tui[TUI — Ink]
     main -->|--simple / -c / pipe| cli[CLI — readline]
 
-    %% Bootstrap
+    %% Bootstrap and controller creation
     tui --> boot[bootstrap]
     cli --> boot
 
@@ -24,6 +24,16 @@ graph TB
     boot --> agents[Agent Configs]
     boot --> mcp[MCP Client]
     boot --> lsp[LSP Client]
+    boot --> controller[Session Controller]
+
+    %% Shared session control
+    tui -->|submit / approve / reject / cancel| controller
+    cli -->|submit / approve / reject / cancel| controller
+    controller -->|state + events| tui
+    controller -->|state + events| cli
+    controller --> commands[Shared Command Registry]
+    controller --> agent
+    controller --> sess
 
     %% Runtime data flow
     eng -->|stream chunks| prov
@@ -52,7 +62,7 @@ graph TB
 
     class main entry
     class tui,cli ui
-    class boot,cfg,health,eng,agent,prov,reg,sess,skills,agents core
+    class boot,cfg,health,eng,agent,prov,reg,sess,skills,agents,controller,commands core
     class endpoints,mcpservers,langservers,fs,shell,web ext
     class builtins,mcptools,lsptools,mcp,lsp tool
 ```
@@ -115,22 +125,24 @@ sequenceDiagram
 
 ```
 src/
-├── main.ts           Entry — routes to TUI or CLI
-├── shared/
-│   └── bootstrap.ts  Orchestrates startup, creates AppContext
-├── config/           YAML loader, validation, env var interpolation
-├── provider/         Ollama native + OpenAI-compatible streaming
-├── engine/           Message history, streaming, model switching
-├── agent/            State machine — send/approve/reject/cancel
-├── agents/           Agent YAML configs — guards, hooks, trust levels
-├── tools/            Registry + built-in tools (fs, shell, git, web)
-├── mcp/              External tool servers (stdio + HTTP transport)
-├── lsp/              Language servers — diagnostics, navigation, rename
-├── session/          Auto-save, resume, history browser
-├── skills/           Skill discovery + parser (multi-directory)
-├── web/              DuckDuckGo search + Readability fetch
-├── tui/              Ink-based terminal UI (interactive picker, streaming)
-└── cli.ts            Readline fallback (numbered picker, simple I/O)
+├── main.ts                  Routes to TUI or readline CLI
+├── controller/              Headless session controller + shared commands
+├── shared/bootstrap.ts      Startup orchestration and AppContext
+├── config/                  YAML loader, validation, env var interpolation
+├── provider/                Ollama native + OpenAI-compatible streaming
+├── engine/                  Message history, streaming, model switching
+├── agent/                   State machine — send/approve/reject/cancel
+├── agents/                  Agent YAML configs — guards, hooks, trust levels
+├── tools/                   Registry + built-in tools (fs, shell, git, web)
+├── mcp/                     External tool servers (stdio + HTTP transport)
+├── lsp/                     Language servers — diagnostics, navigation, rename
+├── session/                 Auto-save, resume, history browser
+├── skills/                  Skill discovery + parser (multi-directory)
+├── web/                     DuckDuckGo search + Readability fetch
+├── tui/app.tsx               Importable Ink view
+├── tui/entry.tsx             TUI bootstrap and renderer
+├── cli/readline.ts           Readline frontend
+└── cli/readline-input.ts     Queued readline and approval input
 ```
 
 ## Provider Layer
@@ -157,6 +169,23 @@ Robustness:
 - Partial tool call recovery — lenient JSON parsing for incomplete output
 - Empty response detection — retry once before reporting failure
 - Graceful degradation — never hang, every await has a timeout
+
+## Shared Session Controller
+
+Both interactive frontends use the headless controller in `src/controller/`. It is the only
+owner of turn execution: UIs submit chat text or commands and send approval, rejection, and
+cancellation decisions; they do not call the agent loop directly.
+
+The controller publishes immutable state snapshots and agent events for streaming text, phase
+changes, pending tool approvals, usage, and notices. The Ink view subscribes with
+`useSyncExternalStore`; the readline frontend renders those events to the terminal. Shared
+commands use the same registry in both frontends, while input handling and rendering stay
+presentation-specific.
+
+The controller also coordinates approval queues, saves the session after committed work, waits
+for cancellation to settle, and performs bounded shutdown. The readline frontend separately
+queues lines typed during a turn and keeps approval prompts fresh-only; the TUI keeps its input
+visible while the controller is busy.
 
 ## Agent Loop
 
