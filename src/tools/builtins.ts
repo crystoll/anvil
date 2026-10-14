@@ -122,13 +122,14 @@ export const editFileTool: Tool = {
 		const search = String(args.search ?? "");
 		const replace = String(args.replace ?? "");
 		const fullPath = resolve(projectRoot, path);
+		if (search === "") throw new Error("Search string must not be empty");
 
 		const content = await readFile(fullPath, "utf-8");
 		if (!content.includes(search)) {
 			throw new Error(`Search string not found in ${path}`);
 		}
 		await backupFile(fullPath, projectRoot);
-		const updated = content.replace(search, replace);
+		const updated = content.replace(search, () => replace);
 		await writeFile(fullPath, updated, "utf-8");
 		return `Edited ${path}: replaced ${search.split("\n").length} lines`;
 	},

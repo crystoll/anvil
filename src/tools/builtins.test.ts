@@ -38,3 +38,20 @@ describe("file history", () => {
 		expect(readFileSync(join(ROOT, "edit-me.txt"), "utf-8")).toBe("foo qux baz");
 	});
 });
+
+describe("edit_file", () => {
+	it("writes the replacement literally, without $ patterns", async () => {
+		writeFileSync(join(ROOT, "price.txt"), "price: X");
+		await editFileTool.execute({ path: "price.txt", search: "X", replace: "$&100 $$ $1" }, ROOT);
+
+		expect(readFileSync(join(ROOT, "price.txt"), "utf-8")).toBe("price: $&100 $$ $1");
+	});
+
+	it("rejects an empty search and leaves the file untouched", async () => {
+		writeFileSync(join(ROOT, "keep.txt"), "hello");
+		const edit = editFileTool.execute({ path: "keep.txt", search: "", replace: "X" }, ROOT);
+
+		await expect(edit).rejects.toThrow(/must not be empty/);
+		expect(readFileSync(join(ROOT, "keep.txt"), "utf-8")).toBe("hello");
+	});
+});

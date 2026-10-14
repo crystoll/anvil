@@ -272,7 +272,7 @@ Do this before writing the many new tests in M3–M8.
   - Wrap the TUI's `processEvents` in try/catch: show the error, set idle, save.
   - In `main.ts`, install process-wide `unhandledRejection` and `uncaughtException` handlers. They write `~/.anvil/logs/crash-<ts>.log`, flush the session, restore the terminal (unmount ink, disable raw mode) and exit 1.
   - **Test first:** unit-test the installer with injected `flush`, `log` and `exit`.
-- [ ] **M3.7 `edit_file` replaces literally** (F10).
+- [x] **M3.7 `edit_file` replaces literally** (F10).
   - **Test first:** replacements containing `$&100`, `$$` and `$1` are written as-is, and an empty `search` is an error. Today an empty search inserts at the start of the file.
   - **Change:** use `content.replace(search, () => replace)` and validate the input.
 - [ ] **M3.8 Guarded history parsing.**
