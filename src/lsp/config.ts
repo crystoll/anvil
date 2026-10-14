@@ -34,7 +34,7 @@ export const loadLspConfig = (projectRoot: string): LspConfig | undefined => {
 /** Detect which languages from config are relevant for this project. */
 export const detectLanguages = (config: LspConfig, projectRoot: string): string[] =>
 	Object.entries(config)
-		.filter(([_, lang]) => lang.projectPatterns.some((p) => existsSync(join(projectRoot, p))))
+		.filter(([, lang]) => lang.projectPatterns.some((p) => existsSync(join(projectRoot, p))))
 		.map(([name]) => name);
 
 const parseLspFile = (path: string): LspConfig | undefined => {
