@@ -222,6 +222,68 @@ describe("agent loop", () => {
 		expect(events.some((e) => e.kind === "content")).toBe(true);
 		expect(loop.state()).toBe("idle");
 	});
+
+	it("answers the next message after an interrupted answer", async () => {
+		const provider = mockProvider([
+			[{ content: "Partial", done: false }, { content: " answer", done: false }, { done: true }],
+			[{ content: "Second answer", done: false }, { done: true }],
+		]);
+		const engine = createEngine(provider, "test");
+		const loop = createAgentLoop(engine, createRegistry(), {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		for await (const event of loop.send("first")) {
+			if (event.kind === "content") loop.cancel();
+		}
+		const events = await collect(loop.send("second"));
+
+		expect(events.some((e) => e.kind === "content" && e.text === "Second answer")).toBe(true);
+	});
+
+	it("continues after approval when cancel was pressed while pending", async () => {
+		const provider = mockProvider([
+			toolCallChunks("call_1", "read_file", '{"path":"index.ts"}'),
+			[{ content: "I read the file", done: false }, { done: true }],
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(dummyReadTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(loop.send("read it"));
+		loop.cancel();
+		const events = await collect(loop.approve());
+
+		expect(events.some((e) => e.kind === "content" && e.text === "I read the file")).toBe(true);
+	});
+
+	it("continues after rejection when cancel was pressed while pending", async () => {
+		const provider = mockProvider([
+			toolCallChunks("call_1", "read_file", '{"path":"secret.env"}'),
+			[{ content: "OK, skipping that", done: false }, { done: true }],
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(dummyReadTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(loop.send("read secret"));
+		loop.cancel();
+		const events = await collect(loop.reject("Not allowed"));
+
+		expect(events.some((e) => e.kind === "content" && e.text === "OK, skipping that")).toBe(true);
+	});
 });
 
 it("nudges model when it gives up without trying tools", async () => {

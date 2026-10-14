@@ -67,6 +67,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 
 	/** Start a new agent turn with a user message. */
 	async function* send(userMessage: string): AsyncGenerator<AgentEvent> {
+		cancelled = false;
 		engine.setSystem(config.systemPrompt);
 		engine.addUser(userMessage);
 		originalGoal = userMessage;
@@ -82,6 +83,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return;
 		}
 
+		cancelled = false;
 		yield setState("executing");
 		const { tool, args, callId } = pendingCall;
 		pendingCall = null;
@@ -111,6 +113,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return;
 		}
 
+		cancelled = false;
 		const { callId } = pendingCall;
 		pendingCall = null;
 		engine.addToolResult(callId, `REJECTED: ${reason}`);

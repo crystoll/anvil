@@ -259,7 +259,7 @@ Do this before writing the many new tests in M3–M8.
 - [ ] **M3.3 Tool post-processing can't escape the error boundary.**
   - **Test first:** when `transformToolResult` throws during `approve()`, the tool result becomes error text and the loop continues.
   - **Change:** move the call inside `executeTool`'s error boundary.
-- [ ] **M3.4 Hotfix for the swallowed message** (F1).
+- [x] **M3.4 Hotfix for the swallowed message** (F1).
   - **Test first:** cancel during final-answer streaming, then `send()`; the provider receives the request.
   - **Change:** reset `cancelled` at the start of `send`, `approve` and `reject`. M6.1 replaces this with turn-scoped aborts.
 - [ ] **M3.5 Hotfix for TUI stale closures** (F8).
