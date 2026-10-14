@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { ok } from "neverthrow";
+import { err, ok, type Result } from "neverthrow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VERSION } from "../index.js";
 import {
@@ -22,7 +22,7 @@ const setup = (overrides: Partial<CrashGuardDeps> = {}) => {
 		};
 	const deps = {
 		restoreTerminal: vi.fn(track("restore", undefined)),
-		flush: vi.fn<() => string | undefined>(track("flush", "abc123")),
+		flush: vi.fn<() => Result<string | undefined, string>>(track("flush", ok("abc123"))),
 		writeLog: vi.fn<(report: string) => string>(track("log", "/logs/crash-1.log")),
 		print: vi.fn<(text: string) => void>(),
 		exit: vi.fn<(code: number) => void>(track("exit", undefined)),
@@ -63,7 +63,7 @@ describe("installCrashGuard", () => {
 	});
 
 	it("doesn't offer to resume when there was nothing to save", () => {
-		const { source, printed } = setup({ flush: () => undefined });
+		const { source, printed } = setup({ flush: () => ok(undefined) });
 
 		source.emit("uncaughtException", new Error("boom"));
 
@@ -71,7 +71,7 @@ describe("installCrashGuard", () => {
 	});
 
 	it("reports a session that couldn't be saved", () => {
-		const { source, printed, report } = setup({ flush: failing("disk full") });
+		const { source, printed, report } = setup({ flush: () => err("disk full") });
 
 		source.emit("unhandledRejection", new Error("boom"));
 

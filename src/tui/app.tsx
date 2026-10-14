@@ -7,7 +7,7 @@ import TextInput from "ink-text-input";
 import { useEffect, useRef, useState } from "react";
 import { compactHistory } from "../agent/compact.js";
 import type { AgentEvent } from "../agent/loop.js";
-import { listSessions, loadSession, saveSession } from "../session/index.js";
+import { listSessions, loadSession } from "../session/index.js";
 import {
 	bootstrap,
 	expandFileRefs,
@@ -30,8 +30,9 @@ const {
 	availableSkills,
 	availableAgents,
 	historyDir,
+	session,
 } = ctx;
-let { activeProviderName, sessionId } = ctx;
+let { activeProviderName } = ctx;
 let activeSkill = ctx.activeSkill;
 let activeAgentDef = ctx.activeAgent;
 
@@ -227,15 +228,9 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	});
 
 	const persistSession = () => {
-		saveSession(historyDir, [...engine.messages()], sessionId, {
-			promptTokens: lastPrompt,
-			totalTokens: tokens,
-		}).match(
-			(savedId) => {
-				sessionId = savedId;
-			},
-			(error) => addMsg(`  ⚠ ${error}`, true),
-		);
+		session
+			.save({ promptTokens: lastPrompt, totalTokens: tokens })
+			.orTee((error) => addMsg(`  ⚠ ${error}`, true));
 	};
 
 	/** Reads the ref because `pendingTool` is stale after an await. A turn paused for approval is
@@ -608,7 +603,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			setTokens(0);
 			setLastPrompt(0);
 			setBusy(false);
-			sessionId = undefined;
+			session.startNew();
 			addMsg("[new session]", true);
 		},
 		"/usage": () => addMsg(`[${tokens} tok | ${engine.messages().length} msgs]`, true),
@@ -785,22 +780,9 @@ const handleInfoEvent = (
 	if (event.kind === "warning") addMsg(`  ⚠ ${event.message}`, true);
 };
 
-/** Saves nothing until the user has said something, so a crash at startup leaves no empty session.
- * A failed save throws, which the crash guard reports. */
-const flushSession = (): string | undefined => {
-	if (!engine.messages().some((message) => message.role !== "system")) return undefined;
-	sessionId = saveSession(historyDir, [...engine.messages()], sessionId).match(
-		(savedId) => savedId,
-		(error) => {
-			throw new Error(error);
-		},
-	);
-	return sessionId;
-};
-
 function Root() {
 	return <App providerWarning={providerWarning} />;
 }
 
 const app = render(<Root />, { exitOnCtrlC: false });
-guardProcess({ flush: flushSession, restoreTerminal: () => app.unmount() });
+guardProcess({ flush: session.save, restoreTerminal: () => app.unmount() });

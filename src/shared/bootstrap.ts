@@ -33,7 +33,12 @@ import {
 import { createProvider, type Provider } from "../provider/index.js";
 import { createLlamaCppProvider } from "../provider/llamacpp.js";
 import { createOllamaProvider } from "../provider/ollama-native.js";
-import { listSessions, loadSession } from "../session/index.js";
+import {
+	createSessionWriter,
+	listSessions,
+	loadSession,
+	type SessionWriter,
+} from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
 import { builtinTools, createRegistry } from "../tools/index.js";
 import { settleWithin } from "./settle-within.js";
@@ -70,7 +75,7 @@ export type AppContext = {
 	activeAgent: AgentDef | undefined;
 	mcpServers: ConnectedServer[];
 	lspManager: LspManager | undefined;
-	sessionId: string | undefined;
+	session: SessionWriter;
 	historyDir: string;
 	buildPrompt: () => string;
 	fireStopHooks: () => Promise<void>;
@@ -334,6 +339,22 @@ const tryResumeSession = (
 	return sessions[0].id;
 };
 
+/**
+ * Saves the conversation as each message lands, so a crash or kill mid-turn loses at most the
+ * answer being streamed. One-shot runs are never saved.
+ */
+export const openSession = (
+	flags: Pick<Flags, "command" | "resume">,
+	historyDir: string,
+	engine: ReturnType<typeof createEngine>,
+): SessionWriter => {
+	const resumedId = flags.resume ? tryResumeSession(historyDir, engine) : undefined;
+	const session = createSessionWriter(historyDir, engine.messages, resumedId);
+	// A failed save is reported by the save the UI makes at the end of the turn.
+	if (!flags.command) engine.onCommit(() => session.save());
+	return session;
+};
+
 const SHUTDOWN_TIMEOUT_MS = 3000;
 
 /** Stop MCP and language servers together, giving up after a deadline so exit can't hang. */
@@ -440,7 +461,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	});
 	runHooks(agentHooks.sessionStart ?? [], { ...hookCtx, hook_event_name: "sessionStart" });
 
-	const sessionId = flags.resume ? tryResumeSession(p.historyDir, engine) : undefined;
+	const session = openSession(flags, p.historyDir, engine);
 
 	return {
 		config,
@@ -457,7 +478,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		activeAgent,
 		mcpServers,
 		lspManager,
-		sessionId,
+		session,
 		historyDir: p.historyDir,
 		buildPrompt,
 		fireStopHooks: async () => {

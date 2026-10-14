@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { emitKeypressEvents } from "node:readline";
 import { createInterface } from "node:readline/promises";
+import { ok } from "neverthrow";
 import { compactHistory } from "./agent/compact.js";
 import type { AgentEvent } from "./agent/loop.js";
-import { listSessions, loadSession, saveSession } from "./session/index.js";
+import { listSessions, loadSession } from "./session/index.js";
 import {
 	bootstrap,
 	expandFileRefs,
@@ -25,7 +26,7 @@ import { createStatusBar } from "./ui/statusbar.js";
 const flags = parseFlags(process.argv);
 if (flags.path) process.chdir(flags.path);
 const ctx = await bootstrap(flags);
-const { config, projectRoot, engine, registry, agent, historyDir } = ctx;
+const { config, projectRoot, engine, registry, agent, historyDir, session } = ctx;
 
 // === State ===
 
@@ -33,7 +34,6 @@ let sessionTokens = { prompt: 0, total: 0 };
 let lastPromptTokens = 0;
 let pendingUsageDisplay = "";
 let busy = false;
-let sessionId = ctx.sessionId;
 const debugMode = flags.debug;
 const showTokens = config.showTokens;
 const statusBar = createStatusBar();
@@ -436,14 +436,11 @@ const handleAgentCommand = (input: string): void => {
 	console.log(`Activated agent: ${found.name}`);
 };
 
-const handleHistoryCommand = async (
-	rl: ReturnType<typeof createInterface>,
-	currentId: string | undefined,
-): Promise<string | undefined> => {
+const handleHistoryCommand = async (rl: ReturnType<typeof createInterface>): Promise<void> => {
 	const sessions = listSessions(historyDir);
 	if (sessions.length === 0) {
 		console.log("No saved sessions.");
-		return currentId;
+		return;
 	}
 	console.log("\nSaved sessions:\n");
 	const shown = sessions.slice(0, 10);
@@ -455,7 +452,7 @@ const handleHistoryCommand = async (
 			hour: "2-digit",
 			minute: "2-digit",
 		});
-		const marker = s.id === currentId ? " ●" : "";
+		const marker = s.id === session.id() ? " ●" : "";
 		const result = loadSession(historyDir, s.id);
 		const preview = result.isOk()
 			? (result.value.messages.find((m) => m.role === "user")?.content ?? "")
@@ -468,15 +465,22 @@ const handleHistoryCommand = async (
 	const answer = await ask(rl, "Load # (or Enter to cancel): ");
 	const idx = Number.parseInt(answer.trim(), 10) - 1;
 	const selected = shown[idx];
-	if (!selected) return currentId;
+	if (!selected) return;
 	const loaded = loadSession(historyDir, selected.id);
 	if (loaded.isErr()) {
 		console.log(`Failed: ${loaded.error}`);
-		return currentId;
+		return;
 	}
 	engine.loadMessages(loaded.value.messages);
+	session.resume(selected.id);
 	console.log(`Loaded session ${selected.id} (${loaded.value.messages.length} messages)\n`);
-	return selected.id;
+};
+
+/** Adds the turn's token usage to the session file and reports if saving fails. */
+const saveTurn = (): void => {
+	session
+		.save({ promptTokens: sessionTokens.prompt, totalTokens: sessionTokens.total })
+		.orTee((error) => stdout.write(`\x1b[33m⚠ ${error}\x1b[0m\n`));
 };
 
 const handleRewind = (input: string): void => {
@@ -581,7 +585,6 @@ const handlePlan = async (task: string, rl: ReturnType<typeof createInterface>):
 const handleCommand = async (
 	trimmed: string,
 	rl: ReturnType<typeof createInterface>,
-	setId: (id: string | undefined) => void,
 ): Promise<"handled" | "quit" | "message"> => {
 	if (trimmed === "/quit" || trimmed === "/exit") return "quit";
 
@@ -590,7 +593,7 @@ const handleCommand = async (
 		"/context": showContext,
 		"/new": () => {
 			engine.reset();
-			setId(undefined);
+			session.startNew();
 			sessionTokens = { prompt: 0, total: 0 };
 			lastPromptTokens = 0;
 			console.log("New session started.\n");
@@ -615,7 +618,7 @@ const handleCommand = async (
 		return "handled";
 	}
 	if (trimmed === "/history") {
-		setId(await handleHistoryCommand(rl, undefined));
+		await handleHistoryCommand(rl);
 		return "handled";
 	}
 	if (trimmed === "/transcript") {
@@ -632,6 +635,7 @@ const handleCommand = async (
 	}
 	if (trimmed.startsWith("/plan")) {
 		await handlePlan(trimmed.replace("/plan", "").trim(), rl);
+		saveTurn();
 		return "handled";
 	}
 	if (trimmed.startsWith("/")) {
@@ -684,8 +688,7 @@ const runOneShot = async (command: string): Promise<void> => {
 const processUserMessage = async (
 	trimmed: string,
 	rl: ReturnType<typeof createInterface>,
-	id: string | undefined,
-): Promise<string | undefined> => {
+): Promise<void> => {
 	try {
 		stdout.write("\x1b[2m─\x1b[0m\n");
 		await processAgentTurn(rl, expandFileRefs(trimmed, projectRoot));
@@ -696,16 +699,7 @@ const processUserMessage = async (
 	}
 	stdout.write("\n");
 	await ctx.fireStopHooks();
-	return saveSession(historyDir, [...engine.messages()], id, {
-		promptTokens: sessionTokens.prompt,
-		totalTokens: sessionTokens.total,
-	}).match(
-		(savedId) => savedId,
-		(error) => {
-			stdout.write(`\x1b[33m⚠ ${error}\x1b[0m\n`);
-			return undefined;
-		},
-	);
+	saveTurn();
 };
 
 const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> => {
@@ -722,13 +716,11 @@ const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> =
 		const lineCount = trimmed.split("\n").length;
 		if (lineCount > 3) stdout.write(`\x1b[2m[${lineCount} lines]\x1b[0m\n`);
 
-		const result = await handleCommand(trimmed, rl, (newId) => {
-			sessionId = newId;
-		});
+		const result = await handleCommand(trimmed, rl);
 		if (result === "quit") break;
 		if (result === "handled") continue;
 
-		sessionId = (await processUserMessage(trimmed, rl, sessionId)) ?? sessionId;
+		await processUserMessage(trimmed, rl);
 	}
 
 	if (sessionTokens.total > 0) {
@@ -736,23 +728,10 @@ const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> =
 	}
 };
 
-/** Saves nothing until the user has said something, so a crash at startup leaves no empty session.
- * A failed save throws, which the crash guard reports. */
-const flushSession = (): string | undefined => {
-	if (!engine.messages().some((message) => message.role !== "system")) return undefined;
-	sessionId = saveSession(historyDir, [...engine.messages()], sessionId).match(
-		(savedId) => savedId,
-		(error) => {
-			throw new Error(error);
-		},
-	);
-	return sessionId;
-};
-
 // === Entry point ===
 
 // One-shot runs never save a session, so a crash in one shouldn't either.
-guardProcess({ flush: flags.command ? () => undefined : flushSession });
+guardProcess({ flush: flags.command ? () => ok(undefined) : session.save });
 
 if (flags.command) {
 	await runOneShot(flags.command);

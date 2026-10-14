@@ -1,7 +1,7 @@
 import { okAsync } from "neverthrow";
 import { describe, expect, it } from "vitest";
-import type { Provider, StreamChunk } from "../provider/types.js";
-import type { EngineEvent } from "./engine.js";
+import type { Message, Provider, StreamChunk } from "../provider/types.js";
+import type { Engine, EngineEvent } from "./engine.js";
 import { createEngine } from "./engine.js";
 
 /** Helper: create a mock provider that streams the given chunks. */
@@ -155,6 +155,69 @@ describe("chat engine", () => {
 
 		expect(engine.messages()).toHaveLength(0);
 		expect(engine.state()).toBe("idle");
+	});
+});
+
+describe("commit listeners", () => {
+	const recordCommits = (engine: Engine): Message[] => {
+		const committed: Message[] = [];
+		engine.onCommit((message) => {
+			committed.push(message);
+		});
+		return committed;
+	};
+
+	it("hear about each user message, finished answer and tool result", async () => {
+		const answer: StreamChunk[] = [{ content: "Hello", done: false }, { done: true }];
+		const engine = createEngine(mockProvider(answer), "test");
+		const committed = recordCommits(engine);
+
+		engine.addUser("Hi");
+		await collectEvents(engine.stream([]));
+		engine.addToolResult("call_1", "file contents");
+
+		expect(committed).toEqual([
+			{ role: "user", content: "Hi" },
+			{ role: "assistant", content: "Hello" },
+			{ role: "tool", content: "file contents", toolCallId: "call_1" },
+		]);
+	});
+
+	it("don't hear about an answer that failed mid-stream", async () => {
+		const dropped: StreamChunk[] = [
+			{ content: "Hel", done: false },
+			{ done: true, error: { kind: "connection", message: "socket hang up" } },
+		];
+		const engine = createEngine(mockProvider(dropped), "test");
+		const committed = recordCommits(engine);
+
+		await collectEvents(engine.stream([]));
+
+		expect(committed).toEqual([]);
+	});
+
+	it("don't hear about the system prompt or replaced history", () => {
+		const engine = createEngine(mockProvider([]), "test");
+		const committed = recordCommits(engine);
+
+		engine.setSystem("You are helpful");
+		engine.loadMessages([{ role: "user", content: "Earlier" }]);
+		engine.reset();
+
+		expect(committed).toEqual([]);
+	});
+
+	it("stop hearing once unsubscribed", () => {
+		const engine = createEngine(mockProvider([]), "test");
+		const committed: Message[] = [];
+		const unsubscribe = engine.onCommit((message) => {
+			committed.push(message);
+		});
+
+		unsubscribe();
+		engine.addUser("Hi");
+
+		expect(committed).toEqual([]);
 	});
 });
 

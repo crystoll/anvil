@@ -35,6 +35,11 @@ export type Engine = {
 	trimToFit: (maxTokens: number) => number;
 	/** Rewrite last message content as a tool call (for proxy recovery). */
 	rewriteLastAsToolCall: (call: { id: string; name: string; arguments: string }) => boolean;
+	/**
+	 * Hears each message as it joins the conversation, so it can be saved right away.
+	 * Not called for the system prompt, replaced history or failed answers.
+	 */
+	onCommit: (listener: (message: Message) => void) => () => void;
 };
 
 type ToolCallAccum = { id: string; name: string; args: string };
@@ -101,6 +106,12 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 	let abortController: AbortController | null = null;
 	let model = initialModel;
 	let provider = initialProvider;
+	const commitListeners = new Set<(message: Message) => void>();
+
+	const commit = (message: Message) => {
+		history.push(message);
+		for (const listener of commitListeners) listener(message);
+	};
 
 	const setSystem = (content: string) => {
 		const idx = history.findIndex((m) => m.role === "system");
@@ -112,11 +123,11 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 	};
 
 	const addUser = (content: string) => {
-		history.push({ role: "user", content });
+		commit({ role: "user", content });
 	};
 
 	const addToolResult = (toolCallId: string, content: string) => {
-		history.push({ role: "tool", content, toolCallId });
+		commit({ role: "tool", content, toolCallId });
 	};
 
 	const cancel = () => {
@@ -186,9 +197,9 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 		}
 
 		const message = finalizeMessage(accumulator);
-		history.push(message);
 		currentState = "idle";
 		abortController = null;
+		commit(message);
 		yield { kind: "done", message };
 	}
 
@@ -216,6 +227,12 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 			last.toolCalls = [call];
 			last.content = "";
 			return true;
+		},
+		onCommit: (listener) => {
+			commitListeners.add(listener);
+			return () => {
+				commitListeners.delete(listener);
+			};
 		},
 	};
 };

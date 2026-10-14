@@ -10,7 +10,7 @@ export type CrashEvent = "uncaughtException" | "unhandledRejection";
 /** The part of crash handling that only the running UI knows how to do. */
 export type CrashCleanup = {
 	/** Saves the conversation and returns its session id, or undefined when there's nothing to save. */
-	flush: () => string | undefined;
+	flush: () => Result<string | undefined, string>;
 	restoreTerminal?: () => void;
 };
 
@@ -79,9 +79,13 @@ const crashNotice = (crash: Crash, log: Result<string, Error>, report: string): 
 		"",
 	].join("\n");
 
+/** A flush that throws is as much a failed save as one that returns err. */
+const flushSession = (flush: CrashCleanup["flush"]): Crash["session"] =>
+	attempt(flush).andThen((saved) => saved.mapErr((message) => new Error(message)));
+
 const handleCrash = (event: CrashEvent, error: unknown, deps: CrashGuardDeps): void => {
 	attempt(deps.restoreTerminal);
-	const crash: Crash = { event, error, session: attempt(deps.flush), at: new Date() };
+	const crash: Crash = { event, error, session: flushSession(deps.flush), at: new Date() };
 	const report = formatCrashReport(crash);
 	const log = attempt(() => deps.writeLog(report));
 	attempt(() => deps.print(crashNotice(crash, log, report)));

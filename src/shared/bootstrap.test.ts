@@ -1,8 +1,15 @@
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
+import { okAsync } from "neverthrow";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createEngine } from "../engine/index.js";
 import type { ConnectedServer } from "../mcp/index.js";
-import { pingProvider, shutdownServices } from "./bootstrap.js";
+import type { Message, Provider, StreamChunk } from "../provider/types.js";
+import { listSessions, loadSession, saveSession } from "../session/index.js";
+import { openSession, pingProvider, shutdownServices } from "./bootstrap.js";
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
@@ -113,5 +120,80 @@ describe("shutdownServices", () => {
 		await shutdownServices([], { shutdown: async () => {} });
 
 		expect(vi.getTimerCount()).toBe(0);
+	});
+});
+
+describe("openSession", () => {
+	const historyDir = join(tmpdir(), `anvil-open-session-test-${process.pid}`);
+	afterEach(() => rmSync(historyDir, { recursive: true, force: true }));
+
+	const interactive = { command: undefined, resume: false };
+	const question: Message = { role: "user", content: "Fix the bug" };
+
+	/** Answers "Done", letting the test look at the disk when the request goes out. */
+	const providerThat = (onRequest: () => void): Provider => ({
+		name: "mock",
+		streamChat: () => {
+			onRequest();
+			async function* answer(): AsyncGenerator<StreamChunk> {
+				yield { content: "Done", done: false };
+				yield { done: true };
+			}
+			return okAsync(answer());
+		},
+		completeChat: () => {
+			throw new Error("not implemented");
+		},
+		supportsTools: () => true,
+		listModels: () => okAsync([]),
+	});
+
+	const latestSaved = (): Message[] => {
+		const latest = listSessions(historyDir)[0];
+		return latest ? loadSession(historyDir, latest.id)._unsafeUnwrap().messages : [];
+	};
+
+	const newEngine = (onRequest: () => void = () => undefined) =>
+		createEngine(providerThat(onRequest), "test");
+
+	const drain = async (events: AsyncIterable<unknown>): Promise<unknown[]> => {
+		const seen: unknown[] = [];
+		for await (const event of events) seen.push(event);
+		return seen;
+	};
+
+	it("F9: saves the user message before the request goes out", async () => {
+		let onDiskAtRequest: Message[] = [];
+		const engine = newEngine(() => {
+			onDiskAtRequest = latestSaved();
+		});
+		openSession(interactive, historyDir, engine);
+
+		engine.addUser("Fix the bug");
+		await drain(engine.stream([]));
+
+		expect(onDiskAtRequest).toEqual([question]);
+		expect(latestSaved()).toEqual([question, { role: "assistant", content: "Done" }]);
+	});
+
+	it("never saves a one-shot run", () => {
+		const engine = newEngine();
+
+		openSession({ command: "Fix the bug", resume: false }, historyDir, engine);
+		engine.addUser("Fix the bug");
+
+		expect(listSessions(historyDir)).toEqual([]);
+	});
+
+	it("continues the latest session with --resume", () => {
+		const id = saveSession(historyDir, [question])._unsafeUnwrap();
+		const engine = newEngine();
+
+		const session = openSession({ command: undefined, resume: true }, historyDir, engine);
+		engine.addUser("And the tests?");
+
+		expect(session.id()).toBe(id);
+		expect(listSessions(historyDir)).toHaveLength(1);
+		expect(latestSaved()).toEqual([question, { role: "user", content: "And the tests?" }]);
 	});
 });

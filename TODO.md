@@ -306,14 +306,16 @@ Do this before writing the many new tests in M3–M8.
 - [x] **M4.1 Atomic saves.**
   - **Test first:** a failed write returns `err` and leaves the previous file intact. No temp file is left behind, even when the rename fails, and listing skips temp files left by a crashed save.
   - **Change:** `saveSession` writes `<file>.tmp-<pid>`, renames it over the session file, and returns a `Result` instead of throwing. Both UIs show a failed save as a warning and carry on.
-- [ ] **M4.2 Save after every committed message.**
-  - **Test first:** a commit listener fires after each user message, assistant message and tool result.
+- [x] **M4.2 Save after every committed message.**
+  - **Test first:**
+    - The engine tells commit listeners about each user message, finished answer and tool result. It doesn't tell them about the system prompt, replaced history or an answer that failed mid-stream.
+    - The user message is on disk before the request goes out. A one-shot run never saves.
   - **Change:**
     - Add an `onCommit(listener)` hook to the engine.
-    - Add a small `SessionWriter` (id, `save()`, `flush()`, `startNew()`), wired once in `bootstrap` so both UIs get it.
-    - Persist the user message before the request goes out.
-    - This also covers `/plan`: the CLI only saves in `processUserMessage`, so plan turns are lost if the user quits right after one.
-    - The UIs' end-of-turn `save()` calls shrink to token-usage updates.
+    - Add a small `SessionWriter` (`id()`, `save(usage?)`, `startNew()`, `resume(id)`). `openSession` in `bootstrap` wires it to `onCommit` once, so both UIs get it.
+    - This also covers `/plan`, which the CLI never saved.
+    - The UIs' end-of-turn saves now only add token usage and report a failed save. The crash guard's `flush` returns the writer's `Result`.
+    - Cancelling `/history` in the CLI no longer forks the conversation into a new file.
 - [ ] **M4.3 Handle signals.**
   - On SIGTERM or SIGHUP (terminal closed): flush, run the bounded shutdown, then exit.
   - Route `/quit`, `/exit` and double Ctrl+C through the same `gracefulExit()`.
