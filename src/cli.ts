@@ -17,6 +17,7 @@ import {
 	resolveProviderModel,
 } from "./shared/bootstrap.js";
 import { guardProcess } from "./shared/crash-guard.js";
+import { createGracefulExit } from "./shared/graceful-exit.js";
 import { startSpinner } from "./spinner.js";
 import { ask, isPromptClosed } from "./ui/ask.js";
 import { createStatusBar } from "./ui/statusbar.js";
@@ -34,6 +35,7 @@ let sessionTokens = { prompt: 0, total: 0 };
 let lastPromptTokens = 0;
 let pendingUsageDisplay = "";
 let busy = false;
+let lastCtrlC = 0;
 const debugMode = flags.debug;
 const showTokens = config.showTokens;
 const statusBar = createStatusBar();
@@ -166,6 +168,7 @@ const processAgentTurn = async (
 	rl: ReturnType<typeof createInterface>,
 	message: string,
 ): Promise<void> => {
+	lastCtrlC = 0;
 	let spinner = startSpinner();
 	let active = true;
 	busy = true;
@@ -210,6 +213,7 @@ const handleApproval = async (
 	pendingUsageDisplay = "";
 	busy = false;
 	const approved = await promptApproval(rl, event);
+	lastCtrlC = 0;
 	busy = true;
 	let spinner = startSpinner();
 	let active = true;
@@ -732,6 +736,20 @@ const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> =
 
 // One-shot runs never save a session, so a crash in one shouldn't either.
 guardProcess({ flush: flags.command ? () => ok(undefined) : session.save });
+let closeUi = () => {};
+const gracefulExit = createGracefulExit({
+	cancel: agent.cancel,
+	closeUi: () => closeUi(),
+	flush: flags.command ? () => ok(undefined) : session.save,
+	shutdown: ctx.shutdown,
+	print: (message) => process.stderr.write(message),
+	exit: (code) => {
+		process.exitCode = code;
+		process.stderr.write("", () => process.stdout.write("", () => process.exit(code)));
+	},
+});
+gracefulExit.install(process);
+let exitCode = 0;
 
 if (flags.command) {
 	await runOneShot(flags.command);
@@ -744,19 +762,22 @@ if (flags.command) {
 
 	emitKeypressEvents(stdin);
 	const rl = createInterface({ input: stdin, output: stdout });
+	closeUi = () => rl.close();
 
-	let lastCtrlC = 0;
 	rl.on("SIGINT", () => {
 		const now = Date.now();
 		if (busy) {
 			if (now - lastCtrlC < 500) {
+				agent.cancel();
 				rl.close();
+				exitCode = 130;
 			} else {
 				lastCtrlC = now;
 				stdout.write("\n  \x1b[2m(press Esc to interrupt, Ctrl+C again to exit)\x1b[0m\n");
 			}
 		} else {
 			rl.close();
+			exitCode = 130;
 		}
 	});
 
@@ -777,4 +798,4 @@ if (flags.command) {
 	}
 }
 
-await ctx.shutdown();
+await gracefulExit.run(exitCode);

@@ -16,6 +16,7 @@ import {
 	pingProvider,
 } from "../shared/bootstrap.js";
 import { guardProcess } from "../shared/crash-guard.js";
+import { createGracefulExit } from "../shared/graceful-exit.js";
 
 const flags = parseFlags(process.argv);
 const ctx = await bootstrap(flags);
@@ -35,6 +36,7 @@ const {
 let { activeProviderName } = ctx;
 let activeSkill = ctx.activeSkill;
 let activeAgentDef = ctx.activeAgent;
+let requestExit = () => {};
 
 // Provider health — derived from bootstrap validation
 const defaultHealth = ctx.healthyProviders.get(activeProviderName);
@@ -179,6 +181,12 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			setPicker(null);
 			return;
 		}
+		const now = Date.now();
+		if (now - lastCtrlC.current < 1500) {
+			requestExit();
+			return;
+		}
+		lastCtrlC.current = now;
 		if (busyRef.current) {
 			agent.cancel();
 			setBusy(false);
@@ -186,11 +194,6 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			addMsg("  [cancelled]", true);
 			return;
 		}
-		const now = Date.now();
-		if (now - lastCtrlC.current < 1500) {
-			process.exit(0);
-		}
-		lastCtrlC.current = now;
 		addMsg("  [press Ctrl+C again to exit]", true);
 	};
 
@@ -595,8 +598,8 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	};
 
 	const simpleCommands: Record<string, () => void> = {
-		"/quit": () => process.exit(0),
-		"/exit": () => process.exit(0),
+		"/quit": requestExit,
+		"/exit": requestExit,
 		"/new": () => {
 			engine.reset();
 			setMessages([]);
@@ -654,6 +657,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		setPendingTool(null);
 		pendingToolName.current = null;
 		setInput("");
+		lastCtrlC.current = 0;
 		setBusy(true);
 		await processEvents(approved ? agent.approve() : agent.reject(value));
 		finishTurn();
@@ -666,6 +670,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			const paths = refs.map((r) => r.trim().slice(1));
 			addMsg(`  [attached: ${paths.join(", ")}]`, true);
 		}
+		lastCtrlC.current = 0;
 		setBusy(true);
 		const len = await processEvents(agent.send(expandFileRefs(value, projectRoot)));
 		if (len === 0 && !pendingToolName.current) {
@@ -681,6 +686,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			return;
 		}
 		addMsg(`[plan: ${task}]`, true);
+		lastCtrlC.current = 0;
 		setBusy(true);
 		await processEvents(
 			agent.send(`Break this task into numbered steps (just the steps, no explanation):\n${task}`),
@@ -785,4 +791,19 @@ function Root() {
 }
 
 const app = render(<Root />, { exitOnCtrlC: false });
+const gracefulExit = createGracefulExit({
+	cancel: agent.cancel,
+	closeUi: () => app.unmount(),
+	flush: session.save,
+	shutdown: ctx.shutdown,
+	print: (message) => process.stderr.write(message),
+	exit: (code) => {
+		process.exitCode = code;
+		process.stderr.write("", () => process.stdout.write("", () => process.exit(code)));
+	},
+});
+requestExit = () => {
+	void gracefulExit.run();
+};
+gracefulExit.install(process);
 guardProcess({ flush: session.save, restoreTerminal: () => app.unmount() });

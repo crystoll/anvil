@@ -316,11 +316,11 @@ Do this before writing the many new tests in M3–M8.
     - This also covers `/plan`, which the CLI never saved.
     - The UIs' end-of-turn saves now only add token usage and report a failed save. The crash guard's `flush` returns the writer's `Result`.
     - Cancelling `/history` in the CLI no longer forks the conversation into a new file.
-- [ ] **M4.3 Handle signals.**
-  - On SIGTERM or SIGHUP (terminal closed): flush, run the bounded shutdown, then exit.
-  - Route `/quit`, `/exit` and double Ctrl+C through the same `gracefulExit()`.
-  - In the readline CLI, a double Ctrl+C mid-stream only closes readline, so the turn runs to the end before the app exits. Cancel the turn first.
-  - **Test first:** the installer, with injected handlers.
+- [x] **M4.3 Handle signals.**
+  - SIGINT, SIGTERM and SIGHUP cancel the agent, close the UI, flush the session, run the bounded shutdown, then exit with the conventional signal status.
+  - Route `/quit`, `/exit` and double Ctrl+C through the same idempotent `gracefulExit()`.
+  - The readline CLI cancels an active turn before closing on double Ctrl+C.
+  - **Test first:** injected handlers verify cleanup order, idempotence, failure handling and signal exit codes.
 - [ ] **M4.4 Repair sessions on load.** 📊 7 sessions end on unanswered tool calls.
   - **Test first:** a pure `repairHistory(messages)`, with fixtures modeled on your broken sessions. It:
     - inserts a `"[not executed: session was interrupted]"` result right after each unanswered call.
