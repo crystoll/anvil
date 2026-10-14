@@ -84,6 +84,36 @@ describe("loadMcpConfig", () => {
 		expect(config.test?.autoApprove).toEqual(["tool-a", "tool-b"]);
 	});
 
+	it("parses positive per-server connection and tool timeouts", () => {
+		const file = join(TEST_DIR, "mcp.json");
+		writeFileSync(
+			file,
+			JSON.stringify({
+				mcpServers: {
+					test: { command: "node", connectTimeoutMs: 5000, toolTimeoutMs: 12000 },
+				},
+			}),
+		);
+
+		const config = loadMcpConfig([file])._unsafeUnwrap();
+		expect(config.test?.connectTimeoutMs).toBe(5000);
+		expect(config.test?.toolTimeoutMs).toBe(12000);
+	});
+
+	it("rejects invalid per-server timeouts", () => {
+		const file = join(TEST_DIR, "mcp.json");
+		writeFileSync(
+			file,
+			JSON.stringify({ mcpServers: { test: { command: "node", toolTimeoutMs: 0 } } }),
+		);
+
+		const result = loadMcpConfig([file]);
+		expect(result.isErr()).toBe(true);
+		expect(result._unsafeUnwrapErr()).toContain(
+			"toolTimeoutMs must be an integer from 1 to 2147483647",
+		);
+	});
+
 	it("returns error on invalid JSON", () => {
 		const file = join(TEST_DIR, "bad.json");
 		writeFileSync(file, "not json{");

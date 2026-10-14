@@ -95,6 +95,7 @@ describe("shutdownServices", () => {
 		client: { close: () => new Promise<void>(() => {}) } as unknown as ConnectedServer["client"],
 		tools: [],
 		autoApprove: new Set(),
+		toolTimeoutMs: 60_000,
 	});
 
 	it("gives up on a hanging teardown after 3 s", async () => {

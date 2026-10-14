@@ -25,10 +25,9 @@ import {
 } from "../lsp/index.js";
 import {
 	type ConnectedServer,
-	connectServer,
+	connectMcpServers,
 	disconnectServer,
 	loadMcpConfig,
-	mcpToolsToAnvil,
 } from "../mcp/index.js";
 import { createProvider, type Provider } from "../provider/index.js";
 import { createLlamaCppProvider } from "../provider/llamacpp.js";
@@ -74,6 +73,7 @@ export type AppContext = {
 	availableAgents: AgentDef[];
 	activeAgent: AgentDef | undefined;
 	mcpServers: ConnectedServer[];
+	mcpWarnings: string[];
 	lspManager: LspManager | undefined;
 	session: SessionWriter;
 	historyDir: string;
@@ -296,17 +296,10 @@ const warnUnhealthyDefault = (health: Map<string, ProviderHealth>, defaultName: 
 const setupMcp = async (
 	mcpPaths: string[],
 	registry: ReturnType<typeof createRegistry>,
-): Promise<ConnectedServer[]> => {
+): Promise<{ servers: ConnectedServer[]; warnings: string[] }> => {
 	const cfg = loadMcpConfig(mcpPaths);
-	if (cfg.isErr()) return [];
-	const servers: ConnectedServer[] = [];
-	for (const [name, conf] of Object.entries(cfg.value)) {
-		const result = await connectServer(name, conf);
-		if (typeof result === "string") continue;
-		for (const tool of mcpToolsToAnvil(result)) registry.register(tool);
-		servers.push(result);
-	}
-	return servers;
+	if (cfg.isErr()) return { servers: [], warnings: [cfg.error] };
+	return connectMcpServers(cfg.value, registry);
 };
 
 const setupLsp = (projectRoot: string, registry: ReturnType<typeof createRegistry>) => {
@@ -409,7 +402,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	if (activeAgent?.model) engine.setModel(activeAgent.model);
 
 	// MCP + LSP
-	const mcpServers = await setupMcp(p.mcpPaths, registry);
+	const { servers: mcpServers, warnings: mcpWarnings } = await setupMcp(p.mcpPaths, registry);
 	const { lspManager, diagnosticInjector } = setupLsp(projectRoot, registry);
 
 	// Apply agent filter after all tools are registered (MCP + LSP included)
@@ -478,6 +471,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		availableAgents,
 		activeAgent,
 		mcpServers,
+		mcpWarnings,
 		lspManager,
 		session,
 		historyDir: p.historyDir,

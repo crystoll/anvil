@@ -29,6 +29,7 @@ const flags = parseFlags(process.argv);
 if (flags.path) process.chdir(flags.path);
 const ctx = await bootstrap(flags);
 const { config, projectRoot, engine, registry, agent, historyDir, session } = ctx;
+for (const warning of ctx.mcpWarnings) console.error(`⚠ ${warning}`);
 
 // === State ===
 

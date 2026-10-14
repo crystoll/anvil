@@ -192,7 +192,7 @@ The total is about 21.5 focused days.
   - `StdioClientTransport` and `getDefaultEnvironment` come from `@modelcontextprotocol/client/stdio`.
   - `callTool(params, { signal, timeout, resetTimeoutOnProgress })`.
 
-- [ ] **M1.1 Test first.** Write a stdio fixture server, `src/mcp/__fixtures__/fake-mcp-server.mjs`, speaking newline-delimited JSON-RPC: `initialize`, `tools/list`, and `tools/call` with `echo`, `fail`, `hang` and `crash` tools. Tests:
+- [x] **M1.1 Test first.** Add a stdio fixture server, `src/mcp/__fixtures__/fake-mcp-server.mjs`, speaking newline-delimited JSON-RPC: `initialize`, `tools/list`, and `tools/call` with `echo`, `fail`, `hang` and `crash` tools. Tests:
   - Connect and list tools.
   - `echo` returns text.
   - `isError` becomes `Error: …`.
@@ -201,14 +201,14 @@ The total is about 21.5 focused days.
   - `crash` gives an error result, with no hang and no unhandled rejection.
   - A missing command gives an error string within the connect timeout.
   - Server stderr never reaches `process.stderr`.
-- [ ] **M1.2 Swap the package.** Replace `@modelcontextprotocol/sdk` with `@modelcontextprotocol/client@2.3.1` and adapt the imports. Drop the `as unknown as Transport` cast if the types now line up.
-- [ ] **M1.3 Pipe server stderr away from the TUI.** Use `stderr: "pipe"` and write it to `~/.anvil/logs/mcp-<name>.log` (or to `--debug` output), so server logs can't corrupt ink (F15).
-- [ ] **M1.4 Stop leaking the environment.** Use `env: { ...getDefaultEnvironment(), ...config.env }` instead of the full `process.env`. Document in `docs/mcp.md` that servers must declare any variables they need.
-- [ ] **M1.5 Add timeouts.** Both are configurable per server in `mcp.json`:
+- [x] **M1.2 Swap the package.** Replace `@modelcontextprotocol/sdk` with `@modelcontextprotocol/client@2.3.1` and adapt the imports. Drop the `as unknown as Transport` cast if the types now line up.
+- [x] **M1.3 Pipe server stderr away from the TUI.** Use `stderr: "pipe"` and write it to `~/.anvil/logs/mcp-<name>.log` (or to `--debug` output), so server logs can't corrupt ink (F15).
+- [x] **M1.4 Stop leaking the environment.** Use `env: { ...getDefaultEnvironment(), ...config.env }` instead of the full `process.env`. Document in `docs/mcp.md` that servers must declare any variables they need.
+- [x] **M1.5 Add timeouts.** Both are configurable per server in `mcp.json`:
   - connect: 15 s by default.
   - each tool call: 60 s by default, with `resetTimeoutOnProgress: true`.
-- [ ] **M1.6 Connect in parallel and report failures.** In `bootstrap`, connect servers with `Promise.allSettled` and show failures in the startup notice instead of swallowing them.
-- [ ] **M1.7 Clean up overrides.** Remove the stale ones (`fast-uri`, `ip-address`, `hono`, `@hono/node-server`, `body-parser`) and the interim `proxy-addr` override. First confirm with `pnpm why` that each package is gone.
+- [x] **M1.6 Connect in parallel and report failures.** In `bootstrap`, connect servers with `Promise.allSettled` and show failures in the startup notice instead of swallowing them.
+- [x] **M1.7 Clean up overrides.** Remove the stale ones (`fast-uri`, `ip-address`, `hono`, `@hono/node-server`, `body-parser`) and the interim `proxy-addr` override. First confirm with `pnpm why` that each package is gone.
 
 **Validation stop:**
 

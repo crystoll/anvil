@@ -8,8 +8,16 @@ export type McpServerConfig =
 			args?: string[];
 			env?: Record<string, string>;
 			autoApprove?: string[];
+			connectTimeoutMs?: number;
+			toolTimeoutMs?: number;
 	  }
-	| { type: "http"; url: string; autoApprove?: string[] };
+	| {
+			type: "http";
+			url: string;
+			autoApprove?: string[];
+			connectTimeoutMs?: number;
+			toolTimeoutMs?: number;
+	  };
 
 export type McpConfig = Record<string, McpServerConfig>;
 
@@ -39,7 +47,8 @@ const parseMcpFile = (path: string): Result<McpConfig, string> => {
 		const config: McpConfig = {};
 		for (const [name, entry] of Object.entries(servers)) {
 			const server = parseServerEntry(entry);
-			if (server) config[name] = server;
+			if (server.isErr()) return err(`Invalid MCP server "${name}" in ${path}: ${server.error}`);
+			if (server.value) config[name] = server.value;
 		}
 		return ok(config);
 	} catch (e) {
@@ -47,18 +56,40 @@ const parseMcpFile = (path: string): Result<McpConfig, string> => {
 	}
 };
 
-const parseServerEntry = (entry: unknown): McpServerConfig | undefined => {
+const parseServerEntry = (entry: unknown): Result<McpServerConfig | undefined, string> => {
 	const s = entry as Record<string, unknown>;
+	const timeouts = parseTimeouts(s);
+	if (timeouts.isErr()) return err(timeouts.error);
 	if (s.type === "http" || (typeof s.url === "string" && typeof s.command !== "string")) {
-		if (typeof s.url !== "string") return undefined;
-		const server: McpServerConfig = { type: "http", url: s.url };
+		if (typeof s.url !== "string") return ok(undefined);
+		const server: McpServerConfig = { type: "http", url: s.url, ...timeouts.value };
 		if (Array.isArray(s.autoApprove)) server.autoApprove = s.autoApprove;
-		return server;
+		return ok(server);
 	}
-	if (typeof s.command !== "string") return undefined;
-	const server: McpServerConfig = { command: s.command };
+	if (typeof s.command !== "string") return ok(undefined);
+	const server: McpServerConfig = { command: s.command, ...timeouts.value };
 	if (Array.isArray(s.args)) server.args = s.args;
 	if (typeof s.env === "object" && s.env !== null) server.env = s.env as Record<string, string>;
 	if (Array.isArray(s.autoApprove)) server.autoApprove = s.autoApprove;
-	return server;
+	return ok(server);
+};
+
+const parseTimeouts = (
+	entry: Record<string, unknown>,
+): Result<Pick<McpServerConfig, "connectTimeoutMs" | "toolTimeoutMs">, string> => {
+	const timeouts: Pick<McpServerConfig, "connectTimeoutMs" | "toolTimeoutMs"> = {};
+	for (const key of ["connectTimeoutMs", "toolTimeoutMs"] as const) {
+		const value = entry[key];
+		if (value === undefined) continue;
+		if (
+			typeof value !== "number" ||
+			!Number.isSafeInteger(value) ||
+			value <= 0 ||
+			value > 2_147_483_647
+		) {
+			return err(`${key} must be an integer from 1 to 2147483647 milliseconds`);
+		}
+		timeouts[key] = value;
+	}
+	return ok(timeouts);
 };

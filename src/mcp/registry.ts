@@ -9,6 +9,6 @@ export const mcpToolsToAnvil = (server: ConnectedServer): Tool[] =>
 		description: `(MCP tool from ${server.name}) ${mcpTool.description ?? ""}`,
 		schema: (mcpTool.inputSchema as Record<string, unknown>) ?? { type: "object", properties: {} },
 		needsApproval: !server.autoApprove.has(mcpTool.name),
-		timeout: 60_000,
+		timeout: server.toolTimeoutMs,
 		execute: async (args: Record<string, unknown>) => callServerTool(server, mcpTool.name, args),
 	}));

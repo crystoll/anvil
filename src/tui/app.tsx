@@ -109,10 +109,23 @@ function StatusBar({
 	);
 }
 
-function App({ providerWarning }: { providerWarning: string | undefined }) {
-	const initMsgs: Msg[] = providerWarning
-		? [{ id: 0, text: `⚠ ${providerWarning} — use /model to switch`, dim: true }]
-		: [];
+function App({
+	providerWarning,
+	mcpWarnings,
+}: {
+	providerWarning: string | undefined;
+	mcpWarnings: string[];
+}) {
+	const initMsgs: Msg[] = [
+		...(providerWarning
+			? [{ id: 0, text: `⚠ ${providerWarning} — use /model to switch`, dim: true }]
+			: []),
+		...mcpWarnings.map((warning, index) => ({
+			id: index + (providerWarning ? 1 : 0),
+			text: `⚠ ${warning}`,
+			dim: true,
+		})),
+	];
 	const [messages, setMessages] = useState<Msg[]>(initMsgs);
 	const [input, setInput] = useState("");
 	const [tokens, setTokens] = useState(0);
@@ -147,7 +160,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	const autoApproved = useRef(new Set<string>());
 	const [picker, setPicker] = useState<string[] | null>(null);
 	const [pickerIdx, setPickerIdx] = useState(0);
-	const nextId = useRef(providerWarning ? 1 : 0);
+	const nextId = useRef(initMsgs.length);
 	const history = useRef<string[]>([]);
 	const histIdx = useRef(-1);
 
@@ -789,7 +802,7 @@ const handleInfoEvent = (
 };
 
 function Root() {
-	return <App providerWarning={providerWarning} />;
+	return <App providerWarning={providerWarning} mcpWarnings={ctx.mcpWarnings} />;
 }
 
 const app = render(<Root />, { exitOnCtrlC: false });

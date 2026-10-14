@@ -43,7 +43,7 @@
 		"check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.30.0",
+		"@modelcontextprotocol/client": "2.3.1",
 		"@mozilla/readability": "0.6.0",
 		"ink": "^7.1.1",
 		"ink-spinner": "^5.0.0",
