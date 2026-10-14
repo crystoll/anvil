@@ -855,6 +855,52 @@ it("does not nudge more than once per give-up", async () => {
 	expect(loop.rounds()).toBe(2);
 });
 
+it("nudges once when the assistant response is empty", async () => {
+	const requests: Message[][] = [];
+	const provider = mockProvider(
+		[[{ done: true }], [{ content: "answer", done: false }, { done: true }]],
+		(messages) => requests.push(messages),
+	);
+	const engine = createEngine(provider, "test");
+	const loop = createAgentLoop(engine, createRegistry(), {
+		maxRounds: 5,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+	});
+
+	await collect(loop.send("do something"));
+
+	expect(requests).toHaveLength(2);
+	expect(requests[1]?.find((message) => message.synthetic)?.content).toContain(
+		"Your response was empty",
+	);
+	expect(
+		engine.messages().filter((message) => message.role === "user" && message.synthetic),
+	).toHaveLength(1);
+});
+
+it("does not nudge while a tool call awaits approval", async () => {
+	const requests: Message[][] = [];
+	const provider = mockProvider(
+		[toolCallChunks("call_1", "read_file", '{"path":"file.txt"}')],
+		(messages) => requests.push(messages),
+	);
+	const engine = createEngine(provider, "test");
+	const registry = createRegistry();
+	registry.register(dummyReadTool);
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 5,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+	});
+
+	const events = await collect(loop.send("read the file"));
+
+	expect(events.some((event) => event.kind === "pending")).toBe(true);
+	expect(requests).toHaveLength(1);
+	expect(engine.messages().some((message) => message.synthetic)).toBe(false);
+});
+
 it("detects stall when same tool+args called 3 times", async () => {
 	const provider = mockProvider([
 		toolCallChunks("c1", "list_dir", '{"path":"."}'),

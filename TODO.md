@@ -357,8 +357,9 @@ Do this before writing the many new tests in M3–M8.
   - Add an optional `status` to `Message` and persist it.
   - Providers append "[response interrupted]" when sending such a message back.
   - UIs render a dimmed label.
+- [x] **M5.5 TUI Escape smoke.** Manually verified: Escape cancels an active generation.
 
-**Validation stop:** the gate passes, including the first `pnpm test:integration` run, plus S1. Partial answers must be labeled, and the next message must work.
+**Validation stop:** the gate passes, including the first `pnpm test:integration` run, plus S1. Partial answers must be labeled, and the next message must work. The TUI Escape cancellation smoke was confirmed manually on 2026-10-14.
 
 ## M6 — Agent loop integrity (2 d)
 
@@ -446,9 +447,10 @@ type SessionController = {
 };
 ```
 
-- [ ] **M8.1 Controller and command registry, with tests.**
+- [x] **M8.1 Controller and command registry, with tests.**
   - Tests run the real loop against the mock Ollama server in a temp project dir.
   - One registry serves `/model`, `/agent`, `/skill`, `/plan`, `/compact`, `/rewind`, `/history`, `/resume`, `/retry`, `/continue`, `/new`, `/quit` and `/help`.
+  - **Change:** `src/controller/` now exposes a headless controller and application command registry. The controller owns turn state, approval queues, cancellation completion, session saves and bounded shutdown; command handlers provide shared session/model/agent/skill operations. `/retry` removes the failed tail before resubmitting the original user request.
   - **Test first:**
     - A send emits events and saves after each commit.
     - The approval queue works, and `approve("always")` remembers the tool.
