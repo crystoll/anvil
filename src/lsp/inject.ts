@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { settleWithin } from "../shared/settle-within.js";
 import { formatDiagnostics, type LspManager } from "./manager.js";
 
 const DIAGNOSTICS_TIMEOUT_MS = 3000;
@@ -24,14 +25,3 @@ export const createDiagnosticInjector =
 		const formatted = formatDiagnostics(diags);
 		return formatted ? `${result}${formatted}` : result;
 	};
-
-/** Resolve to `fallback` when `work` rejects or doesn't settle within `timeoutMs`. */
-const settleWithin = <T>(work: Promise<T>, timeoutMs: number, fallback: T): Promise<T> =>
-	new Promise((done) => {
-		const timer = setTimeout(done, timeoutMs, fallback);
-		const finish = (value: T) => {
-			clearTimeout(timer);
-			done(value);
-		};
-		work.then(finish, () => finish(fallback));
-	});

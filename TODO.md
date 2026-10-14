@@ -283,7 +283,9 @@ Do this before writing the many new tests in M3–M8.
 - [x] **M3.9 Hooks can't crash the loop.**
   - **Test first:** an async hook whose shell can't start doesn't crash the process, and a hook that can't start (e.g. a malformed command) counts as failed instead of rejecting.
   - **Change:** `runHooks` never rejects, so callers that don't await it are safe, and fire-and-forget hooks handle spawn errors.
-- [ ] **M3.10 Bounded shutdown.** `ctx.shutdown()` races LSP and MCP teardown against a 3 s timeout. Today `cli.ts` can hang on exit.
+- [x] **M3.10 Bounded shutdown.** Today `cli.ts` can hang on exit.
+  - **Test first:** `shutdownServices` gives up after 3 s when teardown hangs, doesn't make language servers wait for MCP servers, and leaves no timer behind.
+  - **Change:** `ctx.shutdown()` runs MCP and LSP teardown in parallel instead of one after the other, and races it against a 3 s timeout. `settleWithin` moves to `shared/` for this second user.
 - [x] **M3.11 LSP protocol fixes.** Found during M3.1.
   - **Test first,** with the fake server:
     - A response with non-ASCII text (e.g. hover docs containing "→") is parsed. Today the client measures a byte-based `Content-Length` in characters and waits for the rest of the frame until the request times out. A character split across two reads also turns into `\ufffd`s.

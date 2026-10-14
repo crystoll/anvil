@@ -1,7 +1,8 @@
 import { HttpResponse, http } from "msw";
 import { setupServer } from "msw/node";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { pingProvider } from "./bootstrap.js";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ConnectedServer } from "../mcp/index.js";
+import { pingProvider, shutdownServices } from "./bootstrap.js";
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
@@ -75,5 +76,42 @@ describe("pingProvider", () => {
 			3000,
 		);
 		expect(authHeader).toBe("Bearer sk-test");
+	});
+});
+
+describe("shutdownServices", () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	const stuckMcpServer = (): ConnectedServer => ({
+		name: "stuck",
+		client: { close: () => new Promise<void>(() => {}) } as unknown as ConnectedServer["client"],
+		tools: [],
+		autoApprove: new Set(),
+	});
+
+	it("gives up on a hanging teardown after 3 s", async () => {
+		const stuckLsp = { shutdown: () => new Promise<void>(() => {}) };
+		const settled = vi.fn();
+		shutdownServices([stuckMcpServer()], stuckLsp).then(settled);
+
+		await vi.advanceTimersByTimeAsync(2999);
+		expect(settled).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(settled).toHaveBeenCalled();
+	});
+
+	it("shuts down language servers without waiting for MCP servers", () => {
+		const lsp = { shutdown: vi.fn(async () => {}) };
+
+		shutdownServices([stuckMcpServer()], lsp);
+
+		expect(lsp.shutdown).toHaveBeenCalled();
+	});
+
+	it("leaves no timer running after a quick teardown", async () => {
+		await shutdownServices([], { shutdown: async () => {} });
+
+		expect(vi.getTimerCount()).toBe(0);
 	});
 });

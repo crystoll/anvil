@@ -36,6 +36,7 @@ import { createOllamaProvider } from "../provider/ollama-native.js";
 import { listSessions, loadSession } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
 import { builtinTools, createRegistry } from "../tools/index.js";
+import { settleWithin } from "./settle-within.js";
 
 // === Types ===
 
@@ -333,6 +334,20 @@ const tryResumeSession = (
 	return sessions[0].id;
 };
 
+const SHUTDOWN_TIMEOUT_MS = 3000;
+
+/** Stop MCP and language servers together, giving up after a deadline so exit can't hang. */
+export const shutdownServices = (
+	mcpServers: ConnectedServer[],
+	lspManager: Pick<LspManager, "shutdown"> | undefined,
+): Promise<void> => {
+	const teardown = Promise.allSettled([
+		...mcpServers.map(disconnectServer),
+		lspManager?.shutdown(),
+	]).then(() => undefined);
+	return settleWithin(teardown, SHUTDOWN_TIMEOUT_MS, undefined);
+};
+
 // === Bootstrap (public) ===
 
 export const bootstrap = async (flags: Flags): Promise<AppContext> => {
@@ -455,9 +470,6 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 			activeAgent = a;
 			applyAgentToRegistry(registry, a, baseTools);
 		},
-		shutdown: async () => {
-			await Promise.all(mcpServers.map(disconnectServer));
-			await lspManager?.shutdown();
-		},
+		shutdown: () => shutdownServices(mcpServers, lspManager),
 	};
 };
