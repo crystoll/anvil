@@ -6,6 +6,11 @@ import type {
 	StreamOptions,
 	ToolSchema,
 } from "../provider/types.js";
+import { prepareHistoryForRequest } from "./history.js";
+
+export type EngineOptions = {
+	debug?: boolean;
+};
 
 /** Engine state during a conversation turn. */
 export type EngineState = "idle" | "streaming" | "cancelled";
@@ -100,7 +105,11 @@ const finalizeMessage = (acc: Accumulator): Message => {
 };
 
 /** Create a chat engine bound to a specific provider and model. */
-export const createEngine = (initialProvider: Provider, initialModel: string): Engine => {
+export const createEngine = (
+	initialProvider: Provider,
+	initialModel: string,
+	options: EngineOptions = {},
+): Engine => {
 	const history: Message[] = [];
 	let currentState: EngineState = "idle";
 	let abortController: AbortController | null = null;
@@ -143,6 +152,10 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 		abortController = null;
 	};
 
+	const repairBeforeRequest = () => {
+		history.splice(0, history.length, ...prepareHistoryForRequest(history, options.debug));
+	};
+
 	const loadMessages = (msgs: Message[]) => {
 		history.length = 0;
 		history.push(...msgs);
@@ -159,6 +172,7 @@ export const createEngine = (initialProvider: Provider, initialModel: string): E
 
 		currentState = "streaming";
 		abortController = new AbortController();
+		repairBeforeRequest();
 
 		const result = await provider.streamChat(model, [...history], tools, {
 			...opts,

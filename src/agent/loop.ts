@@ -39,6 +39,7 @@ export type AgentConfig = {
 	maxRounds: number;
 	projectRoot: string;
 	systemPrompt: string;
+	debug?: boolean;
 	provider?: Provider;
 	onBeforeToolUse?: (
 		toolName: string,
@@ -385,7 +386,9 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		yield { kind: "compacting" };
 		const messages = [...engine.messages()];
 		const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
-		const result = await compactHistory(config.provider, engine.model(), messages);
+		const result = await compactHistory(config.provider, engine.model(), messages, {
+			debug: config.debug ?? false,
+		});
 		if (result.isErr()) return false;
 		const compacted = result.value;
 		engine.loadMessages(compacted);

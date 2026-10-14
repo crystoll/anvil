@@ -1,4 +1,5 @@
 import { okAsync, type ResultAsync } from "neverthrow";
+import { prepareHistoryForRequest } from "../engine/history.js";
 import type { Message, Provider } from "../provider/types.js";
 
 export type CompactError = { message: string };
@@ -21,6 +22,7 @@ export const compactHistory = (
 	provider: Provider,
 	model: string,
 	messages: Message[],
+	options: { debug?: boolean } = {},
 ): ResultAsync<Message[], CompactError> => {
 	const nonSystem = messages.filter((m) => m.role !== "system");
 	if (nonSystem.length < MIN_MESSAGES) return okAsync(messages);
@@ -42,9 +44,10 @@ export const compactHistory = (
 		{ role: "system", content: SUMMARY_PROMPT },
 		{ role: "user", content: summaryContent },
 	];
+	const requestHistory = prepareHistoryForRequest(summaryInput, options.debug);
 
 	return provider
-		.completeChat(model, summaryInput, [], { maxTokens: 1024 })
+		.completeChat(model, requestHistory, [], { maxTokens: 1024 })
 		.map((result) => [
 			...system,
 			{ role: "user" as const, content: `[Previous conversation summary]\n${result.content}` },

@@ -582,19 +582,21 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		const messages = [...engine.messages()];
 		const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
 		addMsg("  [compacting context...]", true);
-		compactHistory(ctx.provider, engine.model(), messages).then((result) => {
-			if (result.isErr()) {
-				addMsg(`  ⚠ compaction failed: ${result.error.message}`, true);
-				return;
-			}
-			engine.loadMessages(result.value);
-			const afterTokens = Math.round(result.value.map((m) => m.content).join("").length / 4);
-			setLastPrompt(afterTokens);
-			addMsg(
-				`  ⚡ compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens`,
-				true,
-			);
-		});
+		compactHistory(ctx.provider, engine.model(), messages, { debug: flags.debug }).then(
+			(result) => {
+				if (result.isErr()) {
+					addMsg(`  ⚠ compaction failed: ${result.error.message}`, true);
+					return;
+				}
+				engine.loadMessages(result.value);
+				const afterTokens = Math.round(result.value.map((m) => m.content).join("").length / 4);
+				setLastPrompt(afterTokens);
+				addMsg(
+					`  ⚡ compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens`,
+					true,
+				);
+			},
+		);
 	};
 
 	const simpleCommands: Record<string, () => void> = {

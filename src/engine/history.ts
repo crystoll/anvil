@@ -1,3 +1,4 @@
+import { err, ok, type Result } from "neverthrow";
 import type { Message } from "../provider/types.js";
 
 const interruptedToolResult = (toolCallId: string): Message => ({
@@ -55,4 +56,24 @@ export const repairHistory = (
 		messages,
 		hasUnansweredUser: lastUserIndex >= 0 && !hasAssistantReply,
 	};
+};
+
+/** Rejects histories that would need tool-call repair before being sent to a provider. */
+export const validateHistory = (history: readonly Message[]): Result<void, string> => {
+	const repaired = repairHistory(history).messages;
+	const isUnchanged =
+		repaired.length === history.length &&
+		repaired.every((message, index) => message === history[index]);
+
+	return isUnchanged ? ok(undefined) : err("Tool calls and results are unmatched or out of order");
+};
+
+/** Returns valid provider input, repairing broken tool-call groups when needed. */
+export const prepareHistoryForRequest = (history: readonly Message[], debug = false): Message[] => {
+	const validation = validateHistory(history);
+	if (validation.isOk()) return [...history];
+
+	const repaired = repairHistory(history).messages;
+	if (debug) console.debug(`anvil: repaired history before provider request: ${validation.error}`);
+	return repaired;
 };

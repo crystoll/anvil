@@ -324,7 +324,7 @@ Do this before writing the many new tests in M3–M8.
 - [x] **M4.4 Repair sessions on load.** 📊 7 sessions end on unanswered tool calls.
   - **Test first:** a pure `repairHistory(messages)` inserts interruption results for unanswered calls, drops orphan/duplicate tool results, and flags a user request without a final assistant reply.
   - **Change:** apply it on `--resume` and when loading a session from the CLI history list; the CLI reports when the loaded request still needs an answer.
-- [ ] **M4.5 Validate before every request** (defense in depth). `validateHistory()` runs before each provider call. In tests a violation fails the test. At runtime it auto-repairs and logs at debug level.
+- [x] **M4.5 Validate before every request** (defense in depth). `validateHistory()` checks tool-call/result pairing and order before chat and compaction model requests; a trailing user message remains valid at the request boundary. Tests reject malformed tool history; runtime repairs it before sending and logs the repair with `--debug`.
 
 **Validation stop:** the gate passes, plus S4 and S6. For S4, use `kill <pid>` mid-stream: the user message must persist and the file must be valid JSON.
 

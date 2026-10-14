@@ -1,13 +1,17 @@
 import { okAsync } from "neverthrow";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Message, Provider, StreamChunk } from "../provider/types.js";
 import type { Engine, EngineEvent } from "./engine.js";
 import { createEngine } from "./engine.js";
 
 /** Helper: create a mock provider that streams the given chunks. */
-const mockProvider = (chunks: StreamChunk[]): Provider => ({
+const mockProvider = (
+	chunks: StreamChunk[],
+	onRequest: (messages: Message[]) => void = () => undefined,
+): Provider => ({
 	name: "mock",
-	streamChat: () => {
+	streamChat: (_model, messages) => {
+		onRequest(messages);
 		async function* generate() {
 			for (const chunk of chunks) yield chunk;
 		}
@@ -98,6 +102,45 @@ describe("chat engine", () => {
 			expect(doneEvent.message.toolCalls?.[0]?.name).toBe("read_file");
 			expect(doneEvent.message.toolCalls?.[0]?.arguments).toBe('{"path":"index.ts"}');
 		}
+	});
+
+	it("repairs invalid tool history before sending a provider request", async () => {
+		const requestedHistories: Message[][] = [];
+		const log = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+		const provider = mockProvider([{ done: true }], (messages) => {
+			requestedHistories.push(messages);
+		});
+		const engine = createEngine(provider, "test", { debug: true });
+		const history: Message[] = [
+			{ role: "user", content: "Read two files" },
+			{
+				role: "assistant",
+				content: "",
+				toolCalls: [
+					{ id: "call-1", name: "read_file", arguments: "{}" },
+					{ id: "call-2", name: "read_file", arguments: "{}" },
+				],
+			},
+			{ role: "tool", toolCallId: "call-1", content: "first file" },
+			{ role: "tool", toolCallId: "orphan", content: "stale result" },
+		];
+		engine.loadMessages(history);
+
+		try {
+			await collectEvents(engine.stream([]));
+			expect(log).toHaveBeenCalledWith(expect.stringContaining("repaired"));
+		} finally {
+			log.mockRestore();
+		}
+
+		const requestedHistory = requestedHistories[0] ?? [];
+		expect(requestedHistory).toEqual([
+			history[0],
+			history[1],
+			history[2],
+			{ role: "tool", toolCallId: "call-2", content: "[not executed: session was interrupted]" },
+		]);
+		expect(engine.messages()).toEqual([...requestedHistory, { role: "assistant", content: "" }]);
 	});
 
 	it("supports cancellation", async () => {

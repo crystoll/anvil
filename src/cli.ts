@@ -7,7 +7,8 @@ import { createInterface } from "node:readline/promises";
 import { ok } from "neverthrow";
 import { compactHistory } from "./agent/compact.js";
 import type { AgentEvent } from "./agent/loop.js";
-import { listSessions, loadSession, repairHistory } from "./session/index.js";
+import { repairHistory } from "./engine/index.js";
+import { listSessions, loadSession } from "./session/index.js";
 import {
 	bootstrap,
 	expandFileRefs,
@@ -284,7 +285,9 @@ const handleCompact = async (): Promise<void> => {
 	const messages = [...engine.messages()];
 	const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
 	stdout.write("\x1b[2m[compacting context...]\x1b[0m\n");
-	const result = await compactHistory(ctx.provider, engine.model(), messages);
+	const result = await compactHistory(ctx.provider, engine.model(), messages, {
+		debug: flags.debug,
+	});
 	if (result.isErr()) {
 		stdout.write(`\x1b[31m⚠ compaction failed: ${result.error.message}\x1b[0m\n`);
 		return;

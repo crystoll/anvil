@@ -9,7 +9,7 @@ import {
 	type ProviderEntry,
 	validateProviderEntries,
 } from "../config/config.js";
-import { createEngine } from "../engine/index.js";
+import { createEngine, repairHistory } from "../engine/index.js";
 import { VERSION } from "../index.js";
 import {
 	createDiagnosticInjector,
@@ -37,7 +37,6 @@ import {
 	createSessionWriter,
 	listSessions,
 	loadSession,
-	repairHistory,
 	type SessionWriter,
 } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
@@ -394,7 +393,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	const bootEntry = config.providers[resolved.provider] ?? defaultEntry;
 	const provider = makeProvider(resolved.provider, bootEntry, timeouts);
 	const activeProviderName = resolved.provider;
-	const engine = createEngine(provider, resolved.model);
+	const engine = createEngine(provider, resolved.model, { debug: flags.debug });
 
 	// Registry + skills + agents
 	const registry = createRegistry();
@@ -440,6 +439,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		maxRounds: config.maxRounds,
 		projectRoot,
 		systemPrompt: buildPrompt(),
+		debug: flags.debug,
 		provider,
 		streamOpts: { contextSize: bootEntry.contextSize ?? config.contextSize },
 		onBeforeToolUse: async (toolName, args) =>
