@@ -253,9 +253,9 @@ Do this before writing the many new tests in M3–M8.
     - Add per-request timeouts: 10 s, or 30 s for `initialize`.
     - Bound shutdown: send the `shutdown` request (2 s), then the `exit` notification, then kill.
   - **Change `lsp/manager.ts`** (`getClient`): cache a failed start per language for the session and emit one notice, "LSP unavailable: typescript-language-server not found".
-- [ ] **M3.2 The diagnostic injector never blocks or throws** (F4, F5).
+- [x] **M3.2 The diagnostic injector never blocks or throws** (F4, F5).
   - **Test first:** the original result comes back when the tool result is an error, when `ensureOpen` fails with ENOENT, and when no diagnostics arrive within 3 s.
-  - **Change:** add a guard, a timeout and a catch in `lsp/inject.ts`, and stop `ensureOpen` from using a throwing `readFileSync`.
+  - **Change:** add a guard, a timeout and a catch in `lsp/inject.ts`. `ensureOpen` keeps throwing on a missing file, so the LSP tools report it instead of claiming "no errors".
 - [x] **M3.3 Tool post-processing can't escape the error boundary.**
   - **Test first:** when `transformToolResult` throws during `approve()`, the tool's own result is kept, a warning is shown and the loop continues.
   - **Change:** guard the call in a shared `runTool` helper. Post-processing only adds diagnostics, so its failure must not turn a successful result into an error.
