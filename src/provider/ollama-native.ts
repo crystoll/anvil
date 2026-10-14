@@ -76,6 +76,18 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 			function: { name: t.name, description: t.description, parameters: t.parameters },
 		}));
 
+	const buildRequestOptions = (opts: {
+		contextSize?: number;
+		temperature?: number;
+		maxTokens?: number;
+	}): Record<string, number> => {
+		const options: Record<string, number> = {};
+		if (opts.contextSize != null) options.num_ctx = opts.contextSize;
+		if (opts.temperature != null) options.temperature = opts.temperature;
+		if (opts.maxTokens != null) options.num_predict = opts.maxTokens;
+		return options;
+	};
+
 	const parseToolCalls = (msg: Record<string, unknown>): ToolCallDelta[] => {
 		const calls = msg.tool_calls as Array<Record<string, unknown>> | undefined;
 		if (!calls?.length) return [];
@@ -156,10 +168,11 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 			model,
 			messages: buildMessages(messages),
 			stream: true,
+			keep_alive: config.keepAlive ?? "30m",
 		};
 		if (tools.length > 0) body.tools = buildTools(tools);
-		if (opts.contextSize != null) body.options = { num_ctx: opts.contextSize };
-		if (opts.temperature != null) body.temperature = opts.temperature;
+		const options = buildRequestOptions(opts);
+		if (Object.keys(options).length > 0) body.options = options;
 
 		const signals: AbortSignal[] = [];
 		const connectController = new AbortController();
@@ -293,9 +306,11 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 			model,
 			messages: buildMessages(messages),
 			stream: false,
+			keep_alive: config.keepAlive ?? "30m",
 		};
 		if (tools.length > 0) body.tools = buildTools(tools);
-		if (opts.temperature != null) body.temperature = opts.temperature;
+		const options = buildRequestOptions(opts);
+		if (Object.keys(options).length > 0) body.options = options;
 
 		return ResultAsync.fromPromise(
 			fetch(`${baseUrl}/api/chat`, {

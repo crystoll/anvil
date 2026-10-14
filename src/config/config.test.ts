@@ -24,7 +24,26 @@ describe("config loader", () => {
 		expect(config.defaultModel).toBe("gemma4:e4b");
 		expect(config.providers.ollama).toBeDefined();
 		expect(config.providers.ollama?.endpoint).toBe("http://localhost:11434");
+		expect(config).toMatchObject({ keepAlive: "30m" });
 		expect(existsSync(CONFIG_PATH)).toBe(true);
+	});
+
+	it("loads a configured Ollama keep-alive duration", () => {
+		writeFileSync(
+			CONFIG_PATH,
+			`default_provider: ollama
+default_model: qwen3:8b
+keep_alive: 45m
+providers:
+  ollama:
+    endpoint: http://localhost:11434
+`,
+		);
+
+		const result = loadConfig(CONFIG_PATH);
+
+		expect(result.isOk()).toBe(true);
+		expect(result._unsafeUnwrap()).toMatchObject({ keepAlive: "45m" });
 	});
 
 	it("loads existing valid config", () => {

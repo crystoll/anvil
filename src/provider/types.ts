@@ -73,6 +73,7 @@ export type StreamOptions = {
 export type CompleteOptions = {
 	temperature?: number;
 	maxTokens?: number;
+	contextSize?: number;
 	forceTool?: string;
 };
 
@@ -84,6 +85,8 @@ export type ProviderConfig = {
 	streamTimeout?: number;
 	/** Seconds to establish connection (default 3). */
 	connectTimeout?: number;
+	/** Ollama model retention duration (default "30m"). */
+	keepAlive?: string | number;
 };
 
 /** The provider interface — all LLM backends implement this. */

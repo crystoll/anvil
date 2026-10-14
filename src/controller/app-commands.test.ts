@@ -37,6 +37,7 @@ const createHarness = () => {
 			contextSize: 4096,
 			connectTimeout: 1,
 			streamTimeout: 1,
+			keepAlive: "30m",
 		},
 		engine,
 		registry: createRegistry(),

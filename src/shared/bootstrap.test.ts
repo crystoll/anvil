@@ -9,7 +9,7 @@ import { createEngine } from "../engine/index.js";
 import type { ConnectedServer } from "../mcp/index.js";
 import type { Message, Provider, StreamChunk } from "../provider/types.js";
 import { listSessions, loadSession, saveSession } from "../session/index.js";
-import { openSession, pingProvider, shutdownServices } from "./bootstrap.js";
+import { makeProvider, openSession, pingProvider, shutdownServices } from "./bootstrap.js";
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
@@ -83,6 +83,32 @@ describe("pingProvider", () => {
 			3000,
 		);
 		expect(authHeader).toBe("Bearer sk-test");
+	});
+});
+
+describe("makeProvider", () => {
+	it("passes the configured keep-alive to the native Ollama provider", async () => {
+		let capturedBody: Record<string, unknown> = {};
+		server.use(
+			http.post("http://localhost:11434/api/chat", async ({ request }) => {
+				capturedBody = (await request.json()) as Record<string, unknown>;
+				return HttpResponse.json({
+					model: "m",
+					message: { role: "assistant", content: "summary" },
+					done: true,
+				});
+			}),
+		);
+
+		const provider = makeProvider(
+			"ollama",
+			{ endpoint: "http://localhost:11434" },
+			{ streamTimeout: 2, connectTimeout: 2, keepAlive: "45m" },
+		);
+		const result = await provider.completeChat("m", [{ role: "user", content: "hi" }], [], {});
+
+		expect(result.isOk()).toBe(true);
+		expect(capturedBody.keep_alive).toBe("45m");
 	});
 });
 

@@ -144,13 +144,14 @@ export const parseFlags = (argv: string[]): Flags => {
 export const makeProvider = (
 	name: string,
 	entry: ProviderEntry,
-	timeouts: { streamTimeout: number; connectTimeout: number },
+	settings: { streamTimeout: number; connectTimeout: number; keepAlive: string | number },
 ): Provider => {
 	const providerConfig = {
 		endpoint: entry.endpoint,
 		...(entry.apiKey ? { apiKey: entry.apiKey } : {}),
-		streamTimeout: timeouts.streamTimeout,
-		connectTimeout: timeouts.connectTimeout,
+		streamTimeout: settings.streamTimeout,
+		connectTimeout: settings.connectTimeout,
+		keepAlive: settings.keepAlive,
 	};
 	if (isLlamaCppProvider(name)) return createLlamaCppProvider(name, providerConfig);
 	return isOllamaEndpoint(entry.endpoint)
@@ -368,7 +369,11 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	const projectRoot = flags.path ? resolve(flags.path) : process.cwd();
 	const p = paths(projectRoot);
 	const { config, defaultEntry } = loadConfigOrExit(p.configPath);
-	const timeouts = { streamTimeout: config.streamTimeout, connectTimeout: config.connectTimeout };
+	const timeouts = {
+		streamTimeout: config.streamTimeout,
+		connectTimeout: config.connectTimeout,
+		keepAlive: config.keepAlive,
+	};
 
 	// Validate all providers
 	const healthyProviders = await validateProviders(

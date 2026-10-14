@@ -111,11 +111,13 @@ describe("compactHistory", () => {
 		expect(result.isOk()).toBe(true);
 		const calls = (provider.completeChat as ReturnType<typeof vi.fn>).mock.calls;
 		const sentMessages = (calls[0] as unknown[])[1] as Message[];
+		const completeOptions = (calls[0] as unknown[])[3];
 		const summaryInput = sentMessages.at(-1)?.content ?? "";
 		expect(summaryInput.length).toBeLessThanOrEqual(200);
 		expect(summaryInput).toContain("HEAD");
 		expect(summaryInput).toContain("TAIL");
 		expect(summaryInput).toContain("[older content omitted]");
+		expect(completeOptions).toMatchObject({ contextSize: 100, maxTokens: 1024 });
 	});
 
 	it("excludes reasoning from summary input", async () => {

@@ -513,6 +513,41 @@ describe("ollama-native provider", () => {
 			expect(capturedBody.options).toEqual({ num_ctx: 65536 });
 		});
 
+		it("sends generation settings in Ollama options and keeps the model loaded", async () => {
+			let capturedBody: Record<string, unknown> = {};
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, async ({ request }) => {
+					capturedBody = (await request.json()) as Record<string, unknown>;
+					return new HttpResponse(
+						ndjson([
+							{
+								model: "m",
+								message: { role: "assistant", content: "done" },
+								done: true,
+							},
+						]),
+						{ headers: { "Content-Type": "application/x-ndjson" } },
+					);
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const result = await provider.streamChat("m", [{ role: "user", content: "hi" }], [], {
+				contextSize: 65536,
+				temperature: 0.2,
+				maxTokens: 4096,
+			});
+			await collect(result._unsafeUnwrap());
+
+			expect(capturedBody.keep_alive).toBe("30m");
+			expect(capturedBody.options).toEqual({
+				num_ctx: 65536,
+				temperature: 0.2,
+				num_predict: 4096,
+			});
+			expect(capturedBody).not.toHaveProperty("temperature");
+		});
+
 		it("returns timeout error when stream stalls", async () => {
 			server.use(
 				http.post(`${BASE_URL}/api/chat`, () => {
@@ -533,6 +568,41 @@ describe("ollama-native provider", () => {
 			const result = await provider.streamChat("m", [{ role: "user", content: "hi" }], [], {});
 			expect(result.isErr()).toBe(true);
 			expect(result._unsafeUnwrapErr().kind).toBe("connection");
+		});
+	});
+
+	describe("completeChat", () => {
+		it("uses the same Ollama options for non-streaming completions", async () => {
+			let capturedBody: Record<string, unknown> = {};
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, async ({ request }) => {
+					capturedBody = (await request.json()) as Record<string, unknown>;
+					return HttpResponse.json({
+						model: "m",
+						message: { role: "assistant", content: "summary" },
+						done: true,
+					});
+				}),
+			);
+
+			const providerConfig = Object.assign({}, config, { keepAlive: "2h" });
+			const provider = createOllamaProvider("ollama", providerConfig);
+			const options = { contextSize: 32768, temperature: 0.4, maxTokens: 1024 };
+			const result = await provider.completeChat(
+				"m",
+				[{ role: "user", content: "summarize" }],
+				[],
+				options,
+			);
+
+			expect(result.isOk()).toBe(true);
+			expect(capturedBody.keep_alive).toBe("2h");
+			expect(capturedBody.options).toEqual({
+				num_ctx: 32768,
+				temperature: 0.4,
+				num_predict: 1024,
+			});
+			expect(capturedBody).not.toHaveProperty("temperature");
 		});
 	});
 

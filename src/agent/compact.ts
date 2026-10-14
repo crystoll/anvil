@@ -120,7 +120,10 @@ export const compactHistory = (
 	const requestHistory = prepareHistoryForRequest(summaryInput, options.debug);
 
 	return provider
-		.completeChat(model, requestHistory, [], { maxTokens: 1024 })
+		.completeChat(model, requestHistory, [], {
+			maxTokens: 1024,
+			...(options.contextSize != null ? { contextSize: options.contextSize } : {}),
+		})
 		.map((result) => [
 			...system,
 			...(task ? [task] : []),

@@ -148,15 +148,17 @@ Global config at `~/.anvil/config.yaml`, created on first run. Change `default_m
 
 Per-project customization uses agents, skills, and prompts — not a local config file.
 
-### Ollama: Context Size
+### Ollama: Context Size and Model Retention
 
 Anvil uses Ollama's native API (`/api/chat`) which supports runtime context control. The default context is 32k tokens — sufficient for most tasks. To increase it, set `context_size` in `~/.anvil/config.yaml`:
 
 ```yaml
 context_size: 131072  # 128k — use for large codebases
+keep_alive: 30m       # keep native Ollama models loaded between requests
 ```
 
-This is sent as `options.num_ctx` in every request. No custom Modelfile needed.
+`context_size` is sent as `options.num_ctx` in every request. `keep_alive` controls how long
+Ollama keeps the model loaded; it defaults to `30m`. No custom Modelfile needed.
 
 > **Note**: If your config has `endpoint: http://localhost:11434/v1` (the `/v1` suffix), Anvil uses the OpenAI-compatible endpoint which does not support context control. Remove the `/v1` to use the native API.
 

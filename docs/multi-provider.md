@@ -20,6 +20,7 @@ Anvil supports multiple LLM providers. Switch between local (Ollama) and remote 
 default_provider: ollama
 default_model: gemma4:e4b
 context_size: 32768  # 32k default — increase for large codebases
+keep_alive: 30m       # keep native Ollama models loaded between requests
 
 providers:
   ollama:
@@ -32,6 +33,9 @@ providers:
     endpoint: https://openrouter.ai/api/v1
     api_key: ${OPENROUTER_API_KEY}
 ```
+
+`keep_alive` is sent to Ollama's native API for streamed and non-streamed requests. It defaults
+to `30m`; set it to a duration such as `5m` or a number of seconds accepted by Ollama.
 
 ## Usage
 

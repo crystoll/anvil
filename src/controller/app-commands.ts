@@ -34,7 +34,10 @@ type UiCommandOptions = {
 };
 
 export type AppCommandContext = {
-	config: Pick<AnvilConfig, "providers" | "contextSize" | "connectTimeout" | "streamTimeout">;
+	config: Pick<
+		AnvilConfig,
+		"providers" | "contextSize" | "connectTimeout" | "streamTimeout" | "keepAlive"
+	>;
 	engine: Pick<
 		Engine,
 		"messages" | "model" | "getProvider" | "setModel" | "setProvider" | "loadMessages" | "reset"
@@ -150,6 +153,7 @@ const listModels = async (context: AppCommandContext): Promise<CommandResult> =>
 			const result = await makeProvider(name, entry, {
 				streamTimeout: context.config.streamTimeout,
 				connectTimeout: context.config.connectTimeout,
+				keepAlive: context.config.keepAlive,
 			}).listModels();
 			return result.isOk()
 				? result.value.map((model) => `${name}/${model}`)
@@ -181,6 +185,7 @@ const selectModel = async (
 			makeProvider(providerName, entry, {
 				streamTimeout: context.config.streamTimeout,
 				connectTimeout: context.config.connectTimeout,
+				keepAlive: context.config.keepAlive,
 			}),
 		);
 	}

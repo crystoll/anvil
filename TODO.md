@@ -489,6 +489,8 @@ type SessionController = {
 
 **Validation stop:** the gate passes, plus S1–S6 in both UIs (`pnpm dev` and `pnpm dev:simple`).
 
+**Manual validation:** User confirmed S1–S6 pass in both UIs on 2026-10-14.
+
 ## M9 — ink 8 and rendering (1 d)
 
 - [ ] **M9.1 Upgrade `ink` from 7.1.1 to 8.0.0.** `ink-text-input` 6 and `ink-spinner` 5 stay, since their peer ranges are satisfied (verified). None of the breaking changes touch today's code; keep it that way in M8:
@@ -517,13 +519,12 @@ type SessionController = {
 
 ## M10 — Small-model ergonomics (3.5 d; ship each item on its own, in this order)
 
-- [ ] **M10.1 Consistent Ollama options** (F11). Every request (`streamChat`, `completeChat`, compaction) sends the same `options.num_ctx`, plus:
-  - `options.temperature`. Today it's sent at the top level, where Ollama ignores it.
-  - `options.num_predict` from `maxTokens`.
+- [x] **M10.1 Consistent Ollama options** (F11). Every request (`streamChat`, `completeChat`, compaction) sends the same `options.num_ctx`, plus:
+  - `options.temperature` and `options.num_predict` from `maxTokens`.
   - `keep_alive` from config, default `30m`, so slow models aren't unloaded between turns.
-  - Optionally `think`.
+  - Optional `think` is deferred until Anvil has model-specific capability settings.
 
-  **Test first:** snapshot the request bodies of both code paths.
+  **Done:** request-body tests cover both API paths; compaction passes its context size; `keep_alive` is configurable with a `30m` default.
 - [ ] **M10.2 One source of timeout defaults.**
   - Today the providers fall back to 30 s and 3 s, while the config defaults are 120 s and 300 s.
   - Split `first_token_timeout` (model load plus prompt eval; 300 s by default for local models) from `stream_timeout` (stall between chunks; 120 s).

@@ -40,6 +40,7 @@ const listModels = async (): Promise<string[]> => {
 			const result = await makeProvider(name, entry, {
 				streamTimeout: ctx.config.streamTimeout,
 				connectTimeout: ctx.config.connectTimeout,
+				keepAlive: ctx.config.keepAlive,
 			}).listModels();
 			return result.match(
 				(models) => ({

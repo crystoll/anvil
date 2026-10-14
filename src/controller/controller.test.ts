@@ -205,6 +205,7 @@ describe("session controller", () => {
 				contextSize: 4096,
 				connectTimeout: 1,
 				streamTimeout: 5,
+				keepAlive: "30m",
 			},
 			engine,
 			registry,

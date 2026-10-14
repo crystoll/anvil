@@ -15,6 +15,7 @@ export type AnvilConfig = {
 	defaultProvider: string;
 	defaultModel: string;
 	providers: Record<string, ProviderEntry>;
+	keepAlive: string | number;
 	streamTimeout: number;
 	connectTimeout: number;
 	maxRounds: number;
@@ -30,6 +31,7 @@ const DEFAULT_CONFIG: AnvilConfig = {
 	providers: {
 		ollama: { endpoint: "http://localhost:11434" },
 	},
+	keepAlive: "30m",
 	streamTimeout: 120,
 	connectTimeout: 300,
 	maxRounds: 25,
@@ -39,6 +41,7 @@ const DEFAULT_CONFIG: AnvilConfig = {
 
 const DEFAULT_YAML = `default_provider: ollama
 default_model: gemma4:e4b
+keep_alive: 30m
 stream_timeout: 120
 connect_timeout: 300
 context_size: 32768
@@ -101,6 +104,7 @@ const validateConfig = (raw: Record<string, unknown>): Result<AnvilConfig, Confi
 		defaultProvider,
 		defaultModel,
 		providers: providers.value,
+		keepAlive: toKeepAlive(raw.keep_alive),
 		streamTimeout: toNumber(raw.stream_timeout, 120),
 		connectTimeout: toNumber(raw.connect_timeout, 300),
 		maxRounds: toNumber(raw.max_rounds, 25),
@@ -161,4 +165,10 @@ const toNumber = (value: unknown, fallback: number): number => {
 		if (!Number.isNaN(n)) return n;
 	}
 	return fallback;
+};
+
+const toKeepAlive = (value: unknown): string | number => {
+	if (typeof value === "string" && value.trim()) return value;
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	return "30m";
 };
