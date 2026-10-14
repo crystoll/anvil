@@ -9,6 +9,7 @@ export type Message = {
 	content: string;
 	status?: "error" | "interrupted";
 	reasoning?: string;
+	synthetic?: boolean;
 	toolCalls?: ToolCall[];
 	toolCallId?: string;
 };

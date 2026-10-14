@@ -448,6 +448,40 @@ describe("agent loop", () => {
 		);
 	});
 
+	it("passes round reminders only in the request that needs them", async () => {
+		const requests: Message[][] = [];
+		const provider = mockProvider(
+			[
+				...Array.from({ length: 5 }, (_, index) =>
+					toolCallChunks(`call_${index}`, "list_dir", `{"path":"dir-${index}"}`),
+				),
+				[{ content: "Finished", done: false }, { done: true }],
+			],
+			(messages) => requests.push(messages),
+		);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(listDirTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 6,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(loop.send("do five things"));
+
+		expect(engine.messages().some((message) => /\[(Note|Reminder)/.test(message.content))).toBe(
+			false,
+		);
+		expect(
+			requests[4]?.some(
+				(message) =>
+					message.role === "user" &&
+					message.content === "[Note: 1 rounds remaining. Wrap up or present what you have.]",
+			),
+		).toBe(true);
+	});
+
 	it("handles done signal", async () => {
 		const provider = mockProvider([toolCallChunks("call_1", "done", '{"message":"All finished"}')]);
 		const engine = createEngine(provider, "test");
@@ -705,6 +739,9 @@ it("nudges model when it gives up without trying tools", async () => {
 	const events = await collect(loop.send("list the files"));
 
 	expect(events.some((e) => e.kind === "tool_result" && e.name === "list_dir")).toBe(true);
+	expect(
+		engine.messages().find((message) => message.role === "user" && message.synthetic)?.synthetic,
+	).toBe(true);
 	expect(loop.state()).toBe("idle");
 });
 
@@ -759,14 +796,17 @@ it("detects stall when same tool+args called 3 times", async () => {
 });
 
 it("injects budget warning at 80% of rounds", async () => {
-	// 5 rounds max, 80% = round 4. We need 4 rounds of tool calls + final content.
-	const provider = mockProvider([
-		toolCallChunks("c1", "list_dir", '{"path":"a"}'),
-		toolCallChunks("c2", "list_dir", '{"path":"b"}'),
-		toolCallChunks("c3", "list_dir", '{"path":"c"}'),
-		toolCallChunks("c4", "list_dir", '{"path":"d"}'),
-		[{ content: "Done wrapping up", done: false }, { done: true }],
-	]);
+	const requests: Message[][] = [];
+	const provider = mockProvider(
+		[
+			toolCallChunks("c1", "list_dir", '{"path":"a"}'),
+			toolCallChunks("c2", "list_dir", '{"path":"b"}'),
+			toolCallChunks("c3", "list_dir", '{"path":"c"}'),
+			toolCallChunks("c4", "list_dir", '{"path":"d"}'),
+			[{ content: "Done wrapping up", done: false }, { done: true }],
+		],
+		(messages) => requests.push(messages),
+	);
 	const engine = createEngine(provider, "test");
 	const registry = createRegistry();
 	registry.register(listDirTool);
@@ -779,22 +819,29 @@ it("injects budget warning at 80% of rounds", async () => {
 
 	await collect(loop.send("keep going"));
 
-	// At round 4 (80%), a budget warning should have been injected as user message
-	const messages = engine.messages();
-	const budgetMsg = messages.find(
-		(m) => m.role === "user" && (m.content ?? "").includes("rounds remaining"),
+	expect(engine.messages().some((message) => message.content.includes("rounds remaining"))).toBe(
+		false,
 	);
-	expect(budgetMsg).toBeDefined();
+	expect(
+		requests[3]?.some(
+			(message) =>
+				message.role === "user" &&
+				message.content === "[Note: 1 rounds remaining. Wrap up or present what you have.]",
+		),
+	).toBe(true);
 });
 
-it("injects goal reminder every 5 rounds after round 5", async () => {
-	// Need 10+ rounds to trigger goal echo (fires when rounds > 5 && rounds % 5 === 0)
-	const provider = mockProvider([
-		...Array.from({ length: 10 }, (_, i) =>
-			toolCallChunks(`c${i}`, "list_dir", `{"path":"${String.fromCharCode(97 + i)}"}`),
-		),
-		[{ content: "All done", done: false }, { done: true }],
-	]);
+it("injects goal reminder into the request every 5 rounds after round 5", async () => {
+	const requests: Message[][] = [];
+	const provider = mockProvider(
+		[
+			...Array.from({ length: 10 }, (_, i) =>
+				toolCallChunks(`c${i}`, "list_dir", `{"path":"${String.fromCharCode(97 + i)}"}`),
+			),
+			[{ content: "All done", done: false }, { done: true }],
+		],
+		(messages) => requests.push(messages),
+	);
 	const engine = createEngine(provider, "test");
 	const registry = createRegistry();
 	registry.register(listDirTool);
@@ -807,12 +854,15 @@ it("injects goal reminder every 5 rounds after round 5", async () => {
 
 	await collect(loop.send("find all TODO comments and summarize them"));
 
-	const messages = engine.messages();
-	const goalReminder = messages.find(
-		(m) => m.role === "user" && (m.content ?? "").includes("Reminder"),
-	);
-	expect(goalReminder).toBeDefined();
-	expect(goalReminder?.content).toContain("find all TODO comments");
+	expect(engine.messages().some((message) => message.content.includes("Reminder"))).toBe(false);
+	expect(
+		requests[9]?.some(
+			(message) =>
+				message.role === "user" &&
+				message.content ===
+					"[Reminder — your current task: find all TODO comments and summarize them]",
+		),
+	).toBe(true);
 });
 
 it("auto-compacts on overflow and retries", async () => {

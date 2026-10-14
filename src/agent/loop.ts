@@ -1,6 +1,6 @@
 import { okAsync, ResultAsync } from "neverthrow";
 import type { Engine, EngineEvent } from "../engine/engine.js";
-import type { Provider, ToolCall } from "../provider/types.js";
+import type { Message, Provider, ToolCall } from "../provider/types.js";
 import type { Registry, Tool } from "../tools/registry.js";
 import { parseToolArgs } from "../tools/registry.js";
 import { compactHistory } from "./compact.js";
@@ -415,13 +415,20 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	/** Stream one round and collect engine events into agent events. */
-	async function* streamRound(signal: AbortSignal): AsyncGenerator<AgentEvent> {
+	async function* streamRound(
+		signal: AbortSignal,
+		requestMessages: readonly Message[],
+	): AsyncGenerator<AgentEvent> {
 		const trimEvent = maybeTrimContext(engine, config);
 		if (trimEvent) yield trimEvent;
 		const contextSize = config.streamOpts?.contextSize ?? 0;
 		const schemas = contextSize ? registry.filteredSchemas(contextSize) : registry.schemas();
 		const signals: RoundSignals = { content: "" };
-		for await (const event of engine.stream(schemas, { ...config.streamOpts, signal })) {
+		for await (const event of engine.stream(
+			schemas,
+			{ ...config.streamOpts, signal },
+			requestMessages,
+		)) {
 			accumulateSignal(signals, event);
 			const mapped = mapStreamEvent(event, signals.finishReason);
 			if (mapped) yield mapped;
@@ -440,15 +447,20 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	/** Inject budget/goal context before streaming. */
-	const injectRoundContext = () => {
+	const injectRoundContext = (): Message[] => {
+		const messages: Message[] = [];
 		const threshold = Math.ceil(config.maxRounds * 0.8);
 		if (rounds === threshold) {
 			const remaining = config.maxRounds - rounds;
-			engine.addUser(`[Note: ${remaining} rounds remaining. Wrap up or present what you have.]`);
+			messages.push({
+				role: "user",
+				content: `[Note: ${remaining} rounds remaining. Wrap up or present what you have.]`,
+			});
 		}
 		if (rounds > 5 && rounds % 5 === 0) {
-			engine.addUser(`[Reminder — your current task: ${originalGoal}]`);
+			messages.push({ role: "user", content: `[Reminder — your current task: ${originalGoal}]` });
 		}
+		return messages;
 	};
 
 	/** If model gave up without tools, inject nudge. Returns true if nudged. */
@@ -465,6 +477,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			content.trim() === ""
 				? "Your response was empty. Please provide an answer or use a tool to proceed."
 				: `You have tools available: ${toolNames}. Use them to accomplish the task. Try again.`,
+			{ synthetic: true },
 		);
 		return true;
 	};
@@ -553,9 +566,10 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	async function* streamWithCompaction(
 		compacted: { done: boolean },
 		signal: AbortSignal,
+		requestMessages: readonly Message[],
 	): AsyncGenerator<AgentEvent, "continue" | "ok"> {
 		let overflowed = false;
-		for await (const event of streamRound(signal)) {
+		for await (const event of streamRound(signal, requestMessages)) {
 			if (event.kind === "overflow") overflowed = true;
 			yield event;
 		}
@@ -579,10 +593,10 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			}
 			rounds++;
 			yield { kind: "round", current: rounds, max: config.maxRounds };
-			injectRoundContext();
+			const requestMessages = injectRoundContext();
 			yield setState("streaming");
 
-			const streamResult = yield* streamWithCompaction(compacted, signal);
+			const streamResult = yield* streamWithCompaction(compacted, signal, requestMessages);
 			if (signal.aborted) {
 				cancelFinalizedToolCalls();
 				yield setState("idle");

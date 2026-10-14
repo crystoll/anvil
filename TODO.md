@@ -382,7 +382,7 @@ Do this before writing the many new tests in M3–M8.
     - A rejection with a reason: the model sees the reason, and later calls are still processed.
 - [x] **M6.3 Remove the early return in `processOutcome`** that orphans every call after a pending one. Covered by the M6.2 tests.
 - [x] **M6.4 Only recover tool calls from assistant messages** (`tryRecoverToolCall`). JSON inside a user message is never treated as a tool call.
-- [ ] **M6.5 Request-only reminders.**
+- [x] **M6.5 Request-only reminders.**
   - `injectRoundContext` stops persisting round and goal notes.
   - `tryNudge` nudges stay persisted but are marked `synthetic`.
   - **Test first:** after 5 rounds the history holds no reminders, but the last request includes the current one.

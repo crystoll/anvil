@@ -30,10 +30,14 @@ export type Engine = {
 	setSystem: (content: string) => void;
 	setModel: (m: string) => void;
 	setProvider: (p: Provider) => void;
-	addUser: (content: string) => void;
+	addUser: (content: string, options?: { synthetic?: boolean }) => void;
 	addToolResult: (toolCallId: string, content: string) => void;
 	loadMessages: (msgs: Message[]) => void;
-	stream: (tools: ToolSchema[], opts?: StreamOptions) => AsyncIterable<EngineEvent>;
+	stream: (
+		tools: ToolSchema[],
+		opts?: StreamOptions,
+		requestMessages?: readonly Message[],
+	) => AsyncIterable<EngineEvent>;
 	cancel: () => void;
 	reset: () => void;
 	/** Trim oldest messages to stay within a token budget. Returns number of messages removed. */
@@ -266,8 +270,10 @@ export const createEngine = (
 		}
 	};
 
-	const addUser = (content: string) => {
-		commit({ role: "user", content });
+	const addUser = (content: string, options?: { synthetic?: boolean }) => {
+		const message: Message = { role: "user", content };
+		if (options?.synthetic) message.synthetic = true;
+		commit(message);
 	};
 
 	const addToolResult = (toolCallId: string, content: string) => {
@@ -299,6 +305,7 @@ export const createEngine = (
 	async function* stream(
 		tools: ToolSchema[],
 		opts: StreamOptions = {},
+		requestMessages: readonly Message[] = [],
 	): AsyncIterable<EngineEvent> {
 		if (currentState !== "idle") {
 			yield { kind: "error", error: { kind: "unknown", message: "Already streaming" } };
@@ -322,7 +329,7 @@ export const createEngine = (
 			outcome = yield* runProviderStream(
 				provider,
 				model,
-				[...history],
+				[...history, ...requestMessages],
 				tools,
 				opts,
 				signal,
