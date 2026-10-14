@@ -302,9 +302,9 @@ Do this before writing the many new tests in M3–M8.
 
 ## M4 — Never lose a session (1 d)
 
-- [ ] **M4.1 Atomic saves.**
-  - **Test first:** a failed write (read-only temp dir) returns `err` and leaves the previous file intact, and the file is always valid JSON.
-  - **Change:** `saveSession` writes `<file>.tmp-<pid>`, then calls `renameSync`, and returns a `Result` instead of throwing.
+- [x] **M4.1 Atomic saves.**
+  - **Test first:** a failed write returns `err` and leaves the previous file intact. No temp file is left behind, even when the rename fails, and listing skips temp files left by a crashed save.
+  - **Change:** `saveSession` writes `<file>.tmp-<pid>`, renames it over the session file, and returns a `Result` instead of throwing. Both UIs show a failed save as a warning and carry on.
 - [ ] **M4.2 Save after every committed message.**
   - **Test first:** a commit listener fires after each user message, assistant message and tool result.
   - **Change:**

@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
-import { err, ok, type Result } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import type { Message } from "../provider/types.js";
 
 export type Session = {
@@ -17,14 +26,46 @@ export type SessionMeta = {
 	updatedAt: number;
 };
 
+const toError = (cause: unknown): Error =>
+	cause instanceof Error ? cause : new Error(String(cause));
+
+const makeDirectory = Result.fromThrowable(
+	(dir: string) => mkdirSync(dir, { recursive: true }),
+	toError,
+);
+
+const writeFile = Result.fromThrowable(
+	(path: string, content: string) => writeFileSync(path, content, "utf-8"),
+	toError,
+);
+
+const renameFile = Result.fromThrowable(
+	(from: string, to: string) => renameSync(from, to),
+	toError,
+);
+
+const removeQuietly = (path: string): void => {
+	Result.fromThrowable(() => rmSync(path, { force: true }))();
+};
+
+/** Swaps the new content in with one rename, so a crash mid-write leaves the previous file intact. */
+const replaceFile = (filePath: string, content: string): Result<void, Error> => {
+	const tempPath = `${filePath}.tmp-${process.pid}`;
+	return writeFile(tempPath, content)
+		.andThen(() => renameFile(tempPath, filePath))
+		.orElse((error) => {
+			removeQuietly(tempPath);
+			return err(error);
+		});
+};
+
 /** Save messages to a session file. Returns the session id. */
 export const saveSession = (
 	dir: string,
 	messages: Message[],
 	id?: string,
 	tokenUsage?: { promptTokens: number; totalTokens: number },
-): string => {
-	mkdirSync(dir, { recursive: true });
+): Result<string, string> => {
 	const sessionId = id ?? randomUUID().slice(0, 8);
 	const filePath = join(dir, `${sessionId}.json`);
 
@@ -39,8 +80,10 @@ export const saveSession = (
 	};
 	if (tokenUsage) session.tokenUsage = tokenUsage;
 
-	writeFileSync(filePath, JSON.stringify(session, null, 2), "utf-8");
-	return sessionId;
+	return makeDirectory(dir)
+		.andThen(() => replaceFile(filePath, JSON.stringify(session, null, 2)))
+		.map(() => sessionId)
+		.mapErr((error) => `Couldn't save session "${sessionId}": ${error.message}`);
 };
 
 /** Load a session by id. */

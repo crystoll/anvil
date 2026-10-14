@@ -699,7 +699,13 @@ const processUserMessage = async (
 	return saveSession(historyDir, [...engine.messages()], id, {
 		promptTokens: sessionTokens.prompt,
 		totalTokens: sessionTokens.total,
-	});
+	}).match(
+		(savedId) => savedId,
+		(error) => {
+			stdout.write(`\x1b[33m⚠ ${error}\x1b[0m\n`);
+			return undefined;
+		},
+	);
 };
 
 const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> => {
@@ -730,10 +736,16 @@ const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> =
 	}
 };
 
-/** Saves nothing until the user has said something, so a crash at startup leaves no empty session. */
+/** Saves nothing until the user has said something, so a crash at startup leaves no empty session.
+ * A failed save throws, which the crash guard reports. */
 const flushSession = (): string | undefined => {
 	if (!engine.messages().some((message) => message.role !== "system")) return undefined;
-	sessionId = saveSession(historyDir, [...engine.messages()], sessionId);
+	sessionId = saveSession(historyDir, [...engine.messages()], sessionId).match(
+		(savedId) => savedId,
+		(error) => {
+			throw new Error(error);
+		},
+	);
 	return sessionId;
 };
 

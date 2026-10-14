@@ -227,10 +227,15 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 	});
 
 	const persistSession = () => {
-		sessionId = saveSession(historyDir, [...engine.messages()], sessionId, {
+		saveSession(historyDir, [...engine.messages()], sessionId, {
 			promptTokens: lastPrompt,
 			totalTokens: tokens,
-		});
+		}).match(
+			(savedId) => {
+				sessionId = savedId;
+			},
+			(error) => addMsg(`  ⚠ ${error}`, true),
+		);
 	};
 
 	/** Reads the ref because `pendingTool` is stale after an await. A turn paused for approval is
@@ -780,10 +785,16 @@ const handleInfoEvent = (
 	if (event.kind === "warning") addMsg(`  ⚠ ${event.message}`, true);
 };
 
-/** Saves nothing until the user has said something, so a crash at startup leaves no empty session. */
+/** Saves nothing until the user has said something, so a crash at startup leaves no empty session.
+ * A failed save throws, which the crash guard reports. */
 const flushSession = (): string | undefined => {
 	if (!engine.messages().some((message) => message.role !== "system")) return undefined;
-	sessionId = saveSession(historyDir, [...engine.messages()], sessionId);
+	sessionId = saveSession(historyDir, [...engine.messages()], sessionId).match(
+		(savedId) => savedId,
+		(error) => {
+			throw new Error(error);
+		},
+	);
 	return sessionId;
 };
 
