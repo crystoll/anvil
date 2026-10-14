@@ -196,4 +196,30 @@ describe("openSession", () => {
 		expect(listSessions(historyDir)).toHaveLength(1);
 		expect(latestSaved()).toEqual([question, { role: "user", content: "And the tests?" }]);
 	});
+
+	it("repairs unanswered tool calls when resuming a session", () => {
+		const interruptedHistory: Message[] = [
+			question,
+			{
+				role: "assistant",
+				content: "",
+				toolCalls: [{ id: "call-1", name: "read_file", arguments: "{}" }],
+			},
+		];
+		const id = saveSession(historyDir, interruptedHistory)._unsafeUnwrap();
+		const engine = newEngine();
+
+		openSession({ command: undefined, resume: true }, historyDir, engine);
+		engine.addUser("Continue");
+
+		const repairedHistory: Message[] = [
+			...interruptedHistory,
+			{ role: "tool", toolCallId: "call-1", content: "[not executed: session was interrupted]" },
+			{ role: "user", content: "Continue" },
+		];
+
+		expect(engine.messages()).toEqual(repairedHistory);
+		expect(listSessions(historyDir)).toHaveLength(1);
+		expect(loadSession(historyDir, id)._unsafeUnwrap().messages).toEqual(repairedHistory);
+	});
 });

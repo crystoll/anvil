@@ -37,6 +37,7 @@ import {
 	createSessionWriter,
 	listSessions,
 	loadSession,
+	repairHistory,
 	type SessionWriter,
 } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
@@ -335,7 +336,7 @@ const tryResumeSession = (
 	if (!sessions[0]) return undefined;
 	const loaded = loadSession(historyDir, sessions[0].id);
 	if (loaded.isErr()) return undefined;
-	engine.loadMessages(loaded.value.messages);
+	engine.loadMessages(repairHistory(loaded.value.messages).messages);
 	return sessions[0].id;
 };
 

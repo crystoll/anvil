@@ -7,7 +7,7 @@ import { createInterface } from "node:readline/promises";
 import { ok } from "neverthrow";
 import { compactHistory } from "./agent/compact.js";
 import type { AgentEvent } from "./agent/loop.js";
-import { listSessions, loadSession } from "./session/index.js";
+import { listSessions, loadSession, repairHistory } from "./session/index.js";
 import {
 	bootstrap,
 	expandFileRefs,
@@ -475,9 +475,15 @@ const handleHistoryCommand = async (rl: ReturnType<typeof createInterface>): Pro
 		console.log(`Failed: ${loaded.error}`);
 		return;
 	}
-	engine.loadMessages(loaded.value.messages);
+	const repaired = repairHistory(loaded.value.messages);
+	engine.loadMessages(repaired.messages);
 	session.resume(selected.id);
-	console.log(`Loaded session ${selected.id} (${loaded.value.messages.length} messages)\n`);
+	console.log(`Loaded session ${selected.id} (${repaired.messages.length} messages)`);
+	if (repaired.hasUnansweredUser) {
+		console.log("This session ended before the assistant replied; send a message to continue.\n");
+	} else {
+		console.log();
+	}
 };
 
 /** Adds the turn's token usage to the session file and reports if saving fails. */
