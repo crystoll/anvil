@@ -275,7 +275,7 @@ Do this before writing the many new tests in M3–M8.
 - [x] **M3.7 `edit_file` replaces literally** (F10).
   - **Test first:** replacements containing `$&100`, `$$` and `$1` are written as-is, and an empty `search` is an error. Today an empty search inserts at the start of the file.
   - **Change:** use `content.replace(search, () => replace)` and validate the input.
-- [ ] **M3.8 Guarded history parsing.**
+- [x] **M3.8 Guarded history parsing.**
   - **Test first:** a stored tool call with `arguments: "{bad"` doesn't throw in Ollama's `buildMessages`.
   - **Change:** add a safe-parse helper that returns a `Result` and falls back to `{}`.
 - [ ] **M3.9 Hooks can't crash the loop.**

@@ -407,6 +407,40 @@ describe("ollama-native provider", () => {
 			expect(sent[3]).toMatchObject({ role: "tool", tool_name: "read_file" });
 		});
 
+		it("sends malformed stored tool arguments as an empty object", async () => {
+			let capturedBody: Record<string, unknown> = {};
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, async ({ request }) => {
+					capturedBody = (await request.json()) as Record<string, unknown>;
+					const body = ndjson([
+						{ model: "m", message: { role: "assistant", content: "ok" }, done: true },
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const messages = [
+				{ role: "user" as const, content: "go" },
+				{
+					role: "assistant" as const,
+					content: "",
+					toolCalls: [
+						{ id: "call_a", name: "search", arguments: "{bad" },
+						{ id: "call_b", name: "list_dir", arguments: "" },
+						{ id: "call_c", name: "read_file", arguments: "[1,2]" },
+					],
+				},
+			];
+
+			const result = await provider.streamChat("m", messages, [], {});
+			await collect(result._unsafeUnwrap());
+
+			const sent = capturedBody.messages as Record<string, unknown>[];
+			const calls = sent[1]?.tool_calls as { function: { arguments: unknown } }[];
+			expect(calls.map((c) => c.function.arguments)).toEqual([{}, {}, {}]);
+		});
+
 		it("parses tool calls as complete objects", async () => {
 			server.use(
 				http.post(`${BASE_URL}/api/chat`, () => {

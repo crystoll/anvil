@@ -1,4 +1,5 @@
-import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
+import { isPlainObject } from "remeda";
 import type {
 	CompleteOptions,
 	CompletionResult,
@@ -12,6 +13,17 @@ import type {
 	ToolCallDelta,
 	ToolSchema,
 } from "./types.js";
+
+const parseJson = Result.fromThrowable(
+	(raw: string): unknown => JSON.parse(raw),
+	() => "invalid JSON",
+);
+
+/** Stored arguments are raw model output; one malformed call must not break every later request. */
+const parseStoredArguments = (raw: string): Result<Record<string, unknown>, string> =>
+	parseJson(raw).andThen((value) =>
+		isPlainObject(value) ? ok(value) : err("tool arguments are not a JSON object"),
+	);
 
 /** Creates a native Ollama provider using /api/chat with options.num_ctx support. */
 export const createOllamaProvider = (name: string, config: ProviderConfig): Provider => {
@@ -28,7 +40,11 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 				if (m.toolCalls?.length) {
 					msg.tool_calls = m.toolCalls.map((tc, idx) => ({
 						type: "function",
-						function: { index: idx, name: tc.name, arguments: JSON.parse(tc.arguments) },
+						function: {
+							index: idx,
+							name: tc.name,
+							arguments: parseStoredArguments(tc.arguments).unwrapOr({}),
+						},
 					}));
 				}
 			}
