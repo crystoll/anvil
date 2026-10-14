@@ -26,6 +26,7 @@
 	"engines": {
 		"node": ">=22"
 	},
+	"packageManager": "pnpm@12.11.2",
 	"scripts": {
 		"dev": "tsx src/main.ts",
 		"dev:simple": "tsx src/cli.ts",
