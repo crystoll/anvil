@@ -124,6 +124,7 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
   - A timeout reports `Exit code: null`.
   - Only the first 8,000 characters are kept, so errors at the end of long output are lost.
   - Fixed in M7.2 and M10.9.
+- **F20. Closing the readline CLI skips shutdown.** ✅ Ctrl+C or Ctrl+D at any prompt closes readline, but Node never settles a pending `question()`. The process dies with exit code 13 and a "Detected unsettled top-level await" warning, and `ctx.shutdown()` never runs. Fixed in M3.12.
 
 ## Milestones
 
@@ -293,6 +294,9 @@ Do this before writing the many new tests in M3–M8.
     - A response with non-ASCII text (e.g. hover docs containing "→") is parsed. Today the client measures a byte-based `Content-Length` in characters and waits for the rest of the frame until the request times out. A character split across two reads also turns into `\ufffd`s.
     - A server request that reuses a pending id (e.g. `workspace/configuration` with id 1 during `initialize`) gets an answer, and `initialize` still resolves with the real response. Today the request is taken as the response and never answered.
   - **Change `lsp/client.ts`:** buffer bytes instead of strings, and answer server requests (`null`, or one `null` per `workspace/configuration` item) instead of matching them to pending requests.
+- [x] **M3.12 Closing the readline CLI exits cleanly** (F20). Found during the M3 validation stop.
+  - **Test first:** a question that is pending when the interface closes, or asked after it closed, rejects with a prompt-closed error. Today the pending one never settles.
+  - **Change:** every CLI prompt goes through `ask()` in `ui/ask.ts`, which aborts the question on `close`. A closed prompt counts as quitting, not as an error, so the turn is saved, `ctx.shutdown()` runs and the exit code is 0.
 
 **Validation stop:** the gate passes, plus S2, S3 and S6.
 
@@ -307,10 +311,12 @@ Do this before writing the many new tests in M3–M8.
     - Add an `onCommit(listener)` hook to the engine.
     - Add a small `SessionWriter` (id, `save()`, `flush()`, `startNew()`), wired once in `bootstrap` so both UIs get it.
     - Persist the user message before the request goes out.
+    - This also covers `/plan`: the CLI only saves in `processUserMessage`, so plan turns are lost if the user quits right after one.
     - The UIs' end-of-turn `save()` calls shrink to token-usage updates.
 - [ ] **M4.3 Handle signals.**
   - On SIGTERM or SIGHUP (terminal closed): flush, run the bounded shutdown, then exit.
   - Route `/quit`, `/exit` and double Ctrl+C through the same `gracefulExit()`.
+  - In the readline CLI, a double Ctrl+C mid-stream only closes readline, so the turn runs to the end before the app exits. Cancel the turn first.
   - **Test first:** the installer, with injected handlers.
 - [ ] **M4.4 Repair sessions on load.** 📊 7 sessions end on unanswered tool calls.
   - **Test first:** a pure `repairHistory(messages)`, with fixtures modeled on your broken sessions. It:
@@ -646,7 +652,7 @@ type SessionController = {
   - Use piped stdio for conversations.
   - Use `-c "<prompt>" --yes` for one-shot runs.
   - Send SIGTERM mid-stream to check that the session file is valid and complete up to the last commit.
-- **Regression mapping:** every finding F1–F19 gets at least one test named after it, for example `it("F1: next send after cancel reaches the provider")`.
+- **Regression mapping:** every finding F1–F20 gets at least one test named after it, for example `it("F1: next send after cancel reaches the provider")`.
 
 ## Parking lot (not scheduled)
 

@@ -17,6 +17,7 @@ import {
 } from "./shared/bootstrap.js";
 import { guardProcess } from "./shared/crash-guard.js";
 import { startSpinner } from "./spinner.js";
+import { ask, isPromptClosed } from "./ui/ask.js";
 import { createStatusBar } from "./ui/statusbar.js";
 
 // === Bootstrap ===
@@ -155,7 +156,7 @@ const promptApproval = async (
 	event: AgentEvent & { kind: "pending" },
 ): Promise<boolean> => {
 	console.log(formatPending(event));
-	const answer = await rl.question("  approve? [y/n]: ");
+	const answer = await ask(rl, "  approve? [y/n]: ");
 	return answer.trim().toLowerCase().startsWith("y");
 };
 
@@ -186,7 +187,7 @@ const processAgentTurn = async (
 			stop();
 			displayEvent(event);
 			busy = false;
-			const answer = await rl.question("\nRetry? (y/n): ");
+			const answer = await ask(rl, "\nRetry? (y/n): ");
 			if (answer.trim().toLowerCase() === "y") await processAgentTurn(rl, message);
 			return;
 		}
@@ -320,7 +321,7 @@ const pickModel = async (rl: ReturnType<typeof createInterface>): Promise<void> 
 		const marker = models[i] === current ? " ●" : "";
 		console.log(`  ${i + 1}) ${models[i]}${marker}`);
 	}
-	const answer = await rl.question("\n# (or Enter to cancel): ");
+	const answer = await ask(rl, "\n# (or Enter to cancel): ");
 	const idx = Number.parseInt(answer, 10) - 1;
 	if (Number.isNaN(idx) || idx < 0 || idx >= models.length) return;
 	const picked = models[idx];
@@ -464,7 +465,7 @@ const handleHistoryCommand = async (
 		console.log(`  ${i + 1}. ${date} ${time}${marker}  \x1b[2m${preview}\x1b[0m`);
 	}
 	console.log();
-	const answer = await rl.question("Load # (or Enter to cancel): ");
+	const answer = await ask(rl, "Load # (or Enter to cancel): ");
 	const idx = Number.parseInt(answer.trim(), 10) - 1;
 	const selected = shown[idx];
 	if (!selected) return currentId;
@@ -534,7 +535,7 @@ const executeSteps = async (
 		await processAgentTurn(rl, `${progress}${prev}\nDo this now.`);
 		stdout.write("\n");
 		if (i >= steps.length - 1) continue;
-		const cont = await rl.question("\x1b[2m[continue? y/n/skip]: \x1b[0m");
+		const cont = await ask(rl, "\x1b[2m[continue? y/n/skip]: \x1b[0m");
 		if (cont.trim().toLowerCase() === "n") break;
 	}
 };
@@ -569,7 +570,7 @@ const handlePlan = async (task: string, rl: ReturnType<typeof createInterface>):
 		console.log("[no steps found]\n");
 		return;
 	}
-	const answer = await rl.question(`\x1b[2m[${steps.length} steps — execute? y/n]: \x1b[0m`);
+	const answer = await ask(rl, `\x1b[2m[${steps.length} steps — execute? y/n]: \x1b[0m`);
 	if (!answer.trim().toLowerCase().startsWith("y")) return;
 	await executeSteps(steps, rl);
 	console.log("\x1b[2m[plan complete]\x1b[0m\n");
@@ -689,7 +690,9 @@ const processUserMessage = async (
 		stdout.write("\x1b[2m─\x1b[0m\n");
 		await processAgentTurn(rl, expandFileRefs(trimmed, projectRoot));
 	} catch (e) {
-		stdout.write(`\n[error: ${e instanceof Error ? e.message : String(e)}]\n`);
+		if (!isPromptClosed(e)) {
+			stdout.write(`\n[error: ${e instanceof Error ? e.message : String(e)}]\n`);
+		}
 	}
 	stdout.write("\n");
 	await ctx.fireStopHooks();
@@ -703,7 +706,7 @@ const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> =
 	while (true) {
 		let input: string;
 		try {
-			input = await rl.question("> ");
+			input = await ask(rl, "> ");
 		} catch {
 			break;
 		}
@@ -776,6 +779,8 @@ if (flags.command) {
 
 	try {
 		await chatLoop(rl);
+	} catch (error) {
+		if (!isPromptClosed(error)) throw error;
 	} finally {
 		rl.close();
 	}
