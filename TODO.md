@@ -278,9 +278,9 @@ Do this before writing the many new tests in M3–M8.
 - [x] **M3.8 Guarded history parsing.**
   - **Test first:** a stored tool call with `arguments: "{bad"` doesn't throw in Ollama's `buildMessages`.
   - **Change:** add a safe-parse helper that returns a `Result` and falls back to `{}`.
-- [ ] **M3.9 Hooks can't crash the loop.**
-  - **Test first:** a rejecting stop hook or tool hook surfaces as a warning notice.
-  - **Change:** catch hook promises at every call site.
+- [x] **M3.9 Hooks can't crash the loop.**
+  - **Test first:** an async hook whose shell can't start doesn't crash the process, and a hook that can't start (e.g. a malformed command) counts as failed instead of rejecting.
+  - **Change:** `runHooks` never rejects, so callers that don't await it are safe, and fire-and-forget hooks handle spawn errors.
 - [ ] **M3.10 Bounded shutdown.** `ctx.shutdown()` races LSP and MCP teardown against a 3 s timeout. Today `cli.ts` can hang on exit.
 
 **Validation stop:** the gate passes, plus S2, S3 and S6.

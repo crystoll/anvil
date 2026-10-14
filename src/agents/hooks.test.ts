@@ -47,4 +47,22 @@ describe("runHooks", () => {
 		expect(Date.now() - start).toBeLessThan(500);
 		expect(result).toBeUndefined();
 	});
+
+	it("survives an async hook whose shell can't start", async () => {
+		const path = process.env.PATH;
+		process.env.PATH = "/nonexistent";
+		try {
+			const hooks: HookDef[] = [{ command: "true", async: true }];
+			expect(await runHooks(hooks, { hook_event_name: "stop", cwd: "/tmp" })).toBeUndefined();
+		} finally {
+			process.env.PATH = path;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	});
+
+	it("counts a hook that can't start as failed instead of rejecting", async () => {
+		const hooks: HookDef[] = [{ command: "echo \u0000", timeout: 3 }];
+		const result = await runHooks(hooks, { hook_event_name: "preToolUse", cwd: "/tmp" });
+		expect(result).toContain("Hook failed");
+	});
 });

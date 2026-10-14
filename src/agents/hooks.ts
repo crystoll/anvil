@@ -1,13 +1,23 @@
 import { spawn } from "node:child_process";
+import { ResultAsync } from "neverthrow";
 import type { HookDef } from "./agents.js";
 
 export type HookContext = Record<string, unknown>;
 
-/** Run hooks sequentially. Returns denial reason (string) if any blocking hook fails, undefined otherwise. */
-export const runHooks = async (
-	hooks: HookDef[],
-	context: HookContext,
-): Promise<string | undefined> => {
+/**
+ * Run hooks sequentially. Returns denial reason (string) if any blocking hook fails, undefined otherwise.
+ * Never rejects: some callers don't await hooks, so a hook that can't start counts as a failed hook.
+ */
+export const runHooks = (hooks: HookDef[], context: HookContext): Promise<string | undefined> =>
+	ResultAsync.fromThrowable(runInOrder, (e) => (e instanceof Error ? e.message : String(e)))(
+		hooks,
+		context,
+	).match(
+		(denial) => denial,
+		(message) => `Hook failed: ${message}`,
+	);
+
+const runInOrder = async (hooks: HookDef[], context: HookContext): Promise<string | undefined> => {
 	for (const hook of hooks) {
 		if (hook.matcher && context.tool_name !== hook.matcher) continue;
 
@@ -29,6 +39,7 @@ const fireAndForget = (command: string, context: HookContext): void => {
 		stdio: ["pipe", "ignore", "ignore"],
 		detached: true,
 	});
+	child.on("error", () => {});
 	child.stdin.on("error", () => {});
 	child.stdin.write(JSON.stringify(context));
 	child.stdin.end();
