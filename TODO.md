@@ -154,16 +154,17 @@ The total is about 21.5 focused days.
 
 ## M0 — Unblock CI, hygiene, safe minors (0.5 d)
 
-- [ ] **M0.1 Clear the critical advisory now.** Add the override `proxy-addr: '>=2.0.8'` to `pnpm-workspace.yaml`.
+- [x] **M0.1 Clear the critical advisory now.** Add the override `proxy-addr: '>=2.0.8'` to `pnpm-workspace.yaml`.
   - Express 5.2.1 accepts `^2.0.7`, and 2.0.8 was published on 2026-09-15.
   - Confirm with `pnpm why proxy-addr`.
   - This is interim: M1 removes express entirely.
-- [ ] **M0.2 Remove the self-dependency.** Delete `"anvil": "link:"` from `package.json` and `anvil: 'link:'` from the overrides. Nothing imports `anvil`.
-- [ ] **M0.3 Pin the toolchain.**
+- [x] **M0.2 Remove the self-dependency.** Delete `"anvil": "link:"` from `package.json` and `anvil: 'link:'` from the overrides. Nothing imports `anvil`.
+- [x] **M0.3 Pin the toolchain.**
   - Add `"packageManager": "pnpm@12.11.2"`. Local pnpm is 12.3.4; CI pins 11.
   - Drop `version: 11` from CI so pnpm/action-setup reads the field.
   - Keep `engines.node` at `>=22`.
-- [ ] **M0.4 Patch and minor bumps,** one commit each, running the gate after each:
+  - Done. pnpm 12 also pins its own binaries in a first document in `pnpm-lock.yaml`.
+- [x] **M0.4 Patch and minor bumps,** one commit each, running the gate after each. Done in three commits (lint tools, runtime dependencies, dev tools), with the gate after each. The dprint Markdown plugin also went from 0.17.8 to 0.26.0 with no Markdown diffs, and oxlint 1.87 flagged one unused binding (fixed).
   - `@biomejs/biome` 2.5.15, then `pnpm biome migrate --write` for the `$schema`.
   - `js-yaml` 5.4.3 (moderate advisory).
   - `remeda` 2.51.0 and `linkedom` 0.18.13.
@@ -171,8 +172,8 @@ The total is about 21.5 focused days.
   - `oxlint` 1.87.0 (fix any new findings), `tsx` 4.23.15 and `vite` 8.3.4.
   - `dprint` 0.62.0 (review the Markdown diffs).
   - `vitest` 4.1.11+ (moderate advisory; stepping stone to v5).
-- [ ] **M0.5 Align `@types/node` with the runtime floor.** It's 26.2.0 while CI runs Node 22, so typecheck accepts APIs that are missing at runtime. Align it to `^22` (22.20.5), or raise both floors to 24.
-- [ ] **M0.6 Make the supply-chain guard explicit.** Add `minimumReleaseAge: 1440` to `pnpm-workspace.yaml`. It's already the default since pnpm 11; this documents the intent.
+- [x] **M0.5 Align `@types/node` with the runtime floor.** It's 26.2.0 while CI runs Node 22, so typecheck accepts APIs that are missing at runtime. Align it to `^22` (22.20.5), or raise both floors to 24. Done: pinned 22.20.5; `tsc` found no Node 24+ APIs.
+- [x] **M0.6 Make the supply-chain guard explicit.** Add `minimumReleaseAge: 1440` to `pnpm-workspace.yaml`. It's already the default since pnpm 11; this documents the intent.
 
 **Validation stop:**
 
@@ -478,8 +479,12 @@ type SessionController = {
   - Show reasoning as a collapsed line, "thinking… N tokens · M s"; `/think` toggles the full text. Today the TUI shows only `[thinking… Ns]`.
   - The status bar shows the phase, elapsed time, and tokens/s from Ollama's `eval_count` and `eval_duration`.
   - While waiting for the first token, show "waiting for model (loading?) 42 s".
+- [ ] **M9.4 Don't drop the first Enter.** In 2 of 11 automated pty runs during M0, the first Enter after launch arrived while the terminal was still in cooked mode. ink received `text\n` as typed input, so nothing was sent until the next Enter, and that message had a stray newline. The pre-M0 build does the same; the root cause is unknown.
+  - **Test first** (M8.4 harness): typing `hello\n` into the prompt submits `hello`.
+  - In the input's `onChange`, treat a trailing `\r` or `\n` as submit and strip it. Trim submitted values.
+  - Recheck in a real terminal after M9.1.
 
-**Validation stop:** the gate passes, plus S1 and S6, and a long streaming answer shows no flicker or scrollback corruption.
+**Validation stop:** the gate passes, plus S1 and S6, and a long streaming answer shows no flicker or scrollback corruption. The first message after launch is sent on the first Enter.
 
 ## M10 — Small-model ergonomics (3.5 d; ship each item on its own, in this order)
 
@@ -592,6 +597,8 @@ type SessionController = {
 ---
 
 ## Dependency matrix
+
+**Now** is the version at review time. The M0 rows are done.
 
 | Package                              | Now          | Target                               | Kind        | Milestone | Notes                                                  |
 | ------------------------------------ | ------------ | ------------------------------------ | ----------- | --------- | ------------------------------------------------------ |
