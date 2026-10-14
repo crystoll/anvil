@@ -264,10 +264,11 @@ Do this before writing the many new tests in M3–M8.
 - [x] **M3.4 Hotfix for the swallowed message** (F1).
   - **Test first:** cancel during final-answer streaming, then `send()`; the provider receives the request.
   - **Change:** reset `cancelled` at the start of `send`, `approve` and `reject`. M6.1 replaces this with turn-scoped aborts.
-- [ ] **M3.5 Hotfix for TUI stale closures** (F8).
+- [x] **M3.5 Hotfix for TUI stale closures** (F8).
   - Read `pendingToolName.current` instead of `pendingTool` after each `await`.
   - Call `setBusy(true)` at the start of `handleApproval`.
-  - Never auto-retry while an approval is pending.
+  - Never auto-retry while an approval is pending, or after an auto-approved step fails.
+  - A turn that pauses for approval is saved and idle. Stop hooks run only when the turn ends.
 
   Verify manually with S2; M8 replaces this code and adds tests.
 - [ ] **M3.6 Crash guards.**

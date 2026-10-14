@@ -225,12 +225,19 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		handleHistoryNav(key);
 	});
 
-	const save = () => {
+	const persistSession = () => {
 		sessionId = saveSession(historyDir, [...engine.messages()], sessionId, {
 			promptTokens: lastPrompt,
 			totalTokens: tokens,
 		});
-		ctx.fireStopHooks().catch(() => {});
+	};
+
+	/** Reads the ref because `pendingTool` is stale after an await. A turn paused for approval is
+	 * saved and idle, but Stop hooks wait until the turn is really over. */
+	const finishTurn = () => {
+		setBusy(false);
+		persistSession();
+		if (!pendingToolName.current) ctx.fireStopHooks().catch(() => {});
 	};
 
 	const handlePendingEvent = async (
@@ -240,7 +247,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		if (autoApproved.current.has(event.call.tool.name)) {
 			addMsg(`  ↳ ${event.call.tool.name} [auto-approved]`, true);
 			const len = await processEvents(agent.approve());
-			return len > 0 ? len : response.length;
+			return len === 0 ? response.length : len;
 		}
 		pendingToolName.current = event.call.tool.name;
 		setPendingTool(`${event.call.tool.name}: ${summarizeArgs(event.call.args)}`);
@@ -639,11 +646,9 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		setPendingTool(null);
 		pendingToolName.current = null;
 		setInput("");
+		setBusy(true);
 		await processEvents(approved ? agent.approve() : agent.reject(value));
-		if (!pendingTool) {
-			setBusy(false);
-			save();
-		}
+		finishTurn();
 	};
 
 	const sendMessage = async (value: string) => {
@@ -654,15 +659,12 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			addMsg(`  [attached: ${paths.join(", ")}]`, true);
 		}
 		setBusy(true);
-		let len = await processEvents(agent.send(expandFileRefs(value, projectRoot)));
-		if (len === 0 && !pendingTool) {
+		const len = await processEvents(agent.send(expandFileRefs(value, projectRoot)));
+		if (len === 0 && !pendingToolName.current) {
 			addMsg("  [empty response, retrying…]", true);
-			len = await processEvents(agent.send("Please try again."));
+			await processEvents(agent.send("Please try again."));
 		}
-		if (!pendingTool) {
-			setBusy(false);
-			save();
-		}
+		finishTurn();
 	};
 
 	const handlePlan = async (task: string) => {
@@ -675,10 +677,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		await processEvents(
 			agent.send(`Break this task into numbered steps (just the steps, no explanation):\n${task}`),
 		);
-		if (!pendingTool) {
-			setBusy(false);
-			save();
-		}
+		finishTurn();
 	};
 
 	const handleSubmit = async (value: string) => {
