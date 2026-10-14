@@ -127,9 +127,9 @@ const wrapWithGuards = (tool: Tool, settings: ToolSettings | undefined): Tool =>
 		const cmdSettings = settings.run_cmd;
 		return {
 			...tool,
-			execute: async (args, root) => {
+			execute: async (args, context) => {
 				const denial = checkCommand(String(args.command ?? ""), cmdSettings);
-				return denial ?? tool.execute(args, root);
+				return denial ?? tool.execute(args, context);
 			},
 		};
 	}
@@ -140,9 +140,9 @@ const wrapWithGuards = (tool: Tool, settings: ToolSettings | undefined): Tool =>
 	if (pathSettings && (pathSettings.deniedPaths || pathSettings.allowedPaths)) {
 		return {
 			...tool,
-			execute: async (args, root) => {
+			execute: async (args, context) => {
 				const denial = checkPath(String(args.path ?? ""), pathSettings);
-				return denial ?? tool.execute(args, root);
+				return denial ?? tool.execute(args, context);
 			},
 		};
 	}

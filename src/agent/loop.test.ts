@@ -610,6 +610,47 @@ describe("agent loop", () => {
 		expect(loop.state()).toBe("idle");
 	});
 
+	it("aborts active tool execution and records a cancellation result", async () => {
+		let markStarted: () => void = () => undefined;
+		const started = new Promise<void>((resolve) => {
+			markStarted = resolve;
+		});
+		let toolSignal: AbortSignal | undefined;
+		const tool: Tool = {
+			...listDirTool,
+			execute: async (_args, context) => {
+				toolSignal = context.signal;
+				markStarted();
+				return new Promise<string>(() => undefined);
+			},
+		};
+		const engine = createEngine(
+			mockProvider([toolCallChunks("call_1", "list_dir", '{"path":"."}')]),
+			"test",
+		);
+		const registry = createRegistry();
+		registry.register(tool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+		const activeRun = collect(loop.send("list files"));
+		await started;
+
+		await loop.cancel();
+		const events = await activeRun;
+
+		expect(toolSignal?.aborted).toBe(true);
+		expect(events).toContainEqual({
+			kind: "tool_result",
+			name: "list_dir",
+			result: "[cancelled by user]",
+		});
+		expect(validateHistory(engine.messages()).isOk()).toBe(true);
+		expect(loop.state()).toBe("idle");
+	});
+
 	it("does not cancel the engine when no agent turn is active", async () => {
 		const engine = createEngine(mockProvider([]), "test");
 		const cancelEngine = vi.spyOn(engine, "cancel");

@@ -18,7 +18,7 @@ export const createLspDiagnosticsTool = (manager: LspManager): Tool => ({
 	},
 	needsApproval: false,
 	timeout: 10000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
 		const fullPath = resolve(projectRoot, path);
 
@@ -49,7 +49,7 @@ export const createLspDefinitionTool = (manager: LspManager): Tool => ({
 	},
 	needsApproval: false,
 	timeout: 10000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
 		const fullPath = resolve(projectRoot, path);
 		const locs = await manager.definition(fullPath, Number(args.line), Number(args.character));
@@ -75,7 +75,7 @@ export const createLspReferencesTool = (manager: LspManager): Tool => ({
 	},
 	needsApproval: false,
 	timeout: 10000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
 		const fullPath = resolve(projectRoot, path);
 		const locs = await manager.references(fullPath, Number(args.line), Number(args.character));
@@ -100,7 +100,7 @@ export const createLspHoverTool = (manager: LspManager): Tool => ({
 	},
 	needsApproval: false,
 	timeout: 10000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
 		const fullPath = resolve(projectRoot, path);
 		const info = await manager.hover(fullPath, Number(args.line), Number(args.character));
@@ -121,7 +121,7 @@ export const createLspSymbolsTool = (manager: LspManager): Tool => ({
 	},
 	needsApproval: false,
 	timeout: 10000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
 		const fullPath = resolve(projectRoot, path);
 		const symbols = await manager.documentSymbols(fullPath);
@@ -157,7 +157,7 @@ export const createLspRenameTool = (manager: LspManager): Tool => ({
 	},
 	needsApproval: true,
 	timeout: 15000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
 		const fullPath = resolve(projectRoot, path);
 		const edits = await manager.rename(

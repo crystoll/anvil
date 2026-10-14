@@ -403,7 +403,7 @@ Do this before writing the many new tests in M3–M8.
 
 ## M7 — Cancellation all the way down (1.5 d)
 
-- [ ] **M7.1 Tool context.** Thread `execute(args, { signal, projectRoot })` through the registry and `executeTool`. An aborted tool returns `"[cancelled by user]"`.
+- [x] **M7.1 Tool context.** Thread `execute(args, { signal, projectRoot })` through the registry and `executeTool`. An aborted tool returns `"[cancelled by user]"`.
 - [ ] **M7.2 `run_cmd`** (F7, F19).
   - **Change:**
     - Spawn with `detached: true` so the command gets its own process group, and with `stdio: ["ignore", "pipe", "pipe"]`.

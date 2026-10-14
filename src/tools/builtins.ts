@@ -37,13 +37,13 @@ export const runCmd: Tool = {
 	schema: objSchema(["command"], { command: strProp("Shell command to execute") }),
 	needsApproval: true,
 	timeout: 300_000,
-	execute: (args, projectRoot) =>
+	execute: (args, context) =>
 		new Promise((res) => {
 			const command = String(args.command ?? "");
 			execFile(
 				"sh",
 				["-c", command],
-				{ cwd: projectRoot, timeout: 300_000 },
+				{ cwd: context.projectRoot, timeout: 300_000 },
 				(error, stdout, stderr) => {
 					const exitCode = error && "code" in error ? (error.code as number) : 0;
 					const output = (stdout + stderr).slice(0, 8000);
@@ -64,11 +64,11 @@ export const readFileTool: Tool = {
 	}),
 	needsApproval: false,
 	timeout: 5000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, context) => {
 		const path = String(args.path ?? "");
 		const offset = Math.max(1, Number(args.offset) || 1);
 		const limit = Math.min(500, Math.max(1, Number(args.limit) || 200));
-		const fullPath = resolve(projectRoot, expandTilde(path));
+		const fullPath = resolve(context.projectRoot, expandTilde(path));
 
 		const content = await readFile(fullPath, "utf-8");
 		const lines = content.split("\n");
@@ -94,12 +94,12 @@ export const writeFileTool: Tool = {
 	}),
 	needsApproval: true,
 	timeout: 5000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, context) => {
 		const path = String(args.path ?? "");
 		const content = String(args.content ?? "");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = resolve(context.projectRoot, path);
 
-		await backupFile(fullPath, projectRoot);
+		await backupFile(fullPath, context.projectRoot);
 		await mkdir(join(fullPath, ".."), { recursive: true });
 		await writeFile(fullPath, content, "utf-8");
 		return `Wrote ${content.split("\n").length} lines to ${path}`;
@@ -117,18 +117,18 @@ export const editFileTool: Tool = {
 	}),
 	needsApproval: true,
 	timeout: 5000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, context) => {
 		const path = String(args.path ?? "");
 		const search = String(args.search ?? "");
 		const replace = String(args.replace ?? "");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = resolve(context.projectRoot, path);
 		if (search === "") throw new Error("Search string must not be empty");
 
 		const content = await readFile(fullPath, "utf-8");
 		if (!content.includes(search)) {
 			throw new Error(`Search string not found in ${path}`);
 		}
-		await backupFile(fullPath, projectRoot);
+		await backupFile(fullPath, context.projectRoot);
 		const updated = content.replace(search, () => replace);
 		await writeFile(fullPath, updated, "utf-8");
 		return `Edited ${path}: replaced ${search.split("\n").length} lines`;
@@ -144,9 +144,9 @@ export const listDir: Tool = {
 	}),
 	needsApproval: false,
 	timeout: 5000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, context) => {
 		const path = String(args.path ?? ".");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = resolve(context.projectRoot, path);
 		const entries = await readdir(fullPath, { withFileTypes: true });
 		return entries.map((e) => `${e.isDirectory() ? "📁" : "📄"} ${e.name}`).join("\n");
 	},
@@ -159,13 +159,13 @@ export const glob: Tool = {
 	schema: objSchema(["pattern"], { pattern: strProp("Glob pattern (e.g. '**/*.ts')") }),
 	needsApproval: false,
 	timeout: 10_000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, context) => {
 		const pattern = String(args.pattern ?? "");
 		const { glob: fsGlob } = await import("node:fs/promises");
 		const excluded = new Set(["node_modules", ".git", "dist", "build", ".anvil"]);
 		const files: string[] = [];
 		for await (const f of fsGlob(pattern, {
-			cwd: projectRoot,
+			cwd: context.projectRoot,
 			exclude: (p) => excluded.has(p),
 		})) {
 			files.push(f);
@@ -185,10 +185,10 @@ export const search: Tool = {
 	}),
 	needsApproval: false,
 	timeout: 15_000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, context) => {
 		const query = String(args.query ?? "");
 		const path = String(args.path ?? ".");
-		const searchDir = resolve(projectRoot, path);
+		const searchDir = resolve(context.projectRoot, path);
 
 		return new Promise((res) => {
 			execFile(
@@ -200,7 +200,7 @@ export const search: Tool = {
 						.trim()
 						.split("\n")
 						.filter(Boolean)
-						.map((f) => relative(projectRoot, f))
+						.map((f) => relative(context.projectRoot, f))
 						.slice(0, 50);
 					res(files.length > 0 ? `Found in:\n${files.join("\n")}` : "No matches found");
 				},
@@ -294,13 +294,13 @@ export const projectContext: Tool = {
 	schema: objSchema([], {}),
 	needsApproval: false,
 	timeout: 10_000,
-	execute: async (_, projectRoot) => {
+	execute: async (_, context) => {
 		const sections = await Promise.all([
-			readPackageInfo(projectRoot),
-			readTsconfigInfo(projectRoot),
-			getFileTree(projectRoot),
-			gitExec(["status", "--short", "--branch"], projectRoot).then((s) => `## Git\n${s}`),
-			gitExec(["log", "--oneline", "-5"], projectRoot).then((s) =>
+			readPackageInfo(context.projectRoot),
+			readTsconfigInfo(context.projectRoot),
+			getFileTree(context.projectRoot),
+			gitExec(["status", "--short", "--branch"], context.projectRoot).then((s) => `## Git\n${s}`),
+			gitExec(["log", "--oneline", "-5"], context.projectRoot).then((s) =>
 				s.trim() ? `## Recent commits\n${s}` : undefined,
 			),
 		]);
@@ -315,7 +315,7 @@ export const gitStatus: Tool = {
 	schema: objSchema([], {}),
 	needsApproval: false,
 	timeout: 5000,
-	execute: async (_, projectRoot) => gitExec(["status", "--short", "--branch"], projectRoot),
+	execute: async (_, context) => gitExec(["status", "--short", "--branch"], context.projectRoot),
 };
 
 /** Git diff. */
@@ -328,11 +328,11 @@ export const gitDiff: Tool = {
 	}),
 	needsApproval: false,
 	timeout: 10_000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, context) => {
 		const cmd = ["diff"];
 		if (args.staged) cmd.push("--cached");
 		if (args.ref) cmd.push(String(args.ref));
-		return gitExec(cmd, projectRoot);
+		return gitExec(cmd, context.projectRoot);
 	},
 };
 
@@ -346,11 +346,11 @@ export const gitLog: Tool = {
 	}),
 	needsApproval: false,
 	timeout: 5000,
-	execute: async (args, projectRoot) => {
+	execute: async (args, context) => {
 		const count = Math.min(50, Math.max(1, Number(args.count) || 10));
 		const cmd = ["log", "--oneline", `-${count}`];
 		if (args.ref) cmd.push(String(args.ref));
-		return gitExec(cmd, projectRoot);
+		return gitExec(cmd, context.projectRoot);
 	},
 };
 

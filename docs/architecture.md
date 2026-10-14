@@ -184,9 +184,18 @@ type Tool = {
   schema: JsonSchema
   needsApproval: boolean
   timeout: number
-  execute: (args: unknown, projectRoot: string) => ResultAsync<string, ToolError>
+  execute: (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<string>
+}
+
+type ToolExecutionContext = {
+  signal: AbortSignal
+  projectRoot: string
 }
 ```
+
+The agent races tool execution against its timeout and turn-cancellation signal. Tools that
+support interruption should observe `context.signal`; cancellation is returned to the model as
+`"[cancelled by user]"`.
 
 ## Agent Configs
 

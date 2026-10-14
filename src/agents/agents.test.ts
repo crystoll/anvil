@@ -115,6 +115,11 @@ const fakeTool = (name: string, needsApproval: boolean): Tool => ({
 	execute: async () => "ok",
 });
 
+const contextFor = (projectRoot: string) => ({
+	projectRoot,
+	signal: new AbortController().signal,
+});
+
 describe("applyAgentToRegistry", () => {
 	it("filters tools to only those in agent.tools list", () => {
 		const reg = createRegistry();
@@ -237,8 +242,10 @@ describe("applyAgentToRegistry with toolSettings guards", () => {
 		};
 		applyAgentToRegistry(reg, agent);
 		const tool = reg.get("run_cmd") as Tool;
-		expect(await tool.execute({ command: "rm -rf /" }, "/tmp")).toContain("DENIED");
-		expect(await tool.execute({ command: "git status" }, "/tmp")).toBe("ran: git status");
+		expect(await tool.execute({ command: "rm -rf /" }, contextFor("/tmp"))).toContain("DENIED");
+		expect(await tool.execute({ command: "git status" }, contextFor("/tmp"))).toBe(
+			"ran: git status",
+		);
 	});
 
 	it("wraps read_file execute with path deny guard", async () => {
@@ -256,8 +263,10 @@ describe("applyAgentToRegistry with toolSettings guards", () => {
 		};
 		applyAgentToRegistry(reg, agent);
 		const tool = reg.get("read_file") as Tool;
-		expect(await tool.execute({ path: "/project/.env.local" }, "/tmp")).toContain("DENIED");
-		expect(await tool.execute({ path: "/project/src/main.ts" }, "/tmp")).toBe(
+		expect(await tool.execute({ path: "/project/.env.local" }, contextFor("/tmp"))).toContain(
+			"DENIED",
+		);
+		expect(await tool.execute({ path: "/project/src/main.ts" }, contextFor("/tmp"))).toBe(
 			"content of /project/src/main.ts",
 		);
 	});
@@ -277,7 +286,9 @@ describe("applyAgentToRegistry with toolSettings guards", () => {
 		};
 		applyAgentToRegistry(reg, agent);
 		const tool = reg.get("write_file") as Tool;
-		expect(await tool.execute({ path: "/etc/passwd" }, "/tmp")).toContain("DENIED");
-		expect(await tool.execute({ path: "/project/new.ts" }, "/tmp")).toBe("wrote /project/new.ts");
+		expect(await tool.execute({ path: "/etc/passwd" }, contextFor("/tmp"))).toContain("DENIED");
+		expect(await tool.execute({ path: "/project/new.ts" }, contextFor("/tmp"))).toBe(
+			"wrote /project/new.ts",
+		);
 	});
 });

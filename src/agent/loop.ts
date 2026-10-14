@@ -1,7 +1,7 @@
 import { okAsync, ResultAsync } from "neverthrow";
 import type { Engine, EngineEvent } from "../engine/engine.js";
 import type { Message, Provider, ToolCall } from "../provider/types.js";
-import type { Registry, Tool } from "../tools/registry.js";
+import type { Registry, Tool, ToolExecutionContext } from "../tools/registry.js";
 import { parseToolArgs } from "../tools/registry.js";
 import { compactHistory } from "./compact.js";
 import { isOverflow } from "./overflow.js";
@@ -153,8 +153,15 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	/** Post-processing only enriches a result, so its failure keeps the tool's own output. */
-	const runTool = async (tool: Tool, args: Record<string, unknown>): Promise<ToolRun> => {
-		const result = await executeTool(tool, args, config.projectRoot);
+	const runTool = async (
+		tool: Tool,
+		args: Record<string, unknown>,
+		signal: AbortSignal,
+	): Promise<ToolRun> => {
+		const result = await executeTool(tool, args, {
+			signal,
+			projectRoot: config.projectRoot,
+		});
 		const run = await transformResult(tool.name, args, result).match<ToolRun>(
 			(transformed) => ({ result: transformed, warnings: [] }),
 			(message) => ({
@@ -201,7 +208,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			if (denial) {
 				engine.addToolResult(callId, denial);
 			} else {
-				const runResult = await runTool(tool, args);
+				const runResult = await runTool(tool, args, signal);
 				engine.addToolResult(callId, runResult.result);
 				yield* runResult.warnings;
 				yield { kind: "tool_result", name: tool.name, result: runResult.result };
@@ -290,7 +297,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			engine.addToolResult(callId, denial);
 			return { action: "error_fed_back" };
 		}
-		const run = await runTool(tool, args);
+		const run = await runTool(tool, args, signal);
 		engine.addToolResult(callId, run.result);
 		return {
 			action: "executed",
@@ -708,12 +715,20 @@ const errorText = (e: unknown): string => (e instanceof Error ? e.message : Stri
 const executeTool = async (
 	tool: Tool,
 	args: Record<string, unknown>,
-	projectRoot: string,
+	context: ToolExecutionContext,
 ): Promise<string> => {
 	let timer: ReturnType<typeof setTimeout> | undefined;
+	let abortHandler: (() => void) | undefined;
+	const cancelled = new Promise<string>((resolve) => {
+		abortHandler = () => resolve(CANCELLED_TOOL_RESULT);
+		context.signal.addEventListener("abort", abortHandler, { once: true });
+		if (context.signal.aborted) abortHandler();
+	});
 	try {
+		if (context.signal.aborted) return CANCELLED_TOOL_RESULT;
 		return await Promise.race([
-			tool.execute(args, projectRoot).finally(() => clearTimeout(timer)),
+			tool.execute(args, context).finally(() => clearTimeout(timer)),
+			cancelled,
 			new Promise<never>((_, reject) => {
 				timer = setTimeout(
 					() => reject(new Error(`Tool "${tool.name}" timed out after ${tool.timeout}ms`)),
@@ -722,9 +737,11 @@ const executeTool = async (
 			}),
 		]);
 	} catch (e) {
+		if (context.signal.aborted) return CANCELLED_TOOL_RESULT;
 		return `Error: ${errorText(e)}`;
 	} finally {
 		clearTimeout(timer);
+		if (abortHandler) context.signal.removeEventListener("abort", abortHandler);
 	}
 };
 

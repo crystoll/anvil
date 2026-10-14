@@ -5,6 +5,9 @@ import type { ToolSchema } from "../provider/types.js";
 /** Error from tool execution. */
 export type ToolError = { kind: "execution"; message: string; cause?: unknown };
 
+/** Context shared with a tool for project access and turn cancellation. */
+export type ToolExecutionContext = { signal: AbortSignal; projectRoot: string };
+
 /** A tool the agent can invoke. */
 export type Tool = {
 	name: string;
@@ -12,7 +15,7 @@ export type Tool = {
 	schema: Record<string, unknown>;
 	needsApproval: boolean;
 	timeout: number;
-	execute: (args: Record<string, unknown>, projectRoot: string) => Promise<string>;
+	execute: (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<string>;
 };
 
 /** Tool registry — lookup and schema generation for providers. */
