@@ -405,16 +405,33 @@ const trimMessages = (history: Message[], maxTokens: number): number => {
 	if (currentTotal <= maxTokens) return 0;
 
 	let removed = 0;
-	while (history.length > 2 && currentTotal > maxTokens) {
-		const msg = history[1];
+	const systemOffset = history[0]?.role === "system" ? 1 : 0;
+	const firstUserIndex = history.findIndex(
+		(message, index) => index >= systemOffset && message.role === "user",
+	);
+	if (firstUserIndex < 0) {
+		return history.splice(systemOffset).length;
+	}
+	if (firstUserIndex > systemOffset) {
+		const leadingMessages = history.splice(systemOffset, firstUserIndex - systemOffset);
+		currentTotal -= leadingMessages.reduce(
+			(total, message) => total + estimateMessageTokens(message),
+			0,
+		);
+		removed += leadingMessages.length;
+	}
+
+	const headLength = systemOffset + 1;
+	while (history.length > headLength && currentTotal > maxTokens) {
+		const msg = history[headLength];
 		if (!msg) break;
 		if (hasToolCalls(msg)) {
-			const { count, tokens } = removeToolGroup(history);
+			const { count, tokens } = removeToolGroup(history, headLength);
 			currentTotal -= tokens;
 			removed += count;
 		} else {
 			currentTotal -= estimateMessageTokens(msg);
-			history.splice(1, 1);
+			history.splice(headLength, 1);
 			removed++;
 		}
 	}
@@ -424,20 +441,22 @@ const trimMessages = (history: Message[], maxTokens: number): number => {
 const hasToolCalls = (m: Message): boolean =>
 	m.role === "assistant" && (m.toolCalls?.length ?? 0) > 0;
 
-const removeToolGroup = (history: Message[]): { count: number; tokens: number } => {
-	const msg = history[1];
+const removeToolGroup = (history: Message[], index: number): { count: number; tokens: number } => {
+	const msg = history[index];
 	if (!msg) return { count: 0, tokens: 0 };
 	const ids = new Set((msg.toolCalls ?? []).map((tc) => tc.id));
 	let tokens = estimateMessageTokens(msg);
-	history.splice(1, 1);
+	history.splice(index, 1);
 	let count = 1;
 	while (
-		history.length > 1 &&
-		history[1]?.role === "tool" &&
-		ids.has(history[1].toolCallId ?? "")
+		history.length > index &&
+		history[index]?.role === "tool" &&
+		ids.has(history[index].toolCallId ?? "")
 	) {
-		tokens += estimateMessageTokens(history[1]);
-		history.splice(1, 1);
+		const result = history[index];
+		if (!result) break;
+		tokens += estimateMessageTokens(result);
+		history.splice(index, 1);
 		count++;
 	}
 	return { count, tokens };

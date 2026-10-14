@@ -398,9 +398,37 @@ describe("trimToFit", () => {
 		expect(last?.content).toContain("c");
 	});
 
+	it("preserves the first user task when trimming", () => {
+		const engine = createEngine(mockProvider([]), "m");
+		engine.setSystem("sys");
+		engine.addUser("original task");
+		engine.addUser("old conversation ".repeat(100));
+		engine.addUser("latest");
+
+		engine.trimToFit(20);
+
+		expect(engine.messages().find((message) => message.role === "user")?.content).toBe(
+			"original task",
+		);
+	});
+
+	it("does not leave an assistant or tool message at the start of a trimmed window", () => {
+		const engine = createEngine(mockProvider([]), "m");
+		engine.loadMessages([
+			{ role: "assistant", content: "old answer" },
+			{ role: "user", content: "original task" },
+			{ role: "assistant", content: "recent answer ".repeat(30) },
+		]);
+
+		engine.trimToFit(10);
+
+		expect(engine.messages()[0]?.role).toBe("user");
+	});
+
 	it("removes tool call + tool result as atomic pair", () => {
 		const engine = createEngine(mockProvider([]), "m");
 		engine.setSystem("sys");
+		engine.addUser("original task");
 		// Simulate assistant with tool call
 		(engine.messages() as Array<unknown>).push({
 			role: "assistant",
@@ -414,18 +442,18 @@ describe("trimToFit", () => {
 		});
 		engine.addUser("latest");
 		engine.trimToFit(100); // very tight budget
+		const messages = engine.messages();
 		// Should not orphan the tool result
-		const hasOrphanTool = engine
-			.messages()
-			.some(
-				(m) =>
-					m.role === "tool" &&
-					!engine
-						.messages()
-						.some(
-							(a) => a.role === "assistant" && a.toolCalls?.some((tc) => tc.id === m.toolCallId),
-						),
-			);
+		const hasOrphanTool = messages.some(
+			(m) =>
+				m.role === "tool" &&
+				!messages.some(
+					(a) => a.role === "assistant" && a.toolCalls?.some((tc) => tc.id === m.toolCallId),
+				),
+		);
 		expect(hasOrphanTool).toBe(false);
+		const hasCall = messages.some((message) => message.role === "assistant" && message.toolCalls);
+		const hasResult = messages.some((message) => message.role === "tool");
+		expect(hasCall).toBe(hasResult);
 	});
 });

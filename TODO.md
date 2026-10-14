@@ -386,7 +386,7 @@ Do this before writing the many new tests in M3–M8.
   - `injectRoundContext` stops persisting round and goal notes.
   - `tryNudge` nudges stay persisted but are marked `synthetic`.
   - **Test first:** after 5 rounds the history holds no reminders, but the last request includes the current one.
-- [ ] **M6.6 Trimming keeps the conversation coherent** (`engine.trimMessages`). **Test first:**
+- [x] **M6.6 Trimming keeps the conversation coherent** (`engine.trimMessages`). **Test first:**
   - The first user message (the task) is never dropped.
   - The window never starts with an `assistant` or `tool` message.
   - Tool groups are removed whole.
