@@ -15,6 +15,7 @@ import {
 	pingProvider,
 	resolveProviderModel,
 } from "./shared/bootstrap.js";
+import { guardProcess } from "./shared/crash-guard.js";
 import { startSpinner } from "./spinner.js";
 import { createStatusBar } from "./ui/statusbar.js";
 
@@ -31,6 +32,7 @@ let sessionTokens = { prompt: 0, total: 0 };
 let lastPromptTokens = 0;
 let pendingUsageDisplay = "";
 let busy = false;
+let sessionId = ctx.sessionId;
 const debugMode = flags.debug;
 const showTokens = config.showTokens;
 const statusBar = createStatusBar();
@@ -698,7 +700,6 @@ const processUserMessage = async (
 };
 
 const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> => {
-	let id = ctx.sessionId;
 	while (true) {
 		let input: string;
 		try {
@@ -713,12 +714,12 @@ const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> =
 		if (lineCount > 3) stdout.write(`\x1b[2m[${lineCount} lines]\x1b[0m\n`);
 
 		const result = await handleCommand(trimmed, rl, (newId) => {
-			id = newId;
+			sessionId = newId;
 		});
 		if (result === "quit") break;
 		if (result === "handled") continue;
 
-		id = (await processUserMessage(trimmed, rl, id)) ?? id;
+		sessionId = (await processUserMessage(trimmed, rl, sessionId)) ?? sessionId;
 	}
 
 	if (sessionTokens.total > 0) {
@@ -726,7 +727,17 @@ const chatLoop = async (rl: ReturnType<typeof createInterface>): Promise<void> =
 	}
 };
 
+/** Saves nothing until the user has said something, so a crash at startup leaves no empty session. */
+const flushSession = (): string | undefined => {
+	if (!engine.messages().some((message) => message.role !== "system")) return undefined;
+	sessionId = saveSession(historyDir, [...engine.messages()], sessionId);
+	return sessionId;
+};
+
 // === Entry point ===
+
+// One-shot runs never save a session, so a crash in one shouldn't either.
+guardProcess({ flush: flags.command ? () => undefined : flushSession });
 
 if (flags.command) {
 	await runOneShot(flags.command);

@@ -120,6 +120,8 @@ pnpm dev -- --debug                 # Show finish_reason in token display
 pnpm dev -- ~/code/project -c "run tests"  # One-shot in a specific directory
 ```
 
+If anvil crashes, it saves the conversation first and writes the details to `~/.anvil/logs/`. Pick up where you left off with `--resume`.
+
 ## Built-in Tools
 
 | Tool              | Approval | Description                         |

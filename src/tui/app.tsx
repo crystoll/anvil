@@ -15,6 +15,7 @@ import {
 	parseFlags,
 	pingProvider,
 } from "../shared/bootstrap.js";
+import { guardProcess } from "../shared/crash-guard.js";
 
 const flags = parseFlags(process.argv);
 const ctx = await bootstrap(flags);
@@ -330,7 +331,7 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 			addMsg(`  [no content — finish_reason: ${state.finishReason}]`, true);
 	};
 
-	const processEvents = async (events: AsyncGenerator<AgentEvent>): Promise<number> => {
+	const consumeEvents = async (events: AsyncGenerator<AgentEvent>): Promise<number> => {
 		const state = { response: "", finishReason: undefined as string | undefined };
 		for await (const event of events) {
 			const streamResult = await handleStreamEvent(event, state);
@@ -344,6 +345,13 @@ function App({ providerWarning }: { providerWarning: string | undefined }) {
 		finalizeResponse(state);
 		return state.response.length;
 	};
+
+	/** A turn that throws ends like an error event, so the TUI stays usable and the turn is saved. */
+	const processEvents = (events: AsyncGenerator<AgentEvent>): Promise<number> =>
+		consumeEvents(events).catch((error: unknown) => {
+			addMsg(`  ⚠ ${error instanceof Error ? error.message : String(error)}`, true);
+			return -1;
+		});
 
 	// === Commands ===
 
@@ -772,8 +780,16 @@ const handleInfoEvent = (
 	if (event.kind === "warning") addMsg(`  ⚠ ${event.message}`, true);
 };
 
+/** Saves nothing until the user has said something, so a crash at startup leaves no empty session. */
+const flushSession = (): string | undefined => {
+	if (!engine.messages().some((message) => message.role !== "system")) return undefined;
+	sessionId = saveSession(historyDir, [...engine.messages()], sessionId);
+	return sessionId;
+};
+
 function Root() {
 	return <App providerWarning={providerWarning} />;
 }
 
-render(<Root />, { exitOnCtrlC: false });
+const app = render(<Root />, { exitOnCtrlC: false });
+guardProcess({ flush: flushSession, restoreTerminal: () => app.unmount() });

@@ -271,10 +271,11 @@ Do this before writing the many new tests in M3–M8.
   - A turn that pauses for approval is saved and idle. Stop hooks run only when the turn ends.
 
   Verify manually with S2; M8 replaces this code and adds tests.
-- [ ] **M3.6 Crash guards.**
-  - Wrap the TUI's `processEvents` in try/catch: show the error, set idle, save.
-  - In `main.ts`, install process-wide `unhandledRejection` and `uncaughtException` handlers. They write `~/.anvil/logs/crash-<ts>.log`, flush the session, restore the terminal (unmount ink, disable raw mode) and exit 1.
-  - **Test first:** unit-test the installer with injected `flush`, `log` and `exit`.
+- [x] **M3.6 Crash guards** (F5).
+  - A turn that throws in the TUI's `processEvents` ends like an error event: the error is shown, the TUI goes idle and the turn is saved.
+  - The CLI and the TUI install process-wide `unhandledRejection` and `uncaughtException` handlers from `shared/crash-guard.ts`. `main.ts` owns neither the session nor the terminal, so it stays out of it.
+  - On a crash: restore the terminal (unmount ink, disable raw mode, show the cursor), flush the session, write `~/.anvil/logs/crash-<ts>.log`, say how to resume and exit 1. One-shot runs still aren't saved.
+  - **Test first:** unit-test the installer with injected `flush`, `log` and `exit`, including each step failing.
 - [x] **M3.7 `edit_file` replaces literally** (F10).
   - **Test first:** replacements containing `$&100`, `$$` and `$1` are written as-is, and an empty `search` is an error. Today an empty search inserts at the start of the file.
   - **Change:** use `content.replace(search, () => replace)` and validate the input.
