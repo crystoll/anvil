@@ -390,7 +390,7 @@ Do this before writing the many new tests in M3–M8.
   - The first user message (the task) is never dropped.
   - The window never starts with an `assistant` or `tool` message.
   - Tool groups are removed whole.
-- [ ] **M6.7 Compaction respects message groups** (`compactHistory`). **Test first:**
+- [x] **M6.7 Compaction respects message groups** (`compactHistory`). **Test first:**
   - `KEEP_RECENT` snaps to group boundaries.
   - The original task and the latest user message survive verbatim.
   - The summary input is budgeted from `contextSize`, keeping head and tail. Today `.slice(0, MAX_SUMMARY_INPUT_CHARS)` (40,000 characters) keeps only the oldest content.

@@ -551,8 +551,10 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		yield { kind: "compacting" };
 		const messages = [...engine.messages()];
 		const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
+		const contextSize = config.streamOpts?.contextSize;
 		const result = await compactHistory(config.provider, engine.model(), messages, {
 			debug: config.debug ?? false,
+			...(contextSize === undefined ? {} : { contextSize }),
 		});
 		if (result.isErr()) return false;
 		const compacted = result.value;

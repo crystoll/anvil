@@ -29,6 +29,8 @@ describe("compactHistory", () => {
 			{ role: "assistant", content: "TypeScript is a typed superset of JavaScript." },
 			{ role: "user", content: "How do I install it?" },
 			{ role: "assistant", content: "Run: npm install -g typescript" },
+			{ role: "user", content: "Which version?" },
+			{ role: "assistant", content: "Use the latest stable release." },
 			{ role: "user", content: "What about config?" },
 			{ role: "assistant", content: "Create a tsconfig.json file." },
 		];
@@ -41,6 +43,8 @@ describe("compactHistory", () => {
 
 		// Should retain system message
 		expect(compacted[0]).toEqual({ role: "system", content: "You are helpful." });
+		expect(compacted).toContainEqual({ role: "user", content: "What is TypeScript?" });
+		expect(compacted).toContainEqual({ role: "user", content: "What about config?" });
 
 		// Should have a summary message
 		const summaryMsg = compacted.find((m) => m.content.includes("TypeScript basics"));
@@ -50,6 +54,68 @@ describe("compactHistory", () => {
 		// Should retain recent messages (last KEEP_RECENT messages)
 		const lastMsg = compacted[compacted.length - 1];
 		expect(lastMsg?.content).toBe("Create a tsconfig.json file.");
+	});
+
+	it("keeps recent tool calls with all their results", async () => {
+		const messages: Message[] = [
+			{ role: "user", content: "Original task" },
+			{ role: "assistant", content: "Old response" },
+			{ role: "user", content: "Inspect these files" },
+			{
+				role: "assistant",
+				content: "",
+				toolCalls: [
+					{ id: "call_1", name: "read_file", arguments: "{}" },
+					{ id: "call_2", name: "read_file", arguments: "{}" },
+				],
+			},
+			{ role: "tool", toolCallId: "call_1", content: "First file" },
+			{ role: "tool", toolCallId: "call_2", content: "Second file" },
+			{ role: "user", content: "Summarize the findings" },
+			{ role: "assistant", content: "Summary" },
+			{ role: "user", content: "Anything else?" },
+			{ role: "assistant", content: "No" },
+		];
+
+		const result = await compactHistory(mockProvider("Summary"), "test-model", messages);
+
+		expect(result.isOk()).toBe(true);
+		const compacted = result._unsafeUnwrap();
+		expect(compacted.some((message) => message.role === "assistant" && message.toolCalls)).toBe(
+			true,
+		);
+		expect(compacted.filter((message) => message.role === "tool").map((m) => m.toolCallId)).toEqual(
+			["call_1", "call_2"],
+		);
+		expect(compacted).toContainEqual({ role: "user", content: "Original task" });
+		expect(compacted).toContainEqual({ role: "user", content: "Anything else?" });
+	});
+
+	it("budgets summary input from context size while keeping its head and tail", async () => {
+		const messages: Message[] = [
+			{ role: "user", content: "Original task" },
+			{ role: "user", content: "Question one" },
+			{ role: "assistant", content: "Answer one" },
+			{ role: "assistant", content: `HEAD${"middle".repeat(300)}TAIL` },
+			{ role: "user", content: "Question two" },
+			{ role: "assistant", content: "Answer two" },
+			{ role: "user", content: "Question three" },
+			{ role: "assistant", content: "Answer three" },
+			{ role: "user", content: "Latest question" },
+			{ role: "assistant", content: "Latest answer" },
+		];
+		const provider = mockProvider("Summary");
+
+		const result = await compactHistory(provider, "test-model", messages, { contextSize: 100 });
+
+		expect(result.isOk()).toBe(true);
+		const calls = (provider.completeChat as ReturnType<typeof vi.fn>).mock.calls;
+		const sentMessages = (calls[0] as unknown[])[1] as Message[];
+		const summaryInput = sentMessages.at(-1)?.content ?? "";
+		expect(summaryInput.length).toBeLessThanOrEqual(200);
+		expect(summaryInput).toContain("HEAD");
+		expect(summaryInput).toContain("TAIL");
+		expect(summaryInput).toContain("[older content omitted]");
 	});
 
 	it("excludes reasoning from summary input", async () => {
