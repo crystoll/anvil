@@ -1,11 +1,12 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { emitKeypressEvents } from "node:readline";
 import { ok } from "neverthrow";
 import type { AgentEvent, PendingCall } from "../agent/loop.js";
-import { createAppCommandRegistry } from "../controller/app-commands.js";
+import {
+	type ContextUsage,
+	createAppCommandRegistry,
+	registerUiCommands,
+} from "../controller/app-commands.js";
 import { type ControllerState, createSessionController } from "../controller/controller.js";
 import { bootstrap, expandFileRefs, parseFlags } from "../shared/bootstrap.js";
 import { guardProcess } from "../shared/crash-guard.js";
@@ -17,7 +18,7 @@ import { createReadlineInput } from "./readline-input.js";
 const flags = parseFlags(process.argv);
 if (flags.path) process.chdir(flags.path);
 const ctx = await bootstrap(flags);
-const { config, projectRoot, engine, registry, session } = ctx;
+const { config, projectRoot, engine, session } = ctx;
 for (const warning of ctx.mcpWarnings) console.error(`⚠ ${warning}`);
 
 const controllerSession = flags.command ? { ...session, save: () => ok(undefined) } : session;
@@ -31,38 +32,13 @@ const controller = createSessionController({
 	expandInput: (input) => expandFileRefs(input, projectRoot),
 });
 
-commands.register({
-	name: "usage",
-	description: "Show session token usage",
-	execute: () => {
-		const tokens = controller.getState().tokens;
-		const completion = tokens.totalTokens - tokens.promptTokens;
-		return {
-			kind: "handled",
-			message: `Session: ${tokens.totalTokens} tokens (${tokens.promptTokens} prompt, ${completion} completion)`,
-		};
-	},
-});
-commands.register({
-	name: "context",
-	description: "Show context window usage",
-	execute: () => ({
-		kind: "handled",
-		message: formatContext(
-			lastPromptTokens,
-			config.contextSize,
-			registry.all().length,
-			JSON.stringify(registry.schemas()).length,
-		),
-	}),
-});
-commands.register({
-	name: "transcript",
-	description: "Export the conversation to Markdown",
-	execute: () => ({ kind: "handled", message: exportTranscript() }),
+let lastPromptTokens = 0;
+registerUiCommands(commands, ctx, {
+	getTokenUsage: () => controller.getState().tokens,
+	getLastPromptTokens: () => lastPromptTokens,
+	formatContext,
 });
 
-let lastPromptTokens = 0;
 let pendingUsageDisplay = "";
 let busy = false;
 let exitRequested = false;
@@ -211,52 +187,36 @@ controller.subscribe((event) => {
 	}
 });
 
-const formatContext = (
-	used: number,
-	limit: number,
-	toolCount: number,
-	schemaLength: number,
-): string => {
-	const pct = used > 0 ? Math.round((used / limit) * 100) : 0;
-	const trimAt = Math.round(limit * 0.8);
+function formatContext({
+	used,
+	limit,
+	percentage,
+	toolCount,
+	toolTokens,
+	trimAt,
+}: ContextUsage): string {
 	const barWidth = 20;
-	const filled = Math.max(0, Math.min(barWidth, Math.round((pct / 100) * barWidth)));
+	const filled = Math.max(0, Math.min(barWidth, Math.round((percentage / 100) * barWidth)));
 	const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
 	const color =
-		pct >= 90 ? "\x1b[31m" : pct >= 80 ? "\x1b[38;5;208m" : pct >= 60 ? "\x1b[33m" : "\x1b[2m";
+		percentage >= 90
+			? "\x1b[31m"
+			: percentage >= 80
+				? "\x1b[38;5;208m"
+				: percentage >= 60
+					? "\x1b[33m"
+					: "\x1b[2m";
 	const reset = "\x1b[0m";
 	return [
 		"[context]",
 		`  limit:     ${limit.toLocaleString()} tokens`,
-		`  used:      ~${used.toLocaleString()} (${color}${pct}%${reset})  ${color}${bar}${reset}`,
-		`  tools:     ${toolCount} (~${Math.round(schemaLength / 4).toLocaleString()} tokens)`,
+		`  used:      ~${used.toLocaleString()} (${color}${percentage}%${reset})  ${color}${bar}${reset}`,
+		`  tools:     ${toolCount} (~${toolTokens.toLocaleString()} tokens)`,
 		`  trim at:   80% (~${trimAt.toLocaleString()} tokens)`,
 		"  compact:   on overflow (auto)",
-		pct >= 60 ? "\n  hint: /compact to manually free context" : "",
+		percentage >= 60 ? "\n  hint: /compact to manually free context" : "",
 	].join("\n");
-};
-
-const exportTranscript = (): string => {
-	const messages = engine.messages();
-	if (messages.length === 0) return "No messages to export.";
-	const directory = join(homedir(), ".anvil", "transcripts");
-	mkdirSync(directory, { recursive: true });
-	const markdown = messages
-		.map((message) => {
-			const role =
-				message.role === "user"
-					? "**You**"
-					: message.role === "assistant"
-						? "**Assistant**"
-						: `*${message.role}*`;
-			return `${role}:\n${message.content ?? ""}\n`;
-		})
-		.join("\n---\n\n");
-	const filename = `${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.md`;
-	const path = join(directory, filename);
-	writeFileSync(path, markdown);
-	return `Transcript saved: ${path}`;
-};
+}
 
 const formatPending = (call: PendingCall, index: number, total: number): string => {
 	const { tool, args } = call;

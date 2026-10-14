@@ -7,7 +7,12 @@ import { createEngine } from "../engine/engine.js";
 import type { Provider } from "../provider/types.js";
 import { createSessionWriter } from "../session/writer.js";
 import { createRegistry } from "../tools/registry.js";
-import { type AppCommandContext, createAppCommandRegistry } from "./app-commands.js";
+import {
+	type AppCommandContext,
+	type ContextUsage,
+	createAppCommandRegistry,
+	registerUiCommands,
+} from "./app-commands.js";
 
 const directories: string[] = [];
 
@@ -79,6 +84,40 @@ describe("app command registry", () => {
 			"continue",
 			"new",
 		]);
+	});
+
+	it("registers shared utility commands with consistent session metrics", async () => {
+		const { context } = createHarness();
+		const commands = createAppCommandRegistry(context);
+		const formatContext = vi.fn((usage: ContextUsage) => `Context ${usage.percentage}%`);
+		registerUiCommands(commands, context, {
+			getTokenUsage: () => ({ promptTokens: 12, totalTokens: 20 }),
+			getLastPromptTokens: () => 3_000,
+			formatContext,
+		});
+
+		expect(
+			commands
+				.list()
+				.slice(-3)
+				.map(({ name }) => name),
+		).toEqual(["usage", "context", "transcript"]);
+		await expect(commands.dispatch("/usage")).resolves.toMatchObject({
+			kind: "handled",
+			message: "Session: 20 tokens (12 prompt, 8 completion) · 1 msgs",
+		});
+		await expect(commands.dispatch("/context")).resolves.toMatchObject({
+			kind: "handled",
+			message: "Context 73%",
+		});
+		expect(formatContext).toHaveBeenCalledWith({
+			used: 3_000,
+			limit: 4_096,
+			percentage: 73,
+			toolCount: 0,
+			toolTokens: 1,
+			trimAt: 3_277,
+		});
 	});
 
 	it("switches the model for subsequent turns after provider health succeeds", async () => {

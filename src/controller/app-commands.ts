@@ -1,8 +1,12 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { compactHistory } from "../agent/compact.js";
 import type { AgentDef } from "../agents/agents.js";
 import type { AnvilConfig } from "../config/config.js";
 import type { Engine } from "../engine/engine.js";
 import { repairHistory } from "../engine/history.js";
+import type { TokenUsage } from "../provider/types.js";
 import { listSessions, loadSession, type SessionWriter } from "../session/index.js";
 import {
 	makeProvider,
@@ -13,6 +17,21 @@ import {
 import type { Skill } from "../skills/index.js";
 import type { Registry } from "../tools/registry.js";
 import { type CommandRegistry, type CommandResult, createCommandRegistry } from "./commands.js";
+
+export type ContextUsage = {
+	used: number;
+	limit: number;
+	percentage: number;
+	toolCount: number;
+	toolTokens: number;
+	trimAt: number;
+};
+
+type UiCommandOptions = {
+	getTokenUsage: () => TokenUsage;
+	getLastPromptTokens: () => number;
+	formatContext: (usage: ContextUsage) => string;
+};
 
 export type AppCommandContext = {
 	config: Pick<AnvilConfig, "providers" | "contextSize" | "connectTimeout" | "streamTimeout">;
@@ -44,6 +63,82 @@ const saveCommandChanges = (
 ): string => {
 	const result = context.session.save(usage);
 	return result.isErr() ? `Couldn't save session: ${result.error}` : "";
+};
+
+const contextUsage = (context: AppCommandContext, used: number): ContextUsage => {
+	const limit = context.config.contextSize;
+	return {
+		used,
+		limit,
+		percentage: used > 0 ? Math.round((used / limit) * 100) : 0,
+		toolCount: context.registry.all().length,
+		toolTokens: Math.round(JSON.stringify(context.registry.schemas()).length / 4),
+		trimAt: Math.round(limit * 0.8),
+	};
+};
+
+export const formatContextSummary = (usage: ContextUsage): string =>
+	[
+		"[context]",
+		`  limit:     ${usage.limit.toLocaleString()} tokens`,
+		`  used:      ~${usage.used.toLocaleString()} (${usage.percentage}%)`,
+		`  tools:     ${usage.toolCount} (~${usage.toolTokens.toLocaleString()} tokens)`,
+		`  trim at:   80% (~${usage.trimAt.toLocaleString()} tokens)`,
+		"  compact:   on overflow (auto)",
+		usage.percentage >= 60 ? "  hint: /compact to manually free context" : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+
+const saveTranscript = (context: AppCommandContext): string => {
+	const messages = context.engine.messages();
+	if (messages.length === 0) return "No messages to export.";
+	const directory = join(homedir(), ".anvil", "transcripts");
+	mkdirSync(directory, { recursive: true });
+	const markdown = messages
+		.map((message) => {
+			const role =
+				message.role === "user"
+					? "**You**"
+					: message.role === "assistant"
+						? "**Assistant**"
+						: `*${message.role}*`;
+			return `${role}:\n${message.content ?? ""}\n`;
+		})
+		.join("\n---\n\n");
+	const filename = `${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.md`;
+	const path = join(directory, filename);
+	writeFileSync(path, markdown);
+	return `Transcript saved: ${path}`;
+};
+
+export const registerUiCommands = (
+	commands: CommandRegistry,
+	context: AppCommandContext,
+	options: UiCommandOptions,
+): void => {
+	commands.register({
+		name: "usage",
+		description: "Show session token usage",
+		execute: () => {
+			const usage = options.getTokenUsage();
+			const completion = usage.totalTokens - usage.promptTokens;
+			return handled(
+				`Session: ${usage.totalTokens} tokens (${usage.promptTokens} prompt, ${completion} completion) · ${context.engine.messages().length} msgs`,
+			);
+		},
+	});
+	commands.register({
+		name: "context",
+		description: "Show context window usage",
+		execute: () =>
+			handled(options.formatContext(contextUsage(context, options.getLastPromptTokens()))),
+	});
+	commands.register({
+		name: "transcript",
+		description: "Export the conversation to Markdown",
+		execute: () => handled(saveTranscript(context)),
+	});
 };
 
 const listModels = async (context: AppCommandContext): Promise<CommandResult> => {

@@ -480,7 +480,8 @@ type SessionController = {
   - ↑/↓ history.
   - Rendering of pending prompts, streaming text and notices.
   - **Done:** 11 component tests cover approval decisions, cancellation keys during streaming and approval, idle double-Ctrl+C exit, history navigation, approval previews, streaming updates and notices.
-- [ ] **M8.5 Delete the duplicated orchestration** from both UIs once parity is verified.
+- [x] **M8.5 Delete the duplicated orchestration** from both UIs once parity is verified.
+  - **Done:** `/usage`, `/context` and `/transcript` are registered through one shared helper in both UIs; usage metrics and context statistics now have the same source. The command registry tests verify the shared commands and metrics, while input handling and rendering remain UI-specific.
 - [ ] **M8.6 Docs.**
   - `docs/architecture.md`: add the controller layer.
   - README keybindings: Esc is now true in both UIs.

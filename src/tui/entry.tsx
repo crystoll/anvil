@@ -1,8 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { render } from "ink";
-import { createAppCommandRegistry } from "../controller/app-commands.js";
+import {
+	createAppCommandRegistry,
+	formatContextSummary,
+	registerUiCommands,
+} from "../controller/app-commands.js";
 import { createSessionController } from "../controller/controller.js";
 import { bootstrap, expandFileRefs, makeProvider, parseFlags } from "../shared/bootstrap.js";
 import { guardProcess } from "../shared/crash-guard.js";
@@ -24,66 +25,10 @@ const controller = createSessionController({
 });
 
 let lastPromptTokens = 0;
-commands.register({
-	name: "usage",
-	description: "Show session token usage",
-	execute: () => {
-		const usage = controller.getState().tokens;
-		return {
-			kind: "handled",
-			message: `${usage.totalTokens} tok | ${ctx.engine.messages().length} msgs`,
-		};
-	},
-});
-commands.register({
-	name: "context",
-	description: "Show context window usage",
-	execute: () => {
-		const pct =
-			lastPromptTokens > 0 ? Math.round((lastPromptTokens / ctx.config.contextSize) * 100) : 0;
-		const tools = ctx.registry.all().length;
-		const toolTokens = Math.round(JSON.stringify(ctx.registry.schemas()).length / 4);
-		const trimAt = Math.round(ctx.config.contextSize * 0.8);
-		return {
-			kind: "handled",
-			message: [
-				"[context]",
-				`  limit:     ${ctx.config.contextSize.toLocaleString()} tokens`,
-				`  used:      ~${lastPromptTokens.toLocaleString()} (${pct}%)`,
-				`  tools:     ${tools} (~${toolTokens.toLocaleString()} tokens)`,
-				`  trim at:   80% (~${trimAt.toLocaleString()} tokens)`,
-				"  compact:   on overflow (auto)",
-				pct >= 60 ? "  hint: /compact to manually free context" : "",
-			]
-				.filter(Boolean)
-				.join("\n"),
-		};
-	},
-});
-commands.register({
-	name: "transcript",
-	description: "Export the conversation to Markdown",
-	execute: () => {
-		const messages = ctx.engine.messages();
-		if (messages.length === 0) return { kind: "handled", message: "No messages to export." };
-		const directory = join(homedir(), ".anvil", "transcripts");
-		mkdirSync(directory, { recursive: true });
-		const markdown = messages
-			.map((message) => {
-				const role =
-					message.role === "user"
-						? "**You**"
-						: message.role === "assistant"
-							? "**Assistant**"
-							: `*${message.role}*`;
-				return `${role}:\n${message.content ?? ""}\n`;
-			})
-			.join("\n---\n\n");
-		const filename = `${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.md`;
-		const path = join(directory, filename);
-		writeFileSync(path, markdown);
-		return { kind: "handled", message: `Transcript saved: ${path}` };
-	},
+registerUiCommands(commands, ctx, {
+	getTokenUsage: () => controller.getState().tokens,
+	getLastPromptTokens: () => lastPromptTokens,
+	formatContext: formatContextSummary,
 });
 
 const listModels = async (): Promise<string[]> => {
