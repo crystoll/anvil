@@ -141,22 +141,33 @@ const renderStatusBar = (): void => {
 
 const formatPending = (event: AgentEvent & { kind: "pending" }): string => {
 	const { tool, args } = event.call;
+	const position = `\x1b[2m[${event.index}/${event.total}]\x1b[0m `;
 	if (tool.name === "edit_file" && args.old_text && args.new_text) {
-		return formatEditDiff(String(args.path ?? ""), String(args.old_text), String(args.new_text));
+		return formatEditDiff(
+			String(args.path ?? ""),
+			String(args.old_text),
+			String(args.new_text),
+			position,
+		);
 	}
 	if (tool.name === "write_file" && args.content) {
 		const content = String(args.content);
 		const preview = content.length > 300 ? `${content.slice(0, 300)}…` : content;
-		return `\n  🔧 \x1b[36m${tool.name}\x1b[0m\x1b[2m(${args.path})\x1b[0m\n\x1b[32m${preview}\x1b[0m`;
+		return `\n  🔧 ${position}\x1b[36m${tool.name}\x1b[0m\x1b[2m(${args.path})\x1b[0m\n\x1b[32m${preview}\x1b[0m`;
 	}
 	const argsStr = Object.entries(args)
 		.map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
 		.join(", ");
-	return `\n  🔧 \x1b[36m${tool.name}\x1b[0m\x1b[2m(${argsStr})\x1b[0m`;
+	return `\n  🔧 ${position}\x1b[36m${tool.name}\x1b[0m\x1b[2m(${argsStr})\x1b[0m`;
 };
 
-const formatEditDiff = (path: string, oldText: string, newText: string): string => {
-	const lines = [`\n  🔧 edit_file(${path})`];
+const formatEditDiff = (
+	path: string,
+	oldText: string,
+	newText: string,
+	position: string,
+): string => {
+	const lines = [`\n  🔧 ${position}edit_file(${path})`];
 	for (const l of oldText.split("\n")) lines.push(`\x1b[31m  - ${l}\x1b[0m`);
 	for (const l of newText.split("\n")) lines.push(`\x1b[32m  + ${l}\x1b[0m`);
 	return lines.join("\n");
@@ -165,10 +176,11 @@ const formatEditDiff = (path: string, oldText: string, newText: string): string 
 const promptApproval = async (
 	rl: ReturnType<typeof createInterface>,
 	event: AgentEvent & { kind: "pending" },
-): Promise<boolean> => {
+): Promise<"approve" | "reject" | "cancel"> => {
 	console.log(formatPending(event));
-	const answer = await ask(rl, "  approve? [y/n]: ");
-	return answer.trim().toLowerCase().startsWith("y");
+	const answer = (await ask(rl, "  approve? [y/n/cancel]: ")).trim().toLowerCase();
+	if (answer === "c" || answer === "cancel") return "cancel";
+	return answer.startsWith("y") ? "approve" : "reject";
 };
 
 const handleAgentError = async (
@@ -230,7 +242,13 @@ const handleApproval = async (
 ): Promise<void> => {
 	pendingUsageDisplay = "";
 	busy = false;
-	const approved = await promptApproval(rl, event);
+	const decision = await promptApproval(rl, event);
+	if (decision === "cancel") {
+		await agent.cancel();
+		flushUsage();
+		renderStatusBar();
+		return;
+	}
 	lastCtrlC = 0;
 	busy = true;
 	let spinner = startSpinner();
@@ -241,9 +259,14 @@ const handleApproval = async (
 			active = false;
 		}
 	};
-	const gen = approved ? agent.approve() : agent.reject("User declined");
+	const gen = decision === "approve" ? agent.approve() : agent.reject("User declined");
 	for await (const e of gen) {
 		if (e.kind !== "usage" && e.kind !== "state" && e.kind !== "round") stop();
+		if (e.kind === "pending") {
+			stop();
+			await handleApproval(rl, e);
+			return;
+		}
 		displayEvent(e);
 		if (e.kind === "tool_result") {
 			spinner = startSpinner();

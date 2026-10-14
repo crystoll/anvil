@@ -1,6 +1,6 @@
 import { okAsync, ResultAsync } from "neverthrow";
 import type { Engine, EngineEvent } from "../engine/engine.js";
-import type { Provider } from "../provider/types.js";
+import type { Provider, ToolCall } from "../provider/types.js";
 import type { Registry, Tool } from "../tools/registry.js";
 import { parseToolArgs } from "../tools/registry.js";
 import { compactHistory } from "./compact.js";
@@ -22,7 +22,7 @@ export type AgentEvent =
 	| { kind: "state"; state: AgentState }
 	| { kind: "content"; text: string }
 	| { kind: "reasoning"; text: string }
-	| { kind: "pending"; call: PendingCall }
+	| { kind: "pending"; call: PendingCall; index: number; total: number }
 	| { kind: "tool_result"; name: string; result: string }
 	| { kind: "usage"; promptTokens: number; totalTokens: number; finishReason?: string }
 	| { kind: "done"; message: string }
@@ -62,11 +62,25 @@ type ActiveRun = {
 };
 
 const CANCEL_WAIT_MS = 5000;
+const CANCELLED_TOOL_RESULT = "[cancelled by user]";
+const SKIPPED_TOOL_RESULT = "Skipped: agent ended before this call could run.";
 
 /** Creates an agent loop that orchestrates engine + tools with approval gating. */
 export const createAgentLoop = (engine: Engine, registry: Registry, config: AgentConfig) => {
+	type QueuedToolCall = { call: ToolCall; index: number; total: number };
+	type ToolCallOutcome =
+		| { action: "done"; events: AgentEvent[] }
+		| { action: "stuck"; events: AgentEvent[] }
+		| { action: "pending"; events: AgentEvent[] }
+		| { action: "executed"; events: AgentEvent[] }
+		| { action: "cancelled"; events: AgentEvent[] }
+		| { action: "error_fed_back" };
+	type ProcessedToolCalls = Exclude<ToolCallOutcome, { action: "error_fed_back" }>;
+	type ToolCallStep = ProcessedToolCalls | { action: "continue"; events: AgentEvent[] };
+
 	let state: AgentState = "idle";
 	let pendingCall: PendingCall | null = null;
+	let queuedCalls: QueuedToolCall[] = [];
 	let rounds = 0;
 	let activeRun: ActiveRun | null = null;
 	const recentCalls: string[] = [];
@@ -174,20 +188,29 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			yield setState("executing");
 			const { tool, args, callId } = pendingCall;
 			pendingCall = null;
+			const remainingCalls = queuedCalls;
+			queuedCalls = [];
 
 			const denial = await config.onBeforeToolUse?.(tool.name, args);
-			if (denial) {
-				engine.addToolResult(callId, denial);
-				yield* runLoop(signal);
+			if (signal.aborted) {
+				engine.addToolResult(callId, CANCELLED_TOOL_RESULT);
+				completeToolCalls(remainingCalls, CANCELLED_TOOL_RESULT);
+				yield setState("idle");
 				return;
 			}
+			if (denial) {
+				engine.addToolResult(callId, denial);
+			} else {
+				const runResult = await runTool(tool, args);
+				engine.addToolResult(callId, runResult.result);
+				yield* runResult.warnings;
+				yield { kind: "tool_result", name: tool.name, result: runResult.result };
+			}
 
-			const runResult = await runTool(tool, args);
-			yield* runResult.warnings;
-			yield { kind: "tool_result", name: tool.name, result: runResult.result };
-
-			engine.addToolResult(callId, runResult.result);
-			yield* runLoop(signal);
+			const outcome = await processCalls(remainingCalls, signal);
+			yield* outcome.events;
+			if (outcome.action === "executed") yield* runLoop(signal);
+			if (outcome.action === "cancelled") yield setState("idle");
 		}, true);
 
 	/** Reject the pending tool call with an optional reason. */
@@ -200,30 +223,54 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 
 			const { callId } = pendingCall;
 			pendingCall = null;
+			const remainingCalls = queuedCalls;
+			queuedCalls = [];
 			engine.addToolResult(callId, `REJECTED: ${reason}`);
-			yield* runLoop(signal);
+			const outcome = await processCalls(remainingCalls, signal);
+			yield* outcome.events;
+			if (outcome.action === "executed") yield* runLoop(signal);
+			if (outcome.action === "cancelled") yield setState("idle");
 		}, true);
 
-	/** Outcome of processing a tool call from the model. */
-	type ToolCallOutcome =
-		| { action: "done"; events: AgentEvent[] }
-		| { action: "stuck"; events: AgentEvent[] }
-		| { action: "pending"; events: AgentEvent[] }
-		| { action: "executed"; events: AgentEvent[] }
-		| { action: "error_fed_back" };
+	const completeToolCalls = (calls: QueuedToolCall[], result: string): void => {
+		for (const { call } of calls) engine.addToolResult(call.id, result);
+	};
+
+	const cancelFinalizedToolCalls = (): void => {
+		const message = engine.messages().at(-1);
+		if (message?.role !== "assistant") return;
+		const toolCalls = message.toolCalls ?? [];
+		if (!toolCalls.length) return;
+		completeToolCalls(
+			toolCalls.map((call, index) => ({
+				call,
+				index: index + 1,
+				total: toolCalls.length,
+			})),
+			CANCELLED_TOOL_RESULT,
+		);
+	};
 
 	/** Handle signal tools (done/stuck). */
-	const handleSignal = (name: string, args: string): ToolCallOutcome | undefined => {
-		if (name === "done")
+	const handleSignal = (
+		name: string,
+		args: string,
+		callId: string,
+	): ToolCallOutcome | undefined => {
+		if (name === "done") {
+			engine.addToolResult(callId, `DONE: ${extractMessage(args)}`);
 			return {
 				action: "done",
 				events: [setState("done"), { kind: "done", message: extractMessage(args) }],
 			};
-		if (name === "stuck")
+		}
+		if (name === "stuck") {
+			engine.addToolResult(callId, `STUCK: ${extractMessage(args)}`);
 			return {
 				action: "stuck",
 				events: [setState("stuck"), { kind: "stuck", message: extractMessage(args) }],
 			};
+		}
 		return undefined;
 	};
 
@@ -232,8 +279,13 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		tool: Tool,
 		args: Record<string, unknown>,
 		callId: string,
+		signal: AbortSignal,
 	): Promise<ToolCallOutcome> => {
 		const denial = await config.onBeforeToolUse?.(tool.name, args);
+		if (signal.aborted) {
+			engine.addToolResult(callId, CANCELLED_TOOL_RESULT);
+			return { action: "cancelled", events: [] };
+		}
 		if (denial) {
 			engine.addToolResult(callId, denial);
 			return { action: "error_fed_back" };
@@ -251,13 +303,14 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	/** Process a single tool call from the assistant message. */
-	const handleToolCall = async (call: {
-		id: string;
-		name: string;
-		arguments: string;
-	}): Promise<ToolCallOutcome> => {
-		const signal = handleSignal(call.name, call.arguments);
-		if (signal) return signal;
+	const handleToolCall = async (
+		call: ToolCall,
+		index: number,
+		total: number,
+		signal: AbortSignal,
+	): Promise<ToolCallOutcome> => {
+		const signalOutcome = handleSignal(call.name, call.arguments, call.id);
+		if (signalOutcome) return signalOutcome;
 
 		const tool = registry.get(call.name);
 		if (!tool) {
@@ -275,7 +328,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			pendingCall = { tool, args: argsResult.value, callId: call.id, raw: call.arguments };
 			return {
 				action: "pending",
-				events: [setState("pending"), { kind: "pending", call: pendingCall }],
+				events: [setState("pending"), { kind: "pending", call: pendingCall, index, total }],
 			};
 		}
 
@@ -287,7 +340,56 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return { action: "error_fed_back" };
 		}
 
-		return autoExecute(tool, argsResult.value, call.id);
+		return autoExecute(tool, argsResult.value, call.id, signal);
+	};
+
+	const processQueuedCall = async (
+		queuedCall: QueuedToolCall,
+		remainingCalls: QueuedToolCall[],
+		signal: AbortSignal,
+	): Promise<ToolCallStep> => {
+		if (signal.aborted) {
+			completeToolCalls([queuedCall, ...remainingCalls], CANCELLED_TOOL_RESULT);
+			queuedCalls = [];
+			return { action: "cancelled", events: [] };
+		}
+
+		const outcome = await handleToolCall(
+			queuedCall.call,
+			queuedCall.index,
+			queuedCall.total,
+			signal,
+		);
+		if (outcome.action === "error_fed_back") return { action: "continue", events: [] };
+		if (outcome.action === "cancelled") {
+			completeToolCalls(remainingCalls, CANCELLED_TOOL_RESULT);
+			queuedCalls = [];
+			return outcome;
+		}
+		if (outcome.action === "pending") {
+			queuedCalls = remainingCalls;
+			return outcome;
+		}
+		if (outcome.action === "done" || outcome.action === "stuck") {
+			completeToolCalls(remainingCalls, SKIPPED_TOOL_RESULT);
+			queuedCalls = [];
+		}
+		return outcome;
+	};
+
+	const processCalls = async (
+		calls: QueuedToolCall[],
+		signal: AbortSignal,
+	): Promise<ProcessedToolCalls> => {
+		const allEvents: AgentEvent[] = [];
+		for (const [position, queuedCall] of calls.entries()) {
+			const outcome = await processQueuedCall(queuedCall, calls.slice(position + 1), signal);
+			allEvents.push(...outcome.events);
+			if (outcome.action === "continue" || outcome.action === "executed") continue;
+			return { ...outcome, events: allEvents };
+		}
+		queuedCalls = [];
+		return { action: "executed", events: allEvents };
 	};
 
 	type RoundSignals = {
@@ -395,37 +497,28 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	/** Process tool call outcome. Returns events + whether to continue looping. */
-	const processOutcome = async (): Promise<{ loop: boolean; events: AgentEvent[] }> => {
+	const processOutcome = async (
+		signal: AbortSignal,
+	): Promise<{ loop: boolean; events: AgentEvent[] }> => {
 		const toolCalls = engine.messages()[engine.messages().length - 1]?.toolCalls;
 		if (!toolCalls?.length) return { loop: false, events: [setState("idle")] };
 
-		const allEvents: AgentEvent[] = [];
-		let shouldLoop = false;
-
-		for (const call of toolCalls) {
-			const outcome = await handleToolCall(call);
-			if (outcome.action === "error_fed_back") {
-				shouldLoop = true;
-				continue;
-			}
-			if (outcome.action === "pending") {
-				// Stop at the first tool needing approval — can only handle one at a time
-				return { loop: false, events: [...allEvents, ...outcome.events] };
-			}
-			if (outcome.action === "done" || outcome.action === "stuck") {
-				return { loop: false, events: [...allEvents, ...outcome.events] };
-			}
-			// executed
-			allEvents.push(...outcome.events);
-			shouldLoop = true;
+		const calls = toolCalls.map((call, index) => ({
+			call,
+			index: index + 1,
+			total: toolCalls.length,
+		}));
+		const outcome = await processCalls(calls, signal);
+		if (outcome.action === "cancelled") {
+			return { loop: false, events: [...outcome.events, setState("idle")] };
 		}
-
-		return { loop: shouldLoop, events: allEvents };
+		return { loop: outcome.action === "executed", events: outcome.events };
 	};
 
 	/** Process one round's outcome after streaming. Returns whether to continue looping. */
 	async function* processRoundEnd(
 		nudged: boolean,
+		signal: AbortSignal,
 	): AsyncGenerator<AgentEvent, "continue" | "nudge" | "stop"> {
 		const idle = checkIdle(nudged);
 		if (idle === "nudge") return "nudge";
@@ -434,7 +527,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return "stop";
 		}
 
-		const result = await processOutcome();
+		const result = await processOutcome(signal);
 		for (const e of result.events) yield e;
 		return result.loop ? "continue" : "stop";
 	}
@@ -491,12 +584,13 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 
 			const streamResult = yield* streamWithCompaction(compacted, signal);
 			if (signal.aborted) {
+				cancelFinalizedToolCalls();
 				yield setState("idle");
 				return;
 			}
 			if (streamResult === "continue") continue;
 
-			const action: "continue" | "nudge" | "stop" = yield* processRoundEnd(nudged);
+			const action: "continue" | "nudge" | "stop" = yield* processRoundEnd(nudged, signal);
 			nudged = action === "nudge";
 			if (action === "stop") return;
 		}
@@ -524,6 +618,14 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 
 	/** Cancel the current agent loop (aborts streaming and stops looping). */
 	const cancel = async (): Promise<void> => {
+		if (state === "pending" && pendingCall) {
+			engine.addToolResult(pendingCall.callId, CANCELLED_TOOL_RESULT);
+			completeToolCalls(queuedCalls, CANCELLED_TOOL_RESULT);
+			pendingCall = null;
+			queuedCalls = [];
+			setState("idle");
+			return;
+		}
 		const run = activeRun;
 		if (!run) return;
 		run.controller.abort();

@@ -210,7 +210,19 @@ function App({
 	const handleApprovalKey = (input: string, key: { escape: boolean }) => {
 		if (input === "y" || input === "Y") handleApproval("y");
 		else if (input === "a" || input === "A") handleApproval("a");
-		else if (input === "n" || input === "N" || key.escape) handleApproval("n");
+		else if (input === "n" || input === "N") handleApproval("n");
+		else if (key.escape) void cancelPendingApproval();
+	};
+
+	const cancelPendingApproval = async () => {
+		setPendingTool(null);
+		pendingToolName.current = null;
+		setInput("");
+		lastCtrlC.current = 0;
+		setBusy(true);
+		await agent.cancel();
+		addMsg("  [cancelled]", true);
+		finishTurn();
 	};
 
 	const handleHistoryNav = (key: { upArrow: boolean; downArrow: boolean }) => {
@@ -268,7 +280,9 @@ function App({
 			return len === 0 ? response.length : len;
 		}
 		pendingToolName.current = event.call.tool.name;
-		setPendingTool(`${event.call.tool.name}: ${summarizeArgs(event.call.args)}`);
+		setPendingTool(
+			`[${event.index}/${event.total}] ${event.call.tool.name}: ${summarizeArgs(event.call.args)}`,
+		);
 		if (response) {
 			addMsg(`anvil: ${response}`);
 			setStreaming("");

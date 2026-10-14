@@ -1,18 +1,23 @@
 import { errAsync, okAsync } from "neverthrow";
 import { describe, expect, it, vi } from "vitest";
 import { createEngine } from "../engine/engine.js";
-import type { Provider, StreamChunk } from "../provider/types.js";
+import { validateHistory } from "../engine/history.js";
+import type { Message, Provider, StreamChunk } from "../provider/types.js";
 import type { Tool } from "../tools/registry.js";
 import { createRegistry } from "../tools/registry.js";
 import type { AgentEvent } from "./loop.js";
 import { createAgentLoop } from "./loop.js";
 
 /** Mock provider that returns a sequence of chunk sets (one per stream call). */
-const mockProvider = (responses: StreamChunk[][]): Provider => {
+const mockProvider = (
+	responses: StreamChunk[][],
+	onRequest?: (messages: Message[]) => void,
+): Provider => {
 	let callIdx = 0;
 	return {
 		name: "mock",
-		streamChat: () => {
+		streamChat: (_model, messages) => {
+			onRequest?.(messages);
 			const chunks = responses[callIdx] ?? [{ done: true }];
 			callIdx++;
 			async function* gen() {
@@ -102,6 +107,32 @@ const toolCallChunks = (id: string, name: string, args: string): StreamChunk[] =
 	{ toolCall: { index: 0, id, name, argumentsFragment: args }, done: false },
 	{ done: true },
 ];
+
+const multiToolCallChunks = (
+	...calls: Array<{ id: string; name: string; args: string }>
+): StreamChunk[] => [
+	...calls.map((call, index) => ({
+		toolCall: {
+			index,
+			id: call.id,
+			name: call.name,
+			argumentsFragment: call.args,
+		},
+		done: false,
+	})),
+	{ done: true },
+];
+
+const autoReadTool: Tool = {
+	...dummyReadTool,
+	needsApproval: false,
+};
+
+const runCmdTool: Tool = {
+	...dummyReadTool,
+	name: "run_cmd",
+	description: "run a command",
+};
 
 describe("agent loop", () => {
 	it("streams content when no tool calls are made", async () => {
@@ -240,6 +271,161 @@ describe("agent loop", () => {
 		expect(loop.state()).toBe("idle");
 	});
 
+	it("resumes queued tool calls in order after approval and preserves request history", async () => {
+		let nextRequest: Message[] = [];
+		const provider = mockProvider(
+			[
+				multiToolCallChunks(
+					{ id: "read_1", name: "read_file", args: '{"path":"before.txt"}' },
+					{ id: "cmd_1", name: "run_cmd", args: '{"path":"echo ok"}' },
+					{ id: "read_2", name: "read_file", args: '{"path":"after.txt"}' },
+				),
+				[{ content: "Finished", done: false }, { done: true }],
+			],
+			(messages) => {
+				nextRequest = messages;
+			},
+		);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(autoReadTool);
+		registry.register(runCmdTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		const initialEvents = await collect(loop.send("read and run"));
+		const pending = initialEvents.find((event) => event.kind === "pending");
+		expect(pending).toMatchObject({ index: 2, total: 3 });
+
+		const approvalEvents = await collect(loop.approve());
+		const results = approvalEvents.filter(
+			(event): event is AgentEvent & { kind: "tool_result" } => event.kind === "tool_result",
+		);
+		const requestResults = nextRequest.filter((message) => message.role === "tool");
+
+		expect(results.map((event) => event.name)).toEqual(["run_cmd", "read_file"]);
+		expect(requestResults.map((message) => message.toolCallId)).toEqual([
+			"read_1",
+			"cmd_1",
+			"read_2",
+		]);
+		expect(
+			approvalEvents.some((event) => event.kind === "content" && event.text === "Finished"),
+		).toBe(true);
+	});
+
+	it("cancels pending and queued tool calls with valid history", async () => {
+		const provider = mockProvider([
+			multiToolCallChunks(
+				{ id: "read_1", name: "read_file", args: '{"path":"before.txt"}' },
+				{ id: "cmd_1", name: "run_cmd", args: '{"path":"echo ok"}' },
+				{ id: "read_2", name: "read_file", args: '{"path":"after.txt"}' },
+			),
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(autoReadTool);
+		registry.register(runCmdTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(loop.send("read and run"));
+		await loop.cancel();
+
+		const toolResults = engine.messages().filter((message) => message.role === "tool");
+		expect(toolResults.map((message) => [message.toolCallId, message.content])).toEqual([
+			["read_1", "contents of before.txt"],
+			["cmd_1", "[cancelled by user]"],
+			["read_2", "[cancelled by user]"],
+		]);
+		expect(validateHistory(engine.messages()).isOk()).toBe(true);
+		expect(loop.state()).toBe("idle");
+	});
+
+	it("rejects a queued tool call with a reason and continues later calls", async () => {
+		let nextRequest: Message[] = [];
+		const provider = mockProvider(
+			[
+				multiToolCallChunks(
+					{ id: "read_1", name: "read_file", args: '{"path":"before.txt"}' },
+					{ id: "cmd_1", name: "run_cmd", args: '{"path":"echo ok"}' },
+					{ id: "read_2", name: "read_file", args: '{"path":"after.txt"}' },
+				),
+				[{ content: "Finished", done: false }, { done: true }],
+			],
+			(messages) => {
+				nextRequest = messages;
+			},
+		);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(autoReadTool);
+		registry.register(runCmdTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(loop.send("read and run"));
+		await collect(loop.reject("command not permitted"));
+
+		const requestResults = nextRequest.filter((message) => message.role === "tool");
+		expect(requestResults.map((message) => message.toolCallId)).toEqual([
+			"read_1",
+			"cmd_1",
+			"read_2",
+		]);
+		expect(requestResults.find((message) => message.toolCallId === "cmd_1")?.content).toBe(
+			"REJECTED: command not permitted",
+		);
+		expect(requestResults.find((message) => message.toolCallId === "read_2")?.content).toBe(
+			"contents of after.txt",
+		);
+	});
+
+	it("pauses at each approval-required call and reports its original position", async () => {
+		const provider = mockProvider([
+			multiToolCallChunks(
+				{ id: "cmd_1", name: "run_cmd", args: '{"path":"one"}' },
+				{ id: "cmd_2", name: "run_cmd", args: '{"path":"two"}' },
+				{ id: "cmd_3", name: "run_cmd", args: '{"path":"three"}' },
+			),
+			[{ content: "All done", done: false }, { done: true }],
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(runCmdTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		const firstPending = (await collect(loop.send("run three commands"))).find(
+			(event) => event.kind === "pending",
+		);
+		const secondPending = (await collect(loop.approve())).find((event) => event.kind === "pending");
+		const thirdPending = (await collect(loop.reject("skip two"))).find(
+			(event) => event.kind === "pending",
+		);
+		const finalEvents = await collect(loop.approve());
+
+		expect(firstPending).toMatchObject({ index: 1, total: 3 });
+		expect(secondPending).toMatchObject({ index: 2, total: 3 });
+		expect(thirdPending).toMatchObject({ index: 3, total: 3 });
+		expect(validateHistory(engine.messages()).isOk()).toBe(true);
+		expect(finalEvents.some((event) => event.kind === "content" && event.text === "All done")).toBe(
+			true,
+		);
+	});
+
 	it("handles done signal", async () => {
 		const provider = mockProvider([toolCallChunks("call_1", "done", '{"message":"All finished"}')]);
 		const engine = createEngine(provider, "test");
@@ -255,6 +441,7 @@ describe("agent loop", () => {
 
 		expect(events.some((e) => e.kind === "done" && e.message === "All finished")).toBe(true);
 		expect(loop.state()).toBe("done");
+		expect(validateHistory(engine.messages()).isOk()).toBe(true);
 	});
 
 	it("handles stuck signal", async () => {
@@ -274,6 +461,7 @@ describe("agent loop", () => {
 
 		expect(events.some((e) => e.kind === "stuck" && e.message === "I cannot proceed")).toBe(true);
 		expect(loop.state()).toBe("stuck");
+		expect(validateHistory(engine.messages()).isOk()).toBe(true);
 	});
 
 	it("enforces round cap", async () => {
@@ -339,48 +527,6 @@ describe("agent loop", () => {
 		const events = await collect(loop.send("second"));
 
 		expect(events.some((e) => e.kind === "content" && e.text === "Second answer")).toBe(true);
-	});
-
-	it("F1: continues after approval when cancel was pressed while pending", async () => {
-		const provider = mockProvider([
-			toolCallChunks("call_1", "read_file", '{"path":"index.ts"}'),
-			[{ content: "I read the file", done: false }, { done: true }],
-		]);
-		const engine = createEngine(provider, "test");
-		const registry = createRegistry();
-		registry.register(dummyReadTool);
-		const loop = createAgentLoop(engine, registry, {
-			maxRounds: 5,
-			projectRoot: "/tmp",
-			systemPrompt: "test",
-		});
-
-		await collect(loop.send("read it"));
-		loop.cancel();
-		const events = await collect(loop.approve());
-
-		expect(events.some((e) => e.kind === "content" && e.text === "I read the file")).toBe(true);
-	});
-
-	it("F1: continues after rejection when cancel was pressed while pending", async () => {
-		const provider = mockProvider([
-			toolCallChunks("call_1", "read_file", '{"path":"secret.env"}'),
-			[{ content: "OK, skipping that", done: false }, { done: true }],
-		]);
-		const engine = createEngine(provider, "test");
-		const registry = createRegistry();
-		registry.register(dummyReadTool);
-		const loop = createAgentLoop(engine, registry, {
-			maxRounds: 5,
-			projectRoot: "/tmp",
-			systemPrompt: "test",
-		});
-
-		await collect(loop.send("read secret"));
-		loop.cancel();
-		const events = await collect(loop.reject("Not allowed"));
-
-		expect(events.some((e) => e.kind === "content" && e.text === "OK, skipping that")).toBe(true);
 	});
 
 	it("awaits stream cleanup when cancelling an active turn", async () => {

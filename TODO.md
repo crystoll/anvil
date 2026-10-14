@@ -372,15 +372,15 @@ Do this before writing the many new tests in M3–M8.
     - `cancel()` while idle is a no-op.
     - A pending approval can resume while its consumer is handling the pending event.
     - Graceful shutdown waits for asynchronous cancellation before saving.
-- [ ] **M6.2 Every tool call gets exactly one result** (F6).
+- [x] **M6.2 Every tool call gets exactly one result** (F6).
   - Process an assistant message's calls as a queue. An approval pauses it; `approve` or `reject` resumes it with the remaining calls.
-  - Cancel synthesizes a `"[cancelled by user]"` result for each unprocessed call.
-  - `pending` events carry `{ index, total }`.
+  - Cancel synthesizes a `"[cancelled by user]"` result for each unprocessed call, including cancellation at an approval prompt.
+  - `pending` events carry `{ index, total }`, shown by both interactive interfaces.
   - **Test first:**
     - read + `run_cmd` (needs approval) + read, approved: 3 results in order, and the next request's IDs match.
     - A cancel at the approval prompt leaves a valid history.
     - A rejection with a reason: the model sees the reason, and later calls are still processed.
-- [ ] **M6.3 Remove the early return in `processOutcome`** that orphans every call after a pending one. Covered by the M6.2 tests.
+- [x] **M6.3 Remove the early return in `processOutcome`** that orphans every call after a pending one. Covered by the M6.2 tests.
 - [ ] **M6.4 Only recover tool calls from assistant messages** (`tryRecoverToolCall`). **Test first:** JSON inside a user message is never treated as a tool call.
 - [ ] **M6.5 Request-only reminders.**
   - `injectRoundContext` stops persisting round and goal notes.
