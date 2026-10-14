@@ -1,5 +1,5 @@
 {
-	"plugins": ["https://plugins.dprint.dev/markdown-0.17.8.wasm"],
+	"plugins": ["https://plugins.dprint.dev/markdown-0.26.0.wasm"],
 	"includes": ["**/*.md"],
 	"excludes": ["node_modules"]
 }

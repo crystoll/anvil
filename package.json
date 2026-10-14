@@ -57,13 +57,13 @@
 		"@biomejs/biome": "2.5.15",
 		"@types/node": "26.2.0",
 		"@types/react": "^19.3.0",
-		"dprint": "0.55.2",
+		"dprint": "0.62.0",
 		"msw": "2.15.0",
 		"oxlint": "1.87.0",
 		"tsup": "8.5.1",
-		"tsx": "4.23.12",
+		"tsx": "4.23.15",
 		"typescript": "7.0.2",
-		"vite": "^8.2.1",
-		"vitest": "4.1.10"
+		"vite": "^8.3.4",
+		"vitest": "4.1.11"
 	}
 }
