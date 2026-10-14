@@ -473,7 +473,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	const tryRecoverToolCall = (): boolean => {
 		const msgs = engine.messages();
 		const last = msgs[msgs.length - 1];
-		if (!last || last.toolCalls?.length || !last.content) return false;
+		if (last?.role !== "assistant" || last.toolCalls?.length || !last.content) return false;
 		try {
 			const parsed = JSON.parse(last.content.trim());
 			if (typeof parsed.name !== "string") return false;

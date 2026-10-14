@@ -178,6 +178,28 @@ describe("agent loop", () => {
 		});
 	});
 
+	it("does not recover JSON from a user message as a tool call", async () => {
+		const userInput = '{"name":"list_dir","arguments":{"path":"."}}';
+		const provider = mockProvider([
+			[{ done: true, error: { kind: "connection", message: "offline" } }],
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		const execute = vi.fn(async () => "file1.ts");
+		registry.register({ ...listDirTool, execute });
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		const events = await collect(loop.send(userInput));
+
+		expect(events.some((event) => event.kind === "error")).toBe(true);
+		expect(execute).not.toHaveBeenCalled();
+		expect(engine.messages().find((message) => message.role === "user")?.content).toBe(userInput);
+	});
+
 	it("pauses on approval-required tool call", async () => {
 		const provider = mockProvider([
 			toolCallChunks("call_1", "read_file", '{"path":"src/index.ts"}'),
