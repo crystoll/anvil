@@ -69,6 +69,9 @@ const displayEvent = (event: AgentEvent): void => {
 		case "error":
 			stdout.write(`\n[error: ${event.message}]`);
 			break;
+		case "warning":
+			stdout.write(`\n\x1b[33m⚠ ${event.message}\x1b[0m\n`);
+			break;
 		case "trimmed":
 			stdout.write(`\x1b[2m[trimmed ${event.count} old messages]\x1b[0m\n`);
 			break;

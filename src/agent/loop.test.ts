@@ -284,6 +284,38 @@ describe("agent loop", () => {
 
 		expect(events.some((e) => e.kind === "content" && e.text === "OK, skipping that")).toBe(true);
 	});
+
+	it("keeps the tool's own result when post-processing throws", async () => {
+		const provider = mockProvider([
+			toolCallChunks("call_1", "read_file", '{"path":"index.ts"}'),
+			[{ content: "I read the file", done: false }, { done: true }],
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(dummyReadTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+			transformToolResult: async () => {
+				throw new Error("LSP crashed");
+			},
+		});
+
+		await collect(loop.send("read it"));
+		const events = await collect(loop.approve());
+
+		expect(events).toContainEqual({
+			kind: "tool_result",
+			name: "read_file",
+			result: "contents of index.ts",
+		});
+		expect(events).toContainEqual({
+			kind: "warning",
+			message: expect.stringContaining("LSP crashed"),
+		});
+		expect(events.some((e) => e.kind === "content" && e.text === "I read the file")).toBe(true);
+	});
 });
 
 it("nudges model when it gives up without trying tools", async () => {

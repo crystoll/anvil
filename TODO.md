@@ -256,9 +256,9 @@ Do this before writing the many new tests in M3–M8.
 - [ ] **M3.2 The diagnostic injector never blocks or throws** (F4, F5).
   - **Test first:** the original result comes back when the tool result is an error, when `ensureOpen` fails with ENOENT, and when no diagnostics arrive within 3 s.
   - **Change:** add a guard, a timeout and a catch in `lsp/inject.ts`, and stop `ensureOpen` from using a throwing `readFileSync`.
-- [ ] **M3.3 Tool post-processing can't escape the error boundary.**
-  - **Test first:** when `transformToolResult` throws during `approve()`, the tool result becomes error text and the loop continues.
-  - **Change:** move the call inside `executeTool`'s error boundary.
+- [x] **M3.3 Tool post-processing can't escape the error boundary.**
+  - **Test first:** when `transformToolResult` throws during `approve()`, the tool's own result is kept, a warning is shown and the loop continues.
+  - **Change:** guard the call in a shared `runTool` helper. Post-processing only adds diagnostics, so its failure must not turn a successful result into an error.
 - [x] **M3.4 Hotfix for the swallowed message** (F1).
   - **Test first:** cancel during final-answer streaming, then `send()`; the provider receives the request.
   - **Change:** reset `cancelled` at the start of `send`, `approve` and `reject`. M6.1 replaces this with turn-scoped aborts.

@@ -770,6 +770,7 @@ const handleInfoEvent = (
 	}
 	if (event.kind === "done" && event.message) addMsg(`✓ ${event.message}`);
 	if (event.kind === "stuck" && event.message) addMsg(`✗ ${event.message}`, true);
+	if (event.kind === "warning") addMsg(`  ⚠ ${event.message}`, true);
 };
 
 function Root() {

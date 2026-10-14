@@ -1,3 +1,4 @@
+import { okAsync, ResultAsync } from "neverthrow";
 import type { Engine, EngineEvent } from "../engine/engine.js";
 import type { Provider } from "../provider/types.js";
 import type { Registry, Tool } from "../tools/registry.js";
@@ -27,6 +28,7 @@ export type AgentEvent =
 	| { kind: "done"; message: string }
 	| { kind: "stuck"; message: string }
 	| { kind: "error"; message: string }
+	| { kind: "warning"; message: string }
 	| { kind: "round"; current: number; max: number }
 	| { kind: "trimmed"; count: number }
 	| { kind: "overflow" }
@@ -65,6 +67,31 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		return { kind: "state", state: s };
 	};
 
+	type ToolRun = { result: string; warnings: AgentEvent[] };
+
+	const transformResult = (
+		toolName: string,
+		args: Record<string, unknown>,
+		result: string,
+	): ResultAsync<string, string> =>
+		config.transformToolResult
+			? ResultAsync.fromThrowable(config.transformToolResult, errorText)(toolName, args, result)
+			: okAsync(result);
+
+	/** Post-processing only enriches a result, so its failure keeps the tool's own output. */
+	const runTool = async (tool: Tool, args: Record<string, unknown>): Promise<ToolRun> => {
+		const result = await executeTool(tool, args, config.projectRoot);
+		const run = await transformResult(tool.name, args, result).match<ToolRun>(
+			(transformed) => ({ result: transformed, warnings: [] }),
+			(message) => ({
+				result,
+				warnings: [{ kind: "warning", message: `Post-processing ${tool.name} failed: ${message}` }],
+			}),
+		);
+		config.onAfterToolUse?.(tool.name, args, run.result);
+		return run;
+	};
+
 	/** Start a new agent turn with a user message. */
 	async function* send(userMessage: string): AsyncGenerator<AgentEvent> {
 		cancelled = false;
@@ -95,14 +122,11 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return;
 		}
 
-		const result = await executeTool(tool, args, config.projectRoot);
-		const finalResult = config.transformToolResult
-			? await config.transformToolResult(tool.name, args, result)
-			: result;
-		config.onAfterToolUse?.(tool.name, args, finalResult);
-		yield { kind: "tool_result", name: tool.name, result: finalResult };
+		const run = await runTool(tool, args);
+		yield* run.warnings;
+		yield { kind: "tool_result", name: tool.name, result: run.result };
 
-		engine.addToolResult(callId, finalResult);
+		engine.addToolResult(callId, run.result);
 		yield* runLoop();
 	}
 
@@ -154,17 +178,14 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			engine.addToolResult(callId, denial);
 			return { action: "error_fed_back" };
 		}
-		const result = await executeTool(tool, args, config.projectRoot);
-		const finalResult = config.transformToolResult
-			? await config.transformToolResult(tool.name, args, result)
-			: result;
-		config.onAfterToolUse?.(tool.name, args, finalResult);
-		engine.addToolResult(callId, finalResult);
+		const run = await runTool(tool, args);
+		engine.addToolResult(callId, run.result);
 		return {
 			action: "executed",
 			events: [
 				setState("executing"),
-				{ kind: "tool_result", name: tool.name, result: finalResult },
+				...run.warnings,
+				{ kind: "tool_result", name: tool.name, result: run.result },
 			],
 		};
 	};
@@ -480,6 +501,8 @@ const processEngineEvent = (event: EngineEvent): AgentEvent | undefined => {
 	}
 };
 
+const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
 const executeTool = async (
 	tool: Tool,
 	args: Record<string, unknown>,
@@ -497,7 +520,7 @@ const executeTool = async (
 			}),
 		]);
 	} catch (e) {
-		return `Error: ${e instanceof Error ? e.message : String(e)}`;
+		return `Error: ${errorText(e)}`;
 	} finally {
 		clearTimeout(timer);
 	}
