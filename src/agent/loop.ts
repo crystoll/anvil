@@ -54,12 +54,21 @@ export type AgentConfig = {
 	streamOpts?: { contextSize?: number };
 };
 
+type ActiveRun = {
+	controller: AbortController;
+	completed: Promise<void>;
+	finish: () => void;
+	started: boolean;
+};
+
+const CANCEL_WAIT_MS = 5000;
+
 /** Creates an agent loop that orchestrates engine + tools with approval gating. */
 export const createAgentLoop = (engine: Engine, registry: Registry, config: AgentConfig) => {
 	let state: AgentState = "idle";
 	let pendingCall: PendingCall | null = null;
 	let rounds = 0;
-	let cancelled = false;
+	let activeRun: ActiveRun | null = null;
 	const recentCalls: string[] = [];
 	let originalGoal = "";
 
@@ -79,6 +88,56 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			? ResultAsync.fromThrowable(config.transformToolResult, errorText)(toolName, args, result)
 			: okAsync(result);
 
+	const activeRunError = (): AsyncGenerator<AgentEvent> =>
+		(async function* () {
+			yield { kind: "error", message: "An agent turn is already active" };
+		})();
+
+	const releasePendingRun = (run: ActiveRun): void => {
+		if (activeRun === run) activeRun = null;
+		run.finish();
+	};
+
+	const finishRun = (run: ActiveRun): void => {
+		if (activeRun === run) {
+			activeRun = null;
+			if (run.controller.signal.aborted || state === "streaming" || state === "executing") {
+				setState("idle");
+			}
+		}
+		run.finish();
+	};
+
+	const runEvents = async function* (
+		currentRun: ActiveRun,
+		run: (signal: AbortSignal) => AsyncGenerator<AgentEvent>,
+	): AsyncGenerator<AgentEvent> {
+		currentRun.started = true;
+		try {
+			for await (const event of run(currentRun.controller.signal)) {
+				if (event.kind === "pending") releasePendingRun(currentRun);
+				yield event;
+			}
+		} finally {
+			finishRun(currentRun);
+		}
+	};
+
+	const startRun = (
+		run: (signal: AbortSignal) => AsyncGenerator<AgentEvent>,
+		resumesPending = false,
+	): AsyncGenerator<AgentEvent> => {
+		if (activeRun || (state === "pending" && !resumesPending)) return activeRunError();
+		const controller = new AbortController();
+		let finish: () => void = () => undefined;
+		const completed = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		const currentRun: ActiveRun = { controller, completed, finish, started: false };
+		activeRun = currentRun;
+		return runEvents(currentRun, run);
+	};
+
 	/** Post-processing only enriches a result, so its failure keeps the tool's own output. */
 	const runTool = async (tool: Tool, args: Record<string, unknown>): Promise<ToolRun> => {
 		const result = await executeTool(tool, args, config.projectRoot);
@@ -94,56 +153,56 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	/** Start a new agent turn with a user message. */
-	async function* send(userMessage: string): AsyncGenerator<AgentEvent> {
-		cancelled = false;
-		engine.setSystem(config.systemPrompt);
-		engine.addUser(userMessage);
-		originalGoal = userMessage;
-		rounds = 0;
-		recentCalls.length = 0;
-		yield* runLoop();
-	}
+	const send = (userMessage: string): AsyncGenerator<AgentEvent> =>
+		startRun(async function* (signal) {
+			engine.setSystem(config.systemPrompt);
+			engine.addUser(userMessage);
+			originalGoal = userMessage;
+			rounds = 0;
+			recentCalls.length = 0;
+			yield* runLoop(signal);
+		});
 
 	/** Approve the pending tool call and continue. */
-	async function* approve(): AsyncGenerator<AgentEvent> {
-		if (state !== "pending" || !pendingCall) {
-			yield { kind: "error", message: "Nothing pending to approve" };
-			return;
-		}
+	const approve = (): AsyncGenerator<AgentEvent> =>
+		startRun(async function* (signal) {
+			if (state !== "pending" || !pendingCall) {
+				yield { kind: "error", message: "Nothing pending to approve" };
+				return;
+			}
 
-		cancelled = false;
-		yield setState("executing");
-		const { tool, args, callId } = pendingCall;
-		pendingCall = null;
+			yield setState("executing");
+			const { tool, args, callId } = pendingCall;
+			pendingCall = null;
 
-		const denial = await config.onBeforeToolUse?.(tool.name, args);
-		if (denial) {
-			engine.addToolResult(callId, denial);
-			yield* runLoop();
-			return;
-		}
+			const denial = await config.onBeforeToolUse?.(tool.name, args);
+			if (denial) {
+				engine.addToolResult(callId, denial);
+				yield* runLoop(signal);
+				return;
+			}
 
-		const run = await runTool(tool, args);
-		yield* run.warnings;
-		yield { kind: "tool_result", name: tool.name, result: run.result };
+			const runResult = await runTool(tool, args);
+			yield* runResult.warnings;
+			yield { kind: "tool_result", name: tool.name, result: runResult.result };
 
-		engine.addToolResult(callId, run.result);
-		yield* runLoop();
-	}
+			engine.addToolResult(callId, runResult.result);
+			yield* runLoop(signal);
+		}, true);
 
 	/** Reject the pending tool call with an optional reason. */
-	async function* reject(reason = "User rejected this tool call"): AsyncGenerator<AgentEvent> {
-		if (state !== "pending" || !pendingCall) {
-			yield { kind: "error", message: "Nothing pending to reject" };
-			return;
-		}
+	const reject = (reason = "User rejected this tool call"): AsyncGenerator<AgentEvent> =>
+		startRun(async function* (signal) {
+			if (state !== "pending" || !pendingCall) {
+				yield { kind: "error", message: "Nothing pending to reject" };
+				return;
+			}
 
-		cancelled = false;
-		const { callId } = pendingCall;
-		pendingCall = null;
-		engine.addToolResult(callId, `REJECTED: ${reason}`);
-		yield* runLoop();
-	}
+			const { callId } = pendingCall;
+			pendingCall = null;
+			engine.addToolResult(callId, `REJECTED: ${reason}`);
+			yield* runLoop(signal);
+		}, true);
 
 	/** Outcome of processing a tool call from the model. */
 	type ToolCallOutcome =
@@ -254,13 +313,13 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	};
 
 	/** Stream one round and collect engine events into agent events. */
-	async function* streamRound(): AsyncGenerator<AgentEvent> {
+	async function* streamRound(signal: AbortSignal): AsyncGenerator<AgentEvent> {
 		const trimEvent = maybeTrimContext(engine, config);
 		if (trimEvent) yield trimEvent;
 		const contextSize = config.streamOpts?.contextSize ?? 0;
 		const schemas = contextSize ? registry.filteredSchemas(contextSize) : registry.schemas();
 		const signals: RoundSignals = { content: "" };
-		for await (const event of engine.stream(schemas, config.streamOpts)) {
+		for await (const event of engine.stream(schemas, { ...config.streamOpts, signal })) {
 			accumulateSignal(signals, event);
 			const mapped = mapStreamEvent(event, signals.finishReason);
 			if (mapped) yield mapped;
@@ -398,15 +457,16 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	}
 
 	/** Stream a round; on overflow attempt compaction once. Returns "retry" if compacted. */
-	async function* streamWithCompaction(compacted: {
-		done: boolean;
-	}): AsyncGenerator<AgentEvent, "continue" | "ok"> {
+	async function* streamWithCompaction(
+		compacted: { done: boolean },
+		signal: AbortSignal,
+	): AsyncGenerator<AgentEvent, "continue" | "ok"> {
 		let overflowed = false;
-		for await (const event of streamRound()) {
+		for await (const event of streamRound(signal)) {
 			if (event.kind === "overflow") overflowed = true;
 			yield event;
 		}
-		if (overflowed && !compacted.done) {
+		if (overflowed && !compacted.done && !signal.aborted) {
 			compacted.done = true;
 			const success = yield* tryCompact();
 			if (success) return "continue";
@@ -414,21 +474,14 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		return "ok";
 	}
 
-	const checkCancelled = (): AgentEvent | undefined => {
-		if (!cancelled) return undefined;
-		cancelled = false;
-		return setState("idle");
-	};
-
 	/** Core agent loop. */
-	async function* runLoop(): AsyncGenerator<AgentEvent> {
+	async function* runLoop(signal: AbortSignal): AsyncGenerator<AgentEvent> {
 		let nudged = false;
 		const compacted = { done: false };
 
 		while (rounds < config.maxRounds) {
-			const cancelEvent = checkCancelled();
-			if (cancelEvent) {
-				yield cancelEvent;
+			if (signal.aborted) {
+				yield setState("idle");
 				return;
 			}
 			rounds++;
@@ -436,7 +489,11 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			injectRoundContext();
 			yield setState("streaming");
 
-			const streamResult = yield* streamWithCompaction(compacted);
+			const streamResult = yield* streamWithCompaction(compacted, signal);
+			if (signal.aborted) {
+				yield setState("idle");
+				return;
+			}
 			if (streamResult === "continue") continue;
 
 			const action: "continue" | "nudge" | "stop" = yield* processRoundEnd(nudged);
@@ -448,10 +505,34 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		yield setState("idle");
 	}
 
+	const waitForRun = async (run: ActiveRun): Promise<void> => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		await Promise.race([
+			run.completed,
+			new Promise<void>((resolve) => {
+				timer = setTimeout(() => {
+					if (activeRun === run) {
+						console.warn("anvil: cancellation did not finish within 5 seconds");
+						setState("idle");
+					}
+					resolve();
+				}, CANCEL_WAIT_MS);
+			}),
+		]);
+		if (timer) clearTimeout(timer);
+	};
+
 	/** Cancel the current agent loop (aborts streaming and stops looping). */
-	const cancel = () => {
-		cancelled = true;
-		engine.cancel();
+	const cancel = async (): Promise<void> => {
+		const run = activeRun;
+		if (!run) return;
+		run.controller.abort();
+		if (!run.started) {
+			if (activeRun === run) activeRun = null;
+			run.finish();
+			return;
+		}
+		await waitForRun(run);
 	};
 
 	return {

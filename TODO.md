@@ -108,7 +108,7 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
   - Connects run sequentially and errors are swallowed.
   - When `env` is set, the full `process.env` (API keys) is passed to the server.
   - Fixed in M1.
-- **F16. Esc doesn't interrupt the TUI.** 🔍 The README promises it, but Esc only works in the readline CLI and in pickers. Fixed in M8.3.
+- **F16. Esc doesn't interrupt the TUI.** 🔍 The README promises it, but Esc only works in the readline CLI and in pickers. Fixed in M6.1.
 - **F17. Readline CLI bugs.** 🔍
   - Retry duplicates the user message.
   - A second pending tool call is dropped.
@@ -362,13 +362,16 @@ Do this before writing the many new tests in M3–M8.
 
 ## M6 — Agent loop integrity (2 d)
 
-- [ ] **M6.1 Turn-scoped cancellation** (F1, F12).
+- [x] **M6.1 Turn-scoped cancellation** (F1, F12).
   - Replace the shared `cancelled` boolean with one `AbortController` per `send`, `approve` or `reject` run, and pass its signal to `engine.stream` (`StreamOptions.signal` already exists).
-  - `cancel()` returns a promise that resolves once the run's generator has finished. It waits at most 5 s, then forces idle with a warning.
+  - `cancel()` returns a promise that resolves once the run's generator has finished. It waits at most 5 s, then reports the delay and exposes the idle state while keeping overlapping turns blocked until cleanup actually finishes.
+  - Cancellation now completes before graceful shutdown saves and closes the UI. Both interactive UIs stay busy until the generator unwinds; the readline CLI no longer offers to retry an interrupted response.
   - **Test first:**
     - `await cancel()` resolves only after the generator ends.
     - `send()` during an active run yields an error event, not interleaved history.
     - `cancel()` while idle is a no-op.
+    - A pending approval can resume while its consumer is handling the pending event.
+    - Graceful shutdown waits for asynchronous cancellation before saving.
 - [ ] **M6.2 Every tool call gets exactly one result** (F6).
   - Process an assistant message's calls as a queue. An approval pauses it; `approve` or `reject` resumes it with the remaining calls.
   - Cancel synthesizes a `"[cancelled by user]"` result for each unprocessed call.
@@ -462,7 +465,7 @@ type SessionController = {
   - Split `src/tui/app.tsx` into an exported `App({ controller })` view and an entry module that bootstraps and renders. Today the module bootstraps at import time, which makes it untestable.
   - Subscribe to state with `useSyncExternalStore`, which removes the stale closures (F8).
   - Keys:
-    - Esc cancels (F16).
+    - Esc cancels (F16; fixed in M6.1).
     - Ctrl+C cancels when busy or awaiting approval; when idle, a double press exits.
   - The approval prompt shows "1 of N" and a diff preview for `edit_file` and `write_file`.
 - [ ] **M8.4 Component tests** with `ink-testing-library` 4.0.0. It's verified with ink 8: typing, Enter, Esc and Ctrl+C all register. Use a fake controller and cover:

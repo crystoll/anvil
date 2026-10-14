@@ -171,6 +171,18 @@ const promptApproval = async (
 	return answer.trim().toLowerCase().startsWith("y");
 };
 
+const handleAgentError = async (
+	rl: ReturnType<typeof createInterface>,
+	event: AgentEvent & { kind: "error" },
+	message: string,
+): Promise<void> => {
+	displayEvent(event);
+	busy = false;
+	if (event.status === "interrupted") return;
+	const answer = await ask(rl, "\nRetry? (y/n): ");
+	if (answer.trim().toLowerCase() === "y") await processAgentTurn(rl, message);
+};
+
 // === Agent turn processing ===
 
 const processAgentTurn = async (
@@ -197,10 +209,7 @@ const processAgentTurn = async (
 		}
 		if (event.kind === "error") {
 			stop();
-			displayEvent(event);
-			busy = false;
-			const answer = await ask(rl, "\nRetry? (y/n): ");
-			if (answer.trim().toLowerCase() === "y") await processAgentTurn(rl, message);
+			await handleAgentError(rl, event, message);
 			return;
 		}
 		displayEvent(event);
@@ -785,7 +794,7 @@ if (flags.command) {
 		const now = Date.now();
 		if (busy) {
 			if (now - lastCtrlC < 500) {
-				agent.cancel();
+				void agent.cancel();
 				rl.close();
 				exitCode = 130;
 			} else {
@@ -800,9 +809,8 @@ if (flags.command) {
 
 	stdin.on("keypress", (_str: string, key: { name?: string }) => {
 		if (key?.name === "escape" && busy) {
-			agent.cancel();
-			busy = false;
-			stdout.write("\n  [cancelled]\n\n");
+			void agent.cancel();
+			stdout.write("\n  [cancelling]\n");
 		}
 	});
 

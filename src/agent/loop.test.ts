@@ -1,5 +1,5 @@
 import { errAsync, okAsync } from "neverthrow";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createEngine } from "../engine/engine.js";
 import type { Provider, StreamChunk } from "../provider/types.js";
 import type { Tool } from "../tools/registry.js";
@@ -25,6 +25,51 @@ const mockProvider = (responses: StreamChunk[][]): Provider => {
 		},
 		supportsTools: () => true,
 		listModels: () => okAsync([]),
+	};
+};
+
+const createHangingProvider = () => {
+	let markStarted: () => void = () => undefined;
+	const started = new Promise<void>((resolve) => {
+		markStarted = resolve;
+	});
+	let markCleanupStarted: () => void = () => undefined;
+	const cleanupStarted = new Promise<void>((resolve) => {
+		markCleanupStarted = resolve;
+	});
+	let releaseCleanup: () => void = () => undefined;
+	let signal: AbortSignal | undefined;
+	const provider: Provider = {
+		name: "hanging",
+		streamChat: (_model, _messages, _tools, options) => {
+			signal = options.signal;
+			return okAsync({
+				[Symbol.asyncIterator]: () => ({
+					next: () => {
+						markStarted();
+						return new Promise<IteratorResult<StreamChunk>>(() => undefined);
+					},
+					return: () => {
+						markCleanupStarted();
+						return new Promise<IteratorResult<StreamChunk>>((resolve) => {
+							releaseCleanup = () => resolve({ done: true, value: undefined });
+						});
+					},
+				}),
+			});
+		},
+		completeChat: () => {
+			throw new Error("not used");
+		},
+		supportsTools: () => true,
+		listModels: () => okAsync([]),
+	};
+	return {
+		provider,
+		started,
+		cleanupStarted,
+		releaseCleanup: () => releaseCleanup(),
+		signal: () => signal,
 	};
 };
 
@@ -145,6 +190,32 @@ describe("agent loop", () => {
 
 		expect(events.some((e) => e.kind === "tool_result")).toBe(true);
 		expect(events.some((e) => e.kind === "content" && e.text === "I read the file")).toBe(true);
+		expect(loop.state()).toBe("idle");
+	});
+
+	it("allows approval while the send consumer handles a pending event", async () => {
+		const provider = mockProvider([
+			toolCallChunks("call_1", "read_file", '{"path":"index.ts"}'),
+			[{ content: "I read the file", done: false }, { done: true }],
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(dummyReadTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+		const sendRun = loop.send("read it")[Symbol.asyncIterator]();
+		let result = await sendRun.next();
+		while (!result.done && result.value.kind !== "pending") result = await sendRun.next();
+
+		const events = await collect(loop.approve());
+		await sendRun.next();
+
+		expect(
+			events.some((event) => event.kind === "content" && event.text === "I read the file"),
+		).toBe(true);
 		expect(loop.state()).toBe("idle");
 	});
 
@@ -310,6 +381,105 @@ describe("agent loop", () => {
 		const events = await collect(loop.reject("Not allowed"));
 
 		expect(events.some((e) => e.kind === "content" && e.text === "OK, skipping that")).toBe(true);
+	});
+
+	it("awaits stream cleanup when cancelling an active turn", async () => {
+		const hanging = createHangingProvider();
+		const engine = createEngine(hanging.provider, "test");
+		const loop = createAgentLoop(engine, createRegistry(), {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+		const activeRun = collect(loop.send("first"));
+		await hanging.started;
+
+		let cancellationSettled = false;
+		const cancellation = loop.cancel().then(() => {
+			cancellationSettled = true;
+		});
+		expect(hanging.signal()?.aborted).toBe(true);
+		expect(cancellationSettled).toBe(false);
+		await hanging.cleanupStarted;
+
+		hanging.releaseCleanup();
+		await cancellation;
+		await activeRun;
+		expect(loop.state()).toBe("idle");
+	});
+
+	it("does not cancel the engine when no agent turn is active", async () => {
+		const engine = createEngine(mockProvider([]), "test");
+		const cancelEngine = vi.spyOn(engine, "cancel");
+		const loop = createAgentLoop(engine, createRegistry(), {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await loop.cancel();
+
+		expect(cancelEngine).not.toHaveBeenCalled();
+	});
+
+	it("reports idle after five seconds but blocks overlapping turns until cleanup", async () => {
+		vi.useFakeTimers();
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		try {
+			const hanging = createHangingProvider();
+			const engine = createEngine(hanging.provider, "test");
+			const loop = createAgentLoop(engine, createRegistry(), {
+				maxRounds: 5,
+				projectRoot: "/tmp",
+				systemPrompt: "test",
+			});
+			const activeRun = collect(loop.send("first"));
+			await hanging.started;
+			const cancellation = loop.cancel();
+			await hanging.cleanupStarted;
+
+			await vi.advanceTimersByTimeAsync(5000);
+			await cancellation;
+			expect(loop.state()).toBe("idle");
+			expect(warning).toHaveBeenCalledWith("anvil: cancellation did not finish within 5 seconds");
+			expect(await collect(loop.send("second"))).toContainEqual({
+				kind: "error",
+				message: "An agent turn is already active",
+			});
+
+			hanging.releaseCleanup();
+			await activeRun;
+		} finally {
+			warning.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
+	it("rejects a concurrent turn without changing conversation history", async () => {
+		const hanging = createHangingProvider();
+		const engine = createEngine(hanging.provider, "test");
+		const loop = createAgentLoop(engine, createRegistry(), {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+		const activeRun = collect(loop.send("first"));
+		await hanging.started;
+
+		const rejectedRun = await collect(loop.send("second"));
+		expect(rejectedRun).toContainEqual({
+			kind: "error",
+			message: "An agent turn is already active",
+		});
+		expect(engine.messages().filter((message) => message.role === "user")).toEqual([
+			{ role: "user", content: "first" },
+		]);
+
+		const cancellation = loop.cancel();
+		await hanging.cleanupStarted;
+		hanging.releaseCleanup();
+		await cancellation;
+		await activeRun;
 	});
 
 	it("keeps the tool's own result when post-processing throws", async () => {

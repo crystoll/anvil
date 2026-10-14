@@ -9,7 +9,7 @@ type SignalSource = {
 };
 
 type GracefulExitDeps = {
-	cancel: () => void;
+	cancel: () => void | Promise<void>;
 	closeUi: () => void;
 	flush: () => ResultType<string | undefined, string>;
 	shutdown: () => Promise<void>;
@@ -43,7 +43,10 @@ export const createGracefulExit = (deps: GracefulExitDeps) => {
 
 	const run = (code = 0): Promise<void> => {
 		exitPromise ??= Promise.resolve().then(async () => {
-			runStep("Cancellation", deps.cancel);
+			await ResultAsync.fromPromise(Promise.resolve().then(deps.cancel), toError).match(
+				() => undefined,
+				(error) => report("Cancellation", error),
+			);
 			runStep("UI cleanup", deps.closeUi);
 			const saveResult = Result.fromThrowable(deps.flush, toError)().andThen((result) =>
 				result.mapErr((message) => new Error(message)),

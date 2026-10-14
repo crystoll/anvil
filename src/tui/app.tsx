@@ -201,10 +201,7 @@ function App({
 		}
 		lastCtrlC.current = now;
 		if (busyRef.current) {
-			agent.cancel();
-			setBusy(false);
-			setStreaming("");
-			addMsg("  [cancelled]", true);
+			void agent.cancel();
 			return;
 		}
 		addMsg("  [press Ctrl+C again to exit]", true);
@@ -238,6 +235,10 @@ function App({
 		}
 		if (picker) {
 			handlePickerKey(key);
+			return;
+		}
+		if (key.escape && busyRef.current) {
+			void agent.cancel();
 			return;
 		}
 		handleHistoryNav(key);

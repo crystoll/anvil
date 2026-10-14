@@ -7,7 +7,9 @@ const setup = (overrides: Partial<Parameters<typeof createGracefulExit>[0]> = {}
 	const steps: string[] = [];
 	const source = new EventEmitter();
 	const deps = {
-		cancel: vi.fn(() => steps.push("cancel")),
+		cancel: vi.fn(() => {
+			steps.push("cancel");
+		}),
 		closeUi: vi.fn(() => steps.push("close")),
 		flush: vi.fn(() => {
 			steps.push("flush");
@@ -31,6 +33,25 @@ describe("createGracefulExit", () => {
 		await gracefulExit.run();
 
 		expect(steps).toEqual(["cancel", "close", "flush", "shutdown", "exit:0"]);
+	});
+
+	it("waits for cancellation before closing the UI and saving", async () => {
+		const { gracefulExit, steps, deps } = setup({
+			cancel: vi.fn(() => {
+				steps.push("cancel");
+				return new Promise<void>((resolve) => {
+					setTimeout(() => {
+						steps.push("cancelled");
+						resolve();
+					}, 10);
+				});
+			}),
+		});
+
+		await gracefulExit.run();
+
+		expect(deps.closeUi).toHaveBeenCalledTimes(1);
+		expect(steps).toEqual(["cancel", "cancelled", "close", "flush", "shutdown", "exit:0"]);
 	});
 
 	it("runs cleanup once when multiple exit requests arrive", async () => {
