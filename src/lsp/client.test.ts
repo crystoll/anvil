@@ -8,6 +8,7 @@ import type { LspLanguageConfig } from "./config.js";
 
 const fakeServer = fileURLToPath(new URL("../test-support/fake-lsp-server.mjs", import.meta.url));
 const rootUri = "file:///tmp/project";
+const fileUri = `${rootUri}/index.ts`;
 const fastTimeouts = { requestMs: 300, initializeMs: 300, shutdownMs: 300 };
 
 const serverConfig = (command: string, args: string[] = []): LspLanguageConfig => ({
@@ -72,6 +73,30 @@ describe("createLspClient", () => {
 		const client = createLspClient(fakeServerConfig("noisy"), fastTimeouts);
 
 		await expect(client.initialize(rootUri)).resolves.toBeUndefined();
+		await client.shutdown();
+	});
+
+	it("parses a response with multi-byte text", async () => {
+		const client = createLspClient(fakeServerConfig("unicode"), fastTimeouts);
+		await client.initialize(rootUri);
+
+		await expect(client.hover(fileUri, 0, 0)).resolves.toBe("hello(): string → greets");
+		await client.shutdown();
+	});
+
+	it("parses a multi-byte character split across reads", async () => {
+		const client = createLspClient(fakeServerConfig("unicode-split"), fastTimeouts);
+		await client.initialize(rootUri);
+
+		await expect(client.hover(fileUri, 0, 0)).resolves.toBe("hello(): string → greets");
+		await client.shutdown();
+	});
+
+	it("answers a server request that reuses a pending id", async () => {
+		const client = createLspClient(fakeServerConfig("asks"), fastTimeouts);
+		await client.initialize(rootUri);
+
+		await expect(client.hover(fileUri, 0, 0)).resolves.toBe("[null,null]");
 		await client.shutdown();
 	});
 

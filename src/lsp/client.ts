@@ -56,7 +56,7 @@ export const createLspClient = (
 	let proc: ChildProcess | undefined;
 	let stopped: Error | undefined;
 	let nextId = 1;
-	let buffer = "";
+	let buffer = Buffer.alloc(0);
 	let diagnostics: Diagnostic[] = [];
 	const pending = new Map<number, PendingRequest>();
 	const diagnosticListeners: Array<() => void> = [];
@@ -101,13 +101,21 @@ export const createLspClient = (
 		send({ jsonrpc: "2.0", method, params });
 	};
 
+	const settleResponse = (id: number, msg: Record<string, unknown>) => {
+		const p = takePending(id);
+		if (!p) return;
+		if (msg.error) p.reject(new Error(String((msg.error as Record<string, unknown>).message)));
+		else p.resolve(msg.result);
+	};
+
 	const handleMessage = (msg: Record<string, unknown>) => {
-		// Response to a request
+		// Server requests carry the server's own ids, which can collide with ours, so check them first.
+		if (typeof msg.method === "string" && msg.id !== undefined) {
+			send({ jsonrpc: "2.0", id: msg.id, result: serverRequestResult(msg.method, msg.params) });
+			return;
+		}
 		if (typeof msg.id === "number") {
-			const p = takePending(msg.id);
-			if (!p) return;
-			if (msg.error) p.reject(new Error(String((msg.error as Record<string, unknown>).message)));
-			else p.resolve(msg.result);
+			settleResponse(msg.id, msg);
 			return;
 		}
 		// Server notification
@@ -122,17 +130,17 @@ export const createLspClient = (
 		while (true) {
 			const headerEnd = buffer.indexOf("\r\n\r\n");
 			if (headerEnd === -1) break;
-			const header = buffer.slice(0, headerEnd);
+			const header = buffer.subarray(0, headerEnd).toString();
 			const match = header.match(/Content-Length:\s*(\d+)/i);
 			if (!match) {
-				buffer = buffer.slice(headerEnd + 4);
+				buffer = buffer.subarray(headerEnd + 4);
 				continue;
 			}
 			const len = Number.parseInt(match[1] ?? "0", 10);
 			const bodyStart = headerEnd + 4;
 			if (buffer.length < bodyStart + len) break;
-			const body = buffer.slice(bodyStart, bodyStart + len);
-			buffer = buffer.slice(bodyStart + len);
+			const body = buffer.subarray(bodyStart, bodyStart + len).toString();
+			buffer = buffer.subarray(bodyStart + len);
 			try {
 				handleMessage(JSON.parse(body));
 			} catch {
@@ -145,7 +153,7 @@ export const createLspClient = (
 		// stderr is never read, and a full pipe would block a chatty server.
 		const child = spawn(config.command, config.args, { stdio: ["pipe", "pipe", "ignore"] });
 		child.stdout?.on("data", (chunk: Buffer) => {
-			buffer += chunk.toString();
+			buffer = Buffer.concat([buffer, chunk]);
 			parseFrames();
 		});
 		child.stdin?.on("error", () => {
@@ -259,6 +267,13 @@ const startError = (command: string, error: NodeJS.ErrnoException): Error =>
 	new Error(
 		error.code === "ENOENT" ? `${command} not found` : `${command} failed: ${error.message}`,
 	);
+
+/** We have no settings or UI to offer, so answer "nothing" in the shape each request expects. */
+const serverRequestResult = (method: string, params: unknown): unknown => {
+	if (method !== "workspace/configuration") return null;
+	const items = (params as { items?: unknown } | undefined)?.items;
+	return Array.isArray(items) ? items.map(() => null) : [];
+};
 
 /** Wait for diagnostics to arrive (server pushes them async after changes). */
 export const waitForDiagnostics = (client: LspClient, timeoutMs = 2000): Promise<Diagnostic[]> =>

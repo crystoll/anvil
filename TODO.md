@@ -284,9 +284,9 @@ Do this before writing the many new tests in M3–M8.
   - **Test first:** an async hook whose shell can't start doesn't crash the process, and a hook that can't start (e.g. a malformed command) counts as failed instead of rejecting.
   - **Change:** `runHooks` never rejects, so callers that don't await it are safe, and fire-and-forget hooks handle spawn errors.
 - [ ] **M3.10 Bounded shutdown.** `ctx.shutdown()` races LSP and MCP teardown against a 3 s timeout. Today `cli.ts` can hang on exit.
-- [ ] **M3.11 LSP protocol fixes.** Found during M3.1.
+- [x] **M3.11 LSP protocol fixes.** Found during M3.1.
   - **Test first,** with the fake server:
-    - A response with non-ASCII text (e.g. hover docs containing "→") is parsed. Today the client measures a byte-based `Content-Length` in characters and waits for the rest of the frame until the request times out.
+    - A response with non-ASCII text (e.g. hover docs containing "→") is parsed. Today the client measures a byte-based `Content-Length` in characters and waits for the rest of the frame until the request times out. A character split across two reads also turns into `\ufffd`s.
     - A server request that reuses a pending id (e.g. `workspace/configuration` with id 1 during `initialize`) gets an answer, and `initialize` still resolves with the real response. Today the request is taken as the response and never answered.
   - **Change `lsp/client.ts`:** buffer bytes instead of strings, and answer server requests (`null`, or one `null` per `workspace/configuration` item) instead of matching them to pending requests.
 
