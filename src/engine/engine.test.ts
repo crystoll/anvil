@@ -176,6 +176,114 @@ describe("chat engine", () => {
 
 		expect(events.some((e) => e.kind === "cancelled")).toBe(true);
 		expect(engine.state()).toBe("idle");
+		expect(engine.messages().at(-1)).toMatchObject({
+			role: "assistant",
+			content: "start",
+			status: "interrupted",
+		});
+	});
+
+	it("cancels a stream even when the provider has not yielded a chunk", async () => {
+		let requestCount = 0;
+		let markRequestStarted: () => void = () => undefined;
+		const requestStarted = new Promise<void>((resolve) => {
+			markRequestStarted = resolve;
+		});
+		const provider: Provider = {
+			...mockProvider([]),
+			streamChat: (_model, _messages, _tools, opts) => {
+				const requestIndex = requestCount++;
+				if (requestIndex === 0) markRequestStarted();
+				async function* generate() {
+					if (requestIndex === 0) {
+						await new Promise<void>((resolve) => {
+							if (opts.signal?.aborted) resolve();
+							else opts.signal?.addEventListener("abort", () => resolve(), { once: true });
+						});
+						yield { done: true };
+						return;
+					}
+					yield { content: "next response", done: false };
+					yield { done: true };
+				}
+				return okAsync(generate());
+			},
+		};
+		const engine = createEngine(provider, "test");
+		const controller = new AbortController();
+		engine.addUser("first request");
+		const pending = collectEvents(engine.stream([], { signal: controller.signal }));
+
+		await requestStarted;
+		expect(engine.state()).toBe("streaming");
+		controller.abort();
+
+		expect(await pending).toContainEqual({ kind: "cancelled" });
+		expect(engine.state()).toBe("idle");
+		engine.addUser("next request");
+		expect(await collectEvents(engine.stream([]))).toContainEqual(
+			expect.objectContaining({
+				kind: "done",
+				message: expect.objectContaining({ content: "next response" }),
+			}),
+		);
+	});
+
+	it("marks partial answers as errors and drops incomplete tool calls", async () => {
+		const engine = createEngine(
+			mockProvider([
+				{ content: "partial", done: false },
+				{
+					toolCall: { index: 0, id: "call-1", name: "read_file", argumentsFragment: "{" },
+					done: false,
+				},
+				{ done: true, error: { kind: "connection", message: "socket closed" } },
+			]),
+			"test",
+		);
+
+		const events = await collectEvents(engine.stream([]));
+
+		expect(events.at(-1)).toEqual({
+			kind: "error",
+			error: { kind: "connection", message: "socket closed" },
+		});
+		expect(engine.messages().at(-1)).toEqual({
+			role: "assistant",
+			content: "partial",
+			status: "error",
+		});
+	});
+
+	it("marks partial answers interrupted when the consumer stops early", async () => {
+		let providerClosed = false;
+		const provider: Provider = {
+			...mockProvider([]),
+			streamChat: () => {
+				async function* generate() {
+					try {
+						yield { content: "partial", done: false };
+						await new Promise((resolve) => setTimeout(resolve, 100));
+					} finally {
+						providerClosed = true;
+					}
+				}
+				return okAsync(generate());
+			},
+		};
+		const engine = createEngine(provider, "test");
+		const iterator = engine.stream([])[Symbol.asyncIterator]();
+
+		expect((await iterator.next()).value).toMatchObject({ kind: "chunk" });
+		await iterator.return?.();
+
+		expect(providerClosed).toBe(true);
+		expect(engine.state()).toBe("idle");
+		expect(engine.messages().at(-1)).toEqual({
+			role: "assistant",
+			content: "partial",
+			status: "interrupted",
+		});
 	});
 
 	it("adds tool results to history", () => {
@@ -226,7 +334,7 @@ describe("commit listeners", () => {
 		]);
 	});
 
-	it("don't hear about an answer that failed mid-stream", async () => {
+	it("hears a partial answer that failed mid-stream", async () => {
 		const dropped: StreamChunk[] = [
 			{ content: "Hel", done: false },
 			{ done: true, error: { kind: "connection", message: "socket hang up" } },
@@ -236,7 +344,7 @@ describe("commit listeners", () => {
 
 		await collectEvents(engine.stream([]));
 
-		expect(committed).toEqual([]);
+		expect(committed).toEqual([{ role: "assistant", content: "Hel", status: "error" }]);
 	});
 
 	it("don't hear about the system prompt or replaced history", () => {

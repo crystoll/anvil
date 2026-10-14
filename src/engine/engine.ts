@@ -42,7 +42,7 @@ export type Engine = {
 	rewriteLastAsToolCall: (call: { id: string; name: string; arguments: string }) => boolean;
 	/**
 	 * Hears each message as it joins the conversation, so it can be saved right away.
-	 * Not called for the system prompt, replaced history or failed answers.
+	 * Partial answers are committed with a status when streaming fails or is interrupted.
 	 */
 	onCommit: (listener: (message: Message) => void) => () => void;
 };
@@ -58,13 +58,128 @@ type Accumulator = {
 /** Process a single stream chunk. Returns a terminal event if streaming should stop, undefined to continue. */
 const processChunk = (
 	chunk: StreamChunk,
-	abortController: AbortController,
+	signal: AbortSignal,
 	accumulator: Accumulator,
-): EngineEvent | undefined => {
-	if (abortController.signal.aborted) return { kind: "cancelled" };
+): Extract<EngineEvent, { kind: "cancelled" | "error" }> | undefined => {
+	if (signal.aborted) return { kind: "cancelled" };
+	if (chunk.error?.kind === "cancelled") return { kind: "cancelled" };
 	if (chunk.error) return { kind: "error", error: chunk.error };
 	accumulateChunk(accumulator, chunk);
 	return undefined;
+};
+
+const waitForAbort = (signal: AbortSignal): { promise: Promise<void>; dispose: () => void } => {
+	let onAbort: () => void = () => undefined;
+	const promise = new Promise<void>((resolve) => {
+		onAbort = resolve;
+		if (signal.aborted) resolve();
+		else signal.addEventListener("abort", onAbort, { once: true });
+	});
+	return {
+		promise,
+		dispose: () => signal.removeEventListener("abort", onAbort),
+	};
+};
+
+type StreamOutcome =
+	| { kind: "success" }
+	| { kind: "cancelled" }
+	| { kind: "error"; error: ProviderError };
+
+const requestStream = (
+	provider: Provider,
+	model: string,
+	messages: Message[],
+	tools: ToolSchema[],
+	opts: StreamOptions,
+	signal: AbortSignal,
+	abortPromise: Promise<void>,
+) =>
+	Promise.race([
+		Promise.resolve(provider.streamChat(model, messages, tools, { ...opts, signal })).then(
+			(result) => ({ kind: "result" as const, result }),
+		),
+		abortPromise.then(() => ({ kind: "cancelled" as const })),
+	]);
+
+const consumeProviderStream = async function* (
+	stream: AsyncIterable<StreamChunk>,
+	signal: AbortSignal,
+	abortPromise: Promise<void>,
+	accumulator: Accumulator,
+	onTerminal: (outcome: Exclude<StreamOutcome, { kind: "success" }>) => void,
+): AsyncGenerator<EngineEvent, StreamOutcome> {
+	const iterator = stream[Symbol.asyncIterator]();
+	let completed = false;
+	try {
+		while (true) {
+			const next = await Promise.race([
+				iterator.next().then((value) => ({ kind: "next" as const, value })),
+				abortPromise.then(() => ({ kind: "cancelled" as const })),
+			]);
+			if (next.kind === "cancelled") {
+				const outcome = { kind: "cancelled" } as const;
+				onTerminal(outcome);
+				yield { kind: "cancelled" };
+				return outcome;
+			}
+			if (next.value.done) {
+				completed = true;
+				return { kind: "success" };
+			}
+
+			const chunk = next.value.value;
+			const terminal = processChunk(chunk, signal, accumulator);
+			if (terminal) {
+				const outcome =
+					terminal.kind === "cancelled"
+						? ({ kind: "cancelled" } as const)
+						: ({ kind: "error", error: terminal.error } as const);
+				onTerminal(outcome);
+				yield terminal;
+				return outcome;
+			}
+			yield { kind: "chunk", chunk };
+		}
+	} finally {
+		if (!completed) await iterator.return?.();
+	}
+};
+
+const runProviderStream = async function* (
+	provider: Provider,
+	model: string,
+	messages: Message[],
+	tools: ToolSchema[],
+	opts: StreamOptions,
+	signal: AbortSignal,
+	abortPromise: Promise<void>,
+	accumulator: Accumulator,
+	onTerminal: (outcome: Exclude<StreamOutcome, { kind: "success" }>) => void,
+): AsyncGenerator<EngineEvent, StreamOutcome> {
+	const request = await requestStream(provider, model, messages, tools, opts, signal, abortPromise);
+	if (request.kind === "cancelled") {
+		const outcome = { kind: "cancelled" } as const;
+		onTerminal(outcome);
+		yield { kind: "cancelled" };
+		return outcome;
+	}
+	if (request.result.isErr()) {
+		const cancelled = signal.aborted || request.result.error.kind === "cancelled";
+		const outcome: Exclude<StreamOutcome, { kind: "success" }> = cancelled
+			? { kind: "cancelled" }
+			: { kind: "error", error: request.result.error };
+		onTerminal(outcome);
+		yield cancelled ? { kind: "cancelled" } : { kind: "error", error: request.result.error };
+		return outcome;
+	}
+	return yield* consumeProviderStream(
+		request.result.value,
+		signal,
+		abortPromise,
+		accumulator,
+		onTerminal,
+	);
 };
 
 const createAccumulator = (): Accumulator => ({
@@ -91,10 +206,11 @@ const accumulateToolCall = (
 	}
 };
 
-const finalizeMessage = (acc: Accumulator): Message => {
+const finalizeMessage = (acc: Accumulator, status?: Message["status"]): Message => {
 	const message: Message = { role: "assistant", content: acc.content };
+	if (status) message.status = status;
 	if (acc.reasoning) message.reasoning = acc.reasoning;
-	if (acc.toolCalls.size > 0) {
+	if (!status && acc.toolCalls.size > 0) {
 		message.toolCalls = [...acc.toolCalls.values()].map((tc) => ({
 			id: tc.id,
 			name: tc.name,
@@ -103,6 +219,25 @@ const finalizeMessage = (acc: Accumulator): Message => {
 	}
 	return message;
 };
+
+const hasPartialResponse = (acc: Accumulator): boolean => Boolean(acc.content || acc.reasoning);
+
+const createStreamSignal = (controller: AbortController, external?: AbortSignal): AbortSignal =>
+	external ? AbortSignal.any([controller.signal, external]) : controller.signal;
+
+const streamException = (
+	error: unknown,
+	cancelled: boolean,
+): Exclude<StreamOutcome, { kind: "success" }> =>
+	cancelled
+		? { kind: "cancelled" }
+		: {
+				kind: "error",
+				error: {
+					kind: "connection",
+					message: `Stream interrupted: ${error instanceof Error ? error.message : String(error)}`,
+				},
+			};
 
 /** Create a chat engine bound to a specific provider and model. */
 export const createEngine = (
@@ -165,57 +300,63 @@ export const createEngine = (
 		tools: ToolSchema[],
 		opts: StreamOptions = {},
 	): AsyncIterable<EngineEvent> {
-		if (currentState === "streaming") {
+		if (currentState !== "idle") {
 			yield { kind: "error", error: { kind: "unknown", message: "Already streaming" } };
 			return;
 		}
 
 		currentState = "streaming";
-		abortController = new AbortController();
-		repairBeforeRequest();
-
-		const result = await provider.streamChat(model, [...history], tools, {
-			...opts,
-			signal: abortController.signal,
-		});
-
-		if (result.isErr()) {
-			currentState = "idle";
-			yield { kind: "error", error: result.error };
-			return;
-		}
-
+		const controller = new AbortController();
+		abortController = controller;
+		const signal = createStreamSignal(controller, opts.signal);
+		const abortWait = waitForAbort(signal);
 		const accumulator = createAccumulator();
+		let outcome: StreamOutcome | undefined;
+		const markTerminal = (terminal: Exclude<StreamOutcome, { kind: "success" }>) => {
+			outcome = terminal;
+			commitPartial(accumulator, statusForOutcome(terminal));
+		};
 
 		try {
-			for await (const chunk of result.value) {
-				const terminal = processChunk(chunk, abortController, accumulator);
-				if (terminal) {
-					currentState = "idle";
-					yield terminal;
-					return;
-				}
-				yield { kind: "chunk", chunk };
+			repairBeforeRequest();
+			outcome = yield* runProviderStream(
+				provider,
+				model,
+				[...history],
+				tools,
+				opts,
+				signal,
+				abortWait.promise,
+				accumulator,
+				markTerminal,
+			);
+			if (outcome.kind === "success") {
+				const message = finalizeMessage(accumulator);
+				commit(message);
+				yield { kind: "done", message };
 			}
-		} catch (e) {
+		} catch (error) {
+			const terminal = streamException(error, signal.aborted);
+			markTerminal(terminal);
+			yield terminal.kind === "cancelled"
+				? { kind: "cancelled" }
+				: { kind: "error", error: terminal.error };
+		} finally {
+			abortWait.dispose();
+			if (!outcome) commitPartial(accumulator, "interrupted");
+			controller.abort();
 			currentState = "idle";
 			abortController = null;
-			yield {
-				kind: "error",
-				error: {
-					kind: "connection",
-					message: `Stream interrupted: ${e instanceof Error ? e.message : String(e)}`,
-				},
-			};
-			return;
 		}
-
-		const message = finalizeMessage(accumulator);
-		currentState = "idle";
-		abortController = null;
-		commit(message);
-		yield { kind: "done", message };
 	}
+
+	const statusForOutcome = (
+		terminal: Exclude<StreamOutcome, { kind: "success" }>,
+	): Message["status"] => (terminal.kind === "cancelled" ? "interrupted" : "error");
+
+	const commitPartial = (accumulator: Accumulator, status: Message["status"]): void => {
+		if (hasPartialResponse(accumulator)) commit(finalizeMessage(accumulator, status));
+	};
 
 	return {
 		messages: () => history,

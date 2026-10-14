@@ -75,6 +75,33 @@ describe("agent loop", () => {
 		expect(loop.state()).toBe("idle");
 	});
 
+	it("reports errors for partial streamed answers", async () => {
+		const provider = mockProvider([
+			[
+				{ content: "partial", done: false },
+				{ done: true, error: { kind: "connection", message: "socket closed" } },
+			],
+		]);
+		const engine = createEngine(provider, "test");
+		const loop = createAgentLoop(engine, createRegistry(), {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "You are helpful",
+		});
+
+		const events = await collect(loop.send("hi"));
+
+		expect(events).toContainEqual({
+			kind: "error",
+			message: "socket closed",
+			status: "error",
+		});
+		expect(engine.messages().at(-1)).toMatchObject({
+			content: "partial",
+			status: "error",
+		});
+	});
+
 	it("pauses on approval-required tool call", async () => {
 		const provider = mockProvider([
 			toolCallChunks("call_1", "read_file", '{"path":"src/index.ts"}'),

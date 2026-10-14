@@ -7,6 +7,7 @@ export type Role = "system" | "user" | "assistant" | "tool";
 export type Message = {
 	role: Role;
 	content: string;
+	status?: "error" | "interrupted";
 	reasoning?: string;
 	toolCalls?: ToolCall[];
 	toolCallId?: string;
@@ -106,6 +107,7 @@ export type Provider = {
 /** Discriminated union of provider errors. */
 export type ProviderError =
 	| { kind: "timeout"; message: string }
+	| { kind: "cancelled"; message: string }
 	| { kind: "connection"; message: string }
 	| { kind: "parse"; message: string; raw?: string }
 	| { kind: "api"; status: number; message: string }

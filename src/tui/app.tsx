@@ -290,6 +290,17 @@ function App({
 		setStreaming("");
 	};
 
+	const showPartialResponseStatus = (
+		state: { response: string },
+		status?: "error" | "interrupted",
+	) => {
+		if (!state.response) return;
+		addMsg(`anvil: ${state.response}`);
+		const label =
+			status === "interrupted" ? "[response interrupted]" : "[response ended with an error]";
+		addMsg(`  ${label}`, true);
+	};
+
 	/** Handle streaming content/reasoning/pending/tool_result events.
 	 * Returns a number to short-circuit, false if unhandled, undefined to continue. */
 	const handleStreamEvent = async (
@@ -323,7 +334,7 @@ function App({
 	 * Returns a number to short-circuit, or undefined to continue. */
 	const handleMetaEvent = (
 		event: AgentEvent,
-		state: { finishReason: string | undefined },
+		state: { finishReason: string | undefined; response: string },
 	): number | undefined => {
 		if (event.kind === "usage") {
 			setTokens((t) => t + event.totalTokens);
@@ -332,6 +343,8 @@ function App({
 			return undefined;
 		}
 		if (event.kind === "error") {
+			showPartialResponseStatus(state, event.status);
+			setStreaming("");
 			addMsg(`  ⚠ ${event.message}`, true);
 			return -1;
 		}
@@ -348,7 +361,10 @@ function App({
 	};
 
 	const consumeEvents = async (events: AsyncGenerator<AgentEvent>): Promise<number> => {
-		const state = { response: "", finishReason: undefined as string | undefined };
+		const state = {
+			response: "",
+			finishReason: undefined as string | undefined,
+		};
 		for await (const event of events) {
 			const streamResult = await handleStreamEvent(event, state);
 			if (streamResult === false) {

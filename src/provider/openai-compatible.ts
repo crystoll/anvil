@@ -1,4 +1,6 @@
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
+import { requestMessageContent } from "./request-message.js";
+import { readWithTimeout, type StreamReadResult } from "./stream-reader.js";
 import type {
 	CompleteOptions,
 	CompletionResult,
@@ -32,7 +34,10 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 
 	const buildMessages = (messages: Message[]) =>
 		messages.map((m) => {
-			const msg: Record<string, unknown> = { role: m.role, content: m.content };
+			const msg: Record<string, unknown> = {
+				role: m.role,
+				content: requestMessageContent(m),
+			};
 			if (m.toolCallId) msg.tool_call_id = m.toolCallId;
 			if (m.toolCalls?.length) {
 				msg.tool_calls = m.toolCalls.map((tc) => ({
@@ -72,7 +77,12 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 				body: JSON.stringify(body),
 				signal: fetchSignal,
 			}),
-			(e) => toConnectionError(e),
+			(e): ProviderError => {
+				clearTimeout(connectTimer);
+				return opts.signal?.aborted
+					? { kind: "cancelled", message: "Request cancelled" }
+					: toConnectionError(e);
+			},
 		).andThen((response) => {
 			clearTimeout(connectTimer);
 			if (!response.ok) {
@@ -88,7 +98,7 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 					message: "Response has no body",
 				});
 			}
-			return okAsync(parseSSEStream(response.body, streamTimeout));
+			return okAsync(parseSSEStream(response.body, streamTimeout, opts.signal));
 		});
 	};
 
@@ -150,208 +160,307 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 	};
 };
 
-/** Reads from a stream with a timeout watchdog, yielding raw byte arrays. */
-async function* readWithTimeout(
-	reader: ReadableStreamDefaultReader<Uint8Array>,
-	timeout: number,
-): AsyncGenerator<Uint8Array | "timeout" | "end"> {
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const clearWatchdog = () => {
-		if (timer) clearTimeout(timer);
-	};
+type ThinkState = { inside: boolean; pending: string };
+type SSEState = {
+	finishReason?: string;
+	usage?: StreamChunk["usage"];
+	think: ThinkState;
+};
 
-	try {
-		while (true) {
-			let readResult: ReadableStreamReadResult<Uint8Array>;
-			try {
-				const readPromise = reader.read();
-				const timeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
-					timer = setTimeout(() => resolve({ timedOut: true }), timeout);
-				});
-
-				const result = await Promise.race([readPromise, timeoutPromise]);
-				clearWatchdog();
-
-				if ("timedOut" in result) {
-					reader.cancel();
-					yield "timeout";
-					return;
-				}
-				readResult = result;
-			} catch (e) {
-				if (e instanceof DOMException && e.name === "AbortError") {
-					yield "end";
-					return;
-				}
-				// Network drop (TypeError: failed to fetch, etc.) — end stream cleanly
-				yield "end";
-				return;
-			}
-			if (readResult.done) {
-				yield "end";
-				return;
-			}
-			yield readResult.value;
-		}
-	} finally {
-		clearWatchdog();
-		reader.releaseLock();
-	}
-}
-
-/** Parse a single SSE line into a StreamChunk, or a terminal signal. */
-const parseSSELine = (line: string): StreamChunk | "done" | undefined => {
+/** Parse an SSE line into chunks, a terminal marker, or nothing. */
+const parseSSELine = (line: string): StreamChunk[] | "done" | undefined => {
 	const trimmed = line.trim();
 	if (!trimmed || trimmed.startsWith(":")) return undefined;
-	if (trimmed === "data: [DONE]") return "done";
-	if (!trimmed.startsWith("data: ")) return undefined;
-	return parseChunkJSON(trimmed.slice(6));
+	if (!trimmed.startsWith("data:")) return undefined;
+	const data = trimmed.slice(5).trimStart();
+	return data === "[DONE]" ? "done" : parseChunkJSON(data);
 };
 
-/**
- * Reclassify content inside <think>...</think> blocks as reasoning.
- * Handles Qwen3 and other models that embed thinking in the content field.
- */
-const reclassifyThinkBlock = (
-	chunk: StreamChunk,
-	inThink: boolean,
-	setInThink: (v: boolean) => void,
-): StreamChunk => {
-	if (!chunk.content) return chunk;
-	let text = chunk.content;
-	let reasoning = chunk.reasoning ?? "";
-	let content = "";
-
-	while (text.length > 0) {
-		if (!inThink) {
-			const openIdx = text.indexOf("<think>");
-			if (openIdx === -1) {
-				content += text;
-				break;
-			}
-			content += text.slice(0, openIdx);
-			text = text.slice(openIdx + 7);
-			setInThink(true);
-			inThink = true;
-		} else {
-			const closeIdx = text.indexOf("</think>");
-			if (closeIdx === -1) {
-				reasoning += text;
-				break;
-			}
-			reasoning += text.slice(0, closeIdx);
-			text = text.slice(closeIdx + 8);
-			setInThink(false);
-			inThink = false;
-		}
-	}
-
-	const result: StreamChunk = { ...chunk };
-	if (content) {
-		result.content = content;
-	} else {
-		delete result.content;
-	}
-	if (reasoning) {
-		result.reasoning = reasoning;
-	}
-	return result;
-};
-
-/** Parse SSE stream into async iterable of StreamChunks with timeout watchdog. */
+/** Parse SSE stream into data chunks followed by exactly one terminal chunk. */
 async function* parseSSEStream(
 	body: ReadableStream<Uint8Array>,
 	timeout: number,
+	signal?: AbortSignal,
 ): AsyncIterable<StreamChunk> {
+	const reader = body.getReader();
 	const decoder = new TextDecoder();
+	const state: SSEState = { think: { inside: false, pending: "" } };
 	let buffer = "";
-	let inThinkBlock = false;
 
-	for await (const data of readWithTimeout(body.getReader(), timeout)) {
-		if (data === "timeout") {
-			yield {
-				done: true,
-				error: { kind: "timeout", message: "Stream stalled — no data received within timeout" },
-			};
+	for await (const result of readWithTimeout(reader, timeout, signal)) {
+		const decoded = decodeSSERead(result, buffer, decoder);
+		if (decoded.kind === "failure") {
+			yield* terminalFailure(state, decoded.error);
 			return;
 		}
-		if (data === "end") {
-			yield { done: true };
+		buffer = decoded.buffer;
+		const lineResult = yield* processSSELines(decoded.lines, state);
+		if (lineResult === "done") {
+			yield* terminalSuccess(state);
 			return;
 		}
-
-		buffer += decoder.decode(data, { stream: true });
-		const lines = buffer.split("\n");
-		buffer = lines.pop() ?? "";
-
-		for (const line of lines) {
-			const parsed = parseSSELine(line);
-			if (parsed === "done") {
-				yield { done: true };
-				return;
-			}
-			if (parsed)
-				yield reclassifyThinkBlock(parsed, inThinkBlock, (v) => {
-					inThinkBlock = v;
-				});
+		if (lineResult) {
+			yield* terminalFailure(state, lineResult);
+			return;
+		}
+		if (decoded.ended) {
+			yield* terminalSuccess(state);
+			return;
 		}
 	}
+
+	yield* terminalFailure(state, {
+		kind: "connection",
+		message: "Stream ended before a terminal response",
+	});
 }
 
-/** Parse a single SSE data line into a StreamChunk. */
-const parseToolCallDelta = (delta: Record<string, unknown>): StreamChunk["toolCall"] => {
-	const tcs = delta.tool_calls as Array<Record<string, unknown>> | undefined;
-	const tc = tcs?.[0];
-	if (!tc) return undefined;
-	const fn = tc.function as Record<string, unknown> | undefined;
-	const result: NonNullable<StreamChunk["toolCall"]> = {
-		index: (tc.index as number) ?? 0,
-		argumentsFragment: (fn?.arguments as string) ?? "",
+type DecodedSSERead =
+	| { kind: "failure"; error: ProviderError }
+	| { kind: "lines"; lines: string[]; buffer: string; ended: boolean };
+
+const decodeSSERead = (
+	result: StreamReadResult,
+	buffer: string,
+	decoder: TextDecoder,
+): DecodedSSERead => {
+	const failure = readFailure(result);
+	if (failure) return { kind: "failure", error: failure };
+	if (result.kind !== "chunk" && result.kind !== "end") {
+		return {
+			kind: "failure",
+			error: { kind: "connection", message: "Invalid stream reader state" },
+		};
+	}
+	const ended = result.kind === "end";
+	const text = ended ? decoder.decode() : decoder.decode(result.value, { stream: true });
+	const lines = (buffer + text).split("\n");
+	return ended
+		? { kind: "lines", lines, buffer: "", ended }
+		: { kind: "lines", lines: lines.slice(0, -1), buffer: lines.at(-1) ?? "", ended };
+};
+
+const readFailure = (result: StreamReadResult): ProviderError | undefined => {
+	if (result.kind === "timeout") return { kind: "timeout", message: "Stream stalled" };
+	if (result.kind === "cancelled") return { kind: "cancelled", message: "Request cancelled" };
+	if (result.kind === "error") {
+		return { kind: "connection", message: errorText(result.cause) };
+	}
+	return undefined;
+};
+
+const terminalSuccess = function* (state: SSEState): Generator<StreamChunk> {
+	const pending = flushThinkState(state.think);
+	if (pending) yield pending;
+	if (!state.finishReason) {
+		yield {
+			done: true,
+			error: { kind: "connection", message: "Stream ended without a finish reason" },
+		};
+		return;
+	}
+	yield {
+		done: true,
+		finishReason: state.finishReason,
+		...(state.usage ? { usage: state.usage } : {}),
 	};
-	if (tc.id) result.id = tc.id as string;
-	if (fn?.name) result.name = fn.name as string;
+};
+
+const terminalFailure = function* (state: SSEState, error: ProviderError): Generator<StreamChunk> {
+	const pending = flushThinkState(state.think);
+	if (pending) yield pending;
+	yield { done: true, error };
+};
+
+const processSSELines = function* (
+	lines: string[],
+	state: SSEState,
+): Generator<StreamChunk, ProviderError | "done" | undefined> {
+	for (const line of lines) {
+		const parsed = processSSELine(line, state);
+		if (parsed === "done") return "done";
+		if (!parsed) continue;
+		for (const chunk of parsed) {
+			if (chunk.error) return chunk.error;
+			yield chunk;
+		}
+	}
+	return undefined;
+};
+
+const processSSELine = (line: string, state: SSEState): StreamChunk[] | "done" | undefined => {
+	const parsed = parseSSELine(line);
+	if (parsed === "done" || !parsed) return parsed;
+	return parsed.flatMap((chunk) => {
+		if (chunk.error) return [chunk];
+		if (chunk.finishReason) state.finishReason = chunk.finishReason;
+		if (chunk.usage) state.usage = chunk.usage;
+		const payload = reclassifyThinkBlock(chunk, state.think);
+		return payload.content || payload.reasoning || payload.toolCall
+			? [{ ...payload, done: false }]
+			: [];
+	});
+};
+
+const reclassifyThinkBlock = (chunk: StreamChunk, state: ThinkState): StreamChunk => {
+	if (chunk.content === undefined) return chunk;
+	let text = state.pending + chunk.content;
+	state.pending = "";
+	let content = "";
+	let reasoning = chunk.reasoning ?? "";
+
+	while (text) {
+		const next = consumeThinkText(text, state, content, reasoning);
+		content = next.content;
+		reasoning = next.reasoning;
+		if (!next.found) break;
+		text = next.remaining;
+	}
+
+	const result: StreamChunk = { ...chunk };
+	if (content) result.content = content;
+	else delete result.content;
+	if (reasoning) result.reasoning = reasoning;
+	else delete result.reasoning;
 	return result;
 };
 
-const parseUsage = (data: Record<string, unknown>): StreamChunk | undefined => {
-	const u = data.usage as { prompt_tokens?: number; total_tokens?: number } | undefined;
-	if (!u) return undefined;
+const consumeThinkText = (
+	text: string,
+	state: ThinkState,
+	content: string,
+	reasoning: string,
+): { content: string; reasoning: string; remaining: string; found: boolean } => {
+	const delimiter = state.inside ? "</think>" : "<think>";
+	const index = text.indexOf(delimiter);
+	if (index < 0) {
+		const pendingLength = partialSuffixLength(text, delimiter);
+		const completeText = text.slice(0, text.length - pendingLength);
+		state.pending = text.slice(text.length - pendingLength);
+		return {
+			content: state.inside ? content : content + completeText,
+			reasoning: state.inside ? reasoning + completeText : reasoning,
+			remaining: "",
+			found: false,
+		};
+	}
+
+	const before = text.slice(0, index);
+	state.inside = !state.inside;
 	return {
-		done: true,
-		usage: { promptTokens: u.prompt_tokens ?? 0, totalTokens: u.total_tokens ?? 0 },
+		content: state.inside ? content + before : content,
+		reasoning: state.inside ? reasoning : reasoning + before,
+		remaining: text.slice(index + delimiter.length),
+		found: true,
 	};
 };
 
-const parseChunkJSON = (json: string): StreamChunk | undefined => {
+const partialSuffixLength = (text: string, delimiter: string): number => {
+	const maxLength = Math.min(text.length, delimiter.length - 1);
+	for (let length = maxLength; length > 0; length--) {
+		if (text.endsWith(delimiter.slice(0, length))) return length;
+	}
+	return 0;
+};
+
+const flushThinkState = (state: ThinkState): StreamChunk | undefined => {
+	if (!state.pending) return undefined;
+	const content = state.inside ? undefined : state.pending;
+	const reasoning = state.inside ? state.pending : undefined;
+	state.pending = "";
+	return {
+		done: false,
+		...(content ? { content } : {}),
+		...(reasoning ? { reasoning } : {}),
+	};
+};
+
+const parseToolCallDeltas = (
+	delta: Record<string, unknown>,
+): NonNullable<StreamChunk["toolCall"]>[] => {
+	const calls = delta.tool_calls as Record<string, unknown>[] | undefined;
+	return (calls ?? []).map((call) => {
+		const fn = (call.function ?? {}) as Record<string, unknown>;
+		const toolCall: NonNullable<StreamChunk["toolCall"]> = {
+			index: (call.index as number) ?? 0,
+			argumentsFragment: (fn.arguments as string) ?? "",
+		};
+		if (typeof call.id === "string") toolCall.id = call.id;
+		if (typeof fn.name === "string") toolCall.name = fn.name;
+		return toolCall;
+	});
+};
+
+const parseUsage = (data: Record<string, unknown>): StreamChunk["usage"] => {
+	const usage = data.usage as { prompt_tokens?: number; total_tokens?: number } | undefined;
+	return usage
+		? { promptTokens: usage.prompt_tokens ?? 0, totalTokens: usage.total_tokens ?? 0 }
+		: undefined;
+};
+
+const parseChunkJSON = (json: string): StreamChunk[] => {
 	try {
-		const data = JSON.parse(json);
-		const choice = data.choices?.[0];
-
-		if (!choice) return parseUsage(data);
-
-		const delta = choice.delta ?? {};
-		const chunk: StreamChunk = { done: choice.finish_reason != null };
-		if (choice.finish_reason) chunk.finishReason = choice.finish_reason;
-
-		if (delta.content) chunk.content = delta.content;
-		if (delta.reasoning_content || delta.reasoning)
-			chunk.reasoning = delta.reasoning_content ?? delta.reasoning;
-
-		const toolCall = parseToolCallDelta(delta);
-		if (toolCall) chunk.toolCall = toolCall;
-
-		if (data.usage) {
-			chunk.usage = {
-				promptTokens: data.usage.prompt_tokens ?? 0,
-				totalTokens: data.usage.total_tokens ?? 0,
-			};
-		}
-
-		return chunk;
-	} catch {
-		return undefined;
+		const data = JSON.parse(json) as Record<string, unknown>;
+		const error = parseStreamError(data);
+		if (error) return [{ done: true, error }];
+		const choice = (data.choices as Record<string, unknown>[] | undefined)?.[0];
+		return choice ? parseChoiceChunks(choice, data) : parseUsageChunk(data);
+	} catch (error) {
+		return [{ done: true, error: parseFailure(error, json) }];
 	}
 };
+
+const parseStreamError = (data: Record<string, unknown>): ProviderError | undefined => {
+	if (data.error === undefined) return undefined;
+	const error = data.error;
+	const message =
+		typeof error === "string"
+			? error
+			: typeof error === "object" && error !== null && "message" in error
+				? String(error.message)
+				: "Provider returned a stream error";
+	const status =
+		typeof data.status === "number"
+			? data.status
+			: typeof error === "object" && error !== null && "status" in error
+				? Number(error.status)
+				: 500;
+	return { kind: "api", status, message };
+};
+
+const parseChoiceChunks = (
+	choice: Record<string, unknown>,
+	data: Record<string, unknown>,
+): StreamChunk[] => {
+	const delta = (choice.delta ?? {}) as Record<string, unknown>;
+	const finishReason = typeof choice.finish_reason === "string" ? choice.finish_reason : undefined;
+	const base: StreamChunk = { done: false };
+	if (finishReason) base.finishReason = finishReason;
+	if (typeof delta.content === "string") base.content = delta.content;
+	const reasoning = delta.reasoning_content ?? delta.reasoning;
+	if (typeof reasoning === "string") base.reasoning = reasoning;
+	const usage = parseUsage(data);
+	if (usage) base.usage = usage;
+	const toolCalls = parseToolCallDeltas(delta);
+	if (toolCalls.length === 0) return [base];
+	return toolCalls.map((toolCall, index) =>
+		index === 0 ? { ...base, toolCall } : { done: false, toolCall },
+	);
+};
+
+const parseUsageChunk = (data: Record<string, unknown>): StreamChunk[] => {
+	const usage = parseUsage(data);
+	return usage ? [{ done: false, usage }] : [];
+};
+
+const parseFailure = (error: unknown, json: string): ProviderError => ({
+	kind: "parse",
+	message: `Invalid OpenAI-compatible stream data: ${errorText(error)}`,
+	raw: json,
+});
+
+const errorText = (error: unknown): string =>
+	error instanceof Error ? error.message : String(error);
 
 const parseCompletionResponse = (json: unknown): CompletionResult => {
 	const data = json as Record<string, unknown>;

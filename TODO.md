@@ -334,26 +334,26 @@ Do this before writing the many new tests in M3–M8.
 
 `StreamChunk.error` already exists and the engine already handles it; Ollama simply never emits it.
 
-- [ ] **M5.0 Test helpers** in `src/test-support/mock-ollama.ts` and `mock-openai.ts`. Real `node:http` servers with scripted turns and recorded requests. They inject faults via `delayMs`, `stallAfter`, `dropAfter`, `errorLine` and `httpStatus`, and are reused by M6–M8 and the e2e tests.
-- [ ] **M5.1 Ollama** (`parseNDJSONStream`, `readStream`). **Test first:**
+- [x] **M5.0 Test helpers** in `src/test-support/mock-ollama.ts` and `mock-openai.ts`. Real `node:http` servers with scripted turns and recorded requests. They inject faults via `delayMs`, `stallAfter`, `dropAfter`, `errorLine` and `httpStatus`, and are reused by M6–M8 and the e2e tests.
+- [x] **M5.1 Ollama** (`parseNDJSONStream`, `readStream`). **Test first:**
   - A socket drop yields an `error` of kind `connection`.
   - A `{"error":"model runner has unexpectedly stopped"}` line yields an `api` error carrying that message.
   - A mid-stream stall longer than `streamTimeout` yields `timeout`. Today's test only covers the connect stage.
   - An abort yields `cancelled`, and the server sees the socket close, so Ollama stops generating.
   - `done_reason: "length"` yields `finishReason: "length"`.
-- [ ] **M5.2 OpenAI-compatible and llama.cpp.** **Test first:**
+- [x] **M5.2 OpenAI-compatible and llama.cpp.** **Test first:**
   - A drop yields `connection`.
   - An abort yields `cancelled`, not "Connection timed out".
   - `data: {"error":…}` yields an `api` error.
   - Two `tool_calls` in one delta are both assembled. Today only index 0 is.
   - A `<think>` tag split across chunks never leaks into content.
-- [ ] **M5.3 Engine** (`stream`, `processChunk`). **Test first:**
+- [x] **M5.3 Engine** (`stream`, `processChunk`). **Test first:**
   - Partial text followed by an error is committed with `status: "error"`, and the `error` event is still yielded.
   - Partial text followed by a cancel is committed with `status: "interrupted"`.
   - Incomplete tool calls are dropped.
   - When the consumer `break`s, the state returns to `idle` in a `finally`. The reader is cancelled, not just `releaseLock`ed.
   - The abort check runs even when no chunk arrives.
-- [ ] **M5.4 Message status.**
+- [x] **M5.4 Message status.**
   - Add an optional `status` to `Message` and persist it.
   - Providers append "[response interrupted]" when sending such a message back.
   - UIs render a dimmed label.

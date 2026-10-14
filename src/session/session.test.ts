@@ -32,6 +32,16 @@ describe("session persistence", () => {
 		expect(loaded._unsafeUnwrap().messages).toEqual(sampleMessages);
 	});
 
+	it("persists assistant response status", () => {
+		const messages: Message[] = [
+			{ role: "assistant", content: "partial", status: "interrupted" },
+			{ role: "assistant", content: "failed", status: "error" },
+		];
+		const id = saveSession(TEST_DIR, messages)._unsafeUnwrap();
+
+		expect(loadSession(TEST_DIR, id)._unsafeUnwrap().messages).toEqual(messages);
+	});
+
 	it("overwrites when saving with existing id", () => {
 		const id = saveSession(TEST_DIR, sampleMessages)._unsafeUnwrap();
 		const updated: Message[] = [...sampleMessages, { role: "user", content: "More" }];

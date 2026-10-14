@@ -75,6 +75,13 @@ const displayEvent = (event: AgentEvent): void => {
 			break;
 		case "error":
 			stdout.write(`\n[error: ${event.message}]`);
+			if (event.status) {
+				const label =
+					event.status === "interrupted"
+						? "[response interrupted]"
+						: "[response ended with an error]";
+				stdout.write(`\n\x1b[2m${label}\x1b[0m`);
+			}
 			break;
 		case "warning":
 			stdout.write(`\n\x1b[33m⚠ ${event.message}\x1b[0m\n`);

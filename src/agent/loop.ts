@@ -27,7 +27,7 @@ export type AgentEvent =
 	| { kind: "usage"; promptTokens: number; totalTokens: number; finishReason?: string }
 	| { kind: "done"; message: string }
 	| { kind: "stuck"; message: string }
-	| { kind: "error"; message: string }
+	| { kind: "error"; message: string; status?: "error" | "interrupted" }
 	| { kind: "warning"; message: string }
 	| { kind: "round"; current: number; max: number }
 	| { kind: "trimmed"; count: number }
@@ -496,9 +496,9 @@ const processEngineEvent = (event: EngineEvent): AgentEvent | undefined => {
 			if (event.chunk.reasoning) return { kind: "reasoning", text: event.chunk.reasoning };
 			return undefined;
 		case "error":
-			return { kind: "error", message: event.error.message };
+			return { kind: "error", message: event.error.message, status: "error" };
 		case "cancelled":
-			return { kind: "error", message: "Streaming cancelled" };
+			return { kind: "error", message: "Streaming cancelled", status: "interrupted" };
 		default:
 			return undefined;
 	}

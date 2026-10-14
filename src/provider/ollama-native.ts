@@ -1,5 +1,7 @@
 import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { isPlainObject } from "remeda";
+import { requestMessageContent } from "./request-message.js";
+import { readWithTimeout, type StreamReadResult } from "./stream-reader.js";
 import type {
 	CompleteOptions,
 	CompletionResult,
@@ -33,7 +35,10 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 
 	const buildMessages = (messages: Message[]) =>
 		messages.map((m, i) => {
-			const msg: Record<string, unknown> = { role: m.role, content: m.content };
+			const msg: Record<string, unknown> = {
+				role: m.role,
+				content: requestMessageContent(m),
+			};
 
 			if (m.role === "assistant") {
 				if (m.reasoning) msg.thinking = m.reasoning;
@@ -93,28 +98,51 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 	};
 
 	const buildChunks = (data: Record<string, unknown>): StreamChunk[] => {
+		if (typeof data.error === "string")
+			return [{ done: true, error: { kind: "api", status: 500, message: data.error } }];
+		const base = buildBaseChunk(data);
+		const toolCalls = parseToolCalls((data.message ?? {}) as Record<string, unknown>);
+		if (toolCalls.length === 0) return [base];
+		const toolChunks = toolCalls.map((toolCall, index) =>
+			index === 0 ? { ...base, done: false, toolCall } : { done: false, toolCall },
+		);
+		if (!base.done) return toolChunks;
+		const terminal: StreamChunk = { done: true };
+		if (base.finishReason) terminal.finishReason = base.finishReason;
+		return [...toolChunks, terminal];
+	};
+
+	const buildBaseChunk = (data: Record<string, unknown>): StreamChunk => {
 		const msg = (data.message ?? {}) as Record<string, unknown>;
 		const base: StreamChunk = { done: data.done === true };
 		if (msg.content) base.content = msg.content as string;
 		if (msg.thinking) base.reasoning = msg.thinking as string;
 		if (data.done_reason) base.finishReason = data.done_reason as string;
+		if (base.done && !base.finishReason) base.finishReason = "stop";
 		if (data.done) {
 			const usage = parseUsage(data);
 			if (usage) base.usage = usage;
 		}
-		const toolCalls = parseToolCalls(msg);
-		if (toolCalls.length === 0) return [base];
-		return toolCalls.map((tc, i) =>
-			i === 0 ? { ...base, toolCall: tc } : { done: false, toolCall: tc },
-		);
+		return base;
 	};
 
 	const parseChunks = (line: string): StreamChunk[] => {
 		if (!line.trim()) return [];
 		try {
-			return buildChunks(JSON.parse(line));
-		} catch {
-			return [];
+			const data = JSON.parse(line);
+			if (typeof data !== "object" || data === null) throw new Error("Expected an object");
+			return buildChunks(data as Record<string, unknown>);
+		} catch (error) {
+			return [
+				{
+					done: true,
+					error: {
+						kind: "parse",
+						message: `Invalid Ollama stream data: ${error instanceof Error ? error.message : String(error)}`,
+						raw: line,
+					},
+				},
+			];
 		}
 	};
 
@@ -146,7 +174,12 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 				body: JSON.stringify(body),
 				signal: AbortSignal.any(signals),
 			}),
-			(e) => toConnectionError(e),
+			(e): ProviderError => {
+				clearTimeout(connectTimer);
+				return opts.signal?.aborted
+					? { kind: "cancelled", message: "Request cancelled" }
+					: toConnectionError(e);
+			},
 		).andThen((response) => {
 			clearTimeout(connectTimer);
 			if (!response.ok) {
@@ -162,7 +195,7 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 					message: "Response has no body",
 				});
 			}
-			return okAsync(parseNDJSONStream(response.body, streamTimeout));
+			return okAsync(parseNDJSONStream(response.body, streamTimeout, opts.signal));
 		});
 	};
 
@@ -180,51 +213,73 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 		}
 	};
 
+	const emitLines = async function* (
+		lines: string[],
+		counter: { value: number },
+	): AsyncGenerator<StreamChunk, boolean> {
+		for (const chunk of parseLines(lines, counter)) {
+			yield chunk;
+			if (chunk.done) return true;
+		}
+		return false;
+	};
+
+	const readFailure = (result: StreamReadResult): ProviderError | undefined => {
+		if (result.kind === "timeout") return { kind: "timeout", message: "Ollama stream stalled" };
+		if (result.kind === "cancelled") return { kind: "cancelled", message: "Request cancelled" };
+		if (result.kind === "error") return { kind: "connection", message: errorText(result.cause) };
+		return undefined;
+	};
+
+	type DecodedNDJSONRead =
+		| { kind: "failure"; error: ProviderError }
+		| { kind: "lines"; lines: string[]; buffer: string; ended: boolean };
+
+	const decodeNDJSONRead = (
+		result: StreamReadResult,
+		buffer: string,
+		decoder: TextDecoder,
+	): DecodedNDJSONRead => {
+		const failure = readFailure(result);
+		if (failure) return { kind: "failure", error: failure };
+		if (result.kind !== "chunk" && result.kind !== "end") {
+			return {
+				kind: "failure",
+				error: { kind: "connection", message: "Invalid stream reader state" },
+			};
+		}
+		const ended = result.kind === "end";
+		const text = ended ? decoder.decode() : decoder.decode(result.value, { stream: true });
+		const lines = (buffer + text).split("\n");
+		return ended
+			? { kind: "lines", lines, buffer: "", ended }
+			: { kind: "lines", lines: lines.slice(0, -1), buffer: lines.at(-1) ?? "", ended };
+	};
+
 	async function* parseNDJSONStream(
 		body: ReadableStream<Uint8Array>,
 		timeout: number,
+		signal?: AbortSignal,
 	): AsyncIterable<StreamChunk> {
 		const reader = body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
 		const toolCallCounter = { value: 0 };
-		let timer: ReturnType<typeof setTimeout> | undefined;
-		const clearTimer = () => {
-			if (timer) clearTimeout(timer);
-		};
-		const resetTimer = () => {
-			clearTimer();
-			timer = setTimeout(() => reader.cancel(), timeout);
-		};
-
-		resetTimer();
-		try {
-			for await (const value of readStream(reader)) {
-				resetTimer();
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split("\n");
-				buffer = lines.pop() ?? "";
-				yield* parseLines(lines, toolCallCounter);
+		for await (const result of readWithTimeout(reader, timeout, signal)) {
+			const decoded = decodeNDJSONRead(result, buffer, decoder);
+			if (decoded.kind === "failure") {
+				yield { done: true, error: decoded.error };
+				return;
 			}
-			if (buffer.trim()) yield* parseLines([buffer], toolCallCounter);
-		} finally {
-			clearTimer();
-			reader.releaseLock();
-		}
-	}
-
-	async function* readStream(
-		reader: ReadableStreamDefaultReader<Uint8Array>,
-	): AsyncGenerator<Uint8Array> {
-		while (true) {
-			let result: ReadableStreamReadResult<Uint8Array>;
-			try {
-				result = await reader.read();
-			} catch {
-				return; // connection dropped — end stream cleanly, stream timeout or error chunk handles it
+			buffer = decoded.buffer;
+			if (yield* emitLines(decoded.lines, toolCallCounter)) return;
+			if (decoded.ended) {
+				yield {
+					done: true,
+					error: { kind: "connection", message: "Ollama stream ended before its final chunk" },
+				};
+				return;
 			}
-			if (result.done) return;
-			yield result.value;
 		}
 	}
 
@@ -310,3 +365,6 @@ const toProviderError = (e: unknown): ProviderError => {
 	if (typeof e === "object" && e !== null && "kind" in e) return e as ProviderError;
 	return toConnectionError(e);
 };
+
+const errorText = (error: unknown): string =>
+	error instanceof Error ? error.message : String(error);
