@@ -10,5 +10,5 @@ const simple =
 if (simple) {
 	await import("./cli.js");
 } else {
-	await import("./tui/app.js");
+	await import("./tui/entry.js");
 }

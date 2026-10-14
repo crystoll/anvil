@@ -465,13 +465,14 @@ type SessionController = {
   - Queue lines that arrive during a turn (F21). Only the `> ` prompt takes them, never an approval. Ctrl+C clears the queue, and EOF on piped stdin runs what's queued before exiting.
   - **E2E test:** spawn `node dist/main.js` with piped stdio and `HOME=<tmp>`, against the mock server. Simple mode is chosen automatically when stdout isn't a TTY. Pipe in two prompts and `/quit`; both prompts must run.
   - **Done:** the shared controller now owns CLI turns and approvals; queued prompts drain through EOF, approval input is fresh-only, Ctrl+C clears buffered input, and an E2E test covers successive approvals and `edit_file` previews.
-- [ ] **M8.3 Port the TUI.**
+- [x] **M8.3 Port the TUI.**
   - Split `src/tui/app.tsx` into an exported `App({ controller })` view and an entry module that bootstraps and renders. Today the module bootstraps at import time, which makes it untestable.
   - Subscribe to state with `useSyncExternalStore`, which removes the stale closures (F8).
   - Keys:
     - Esc cancels (F16; fixed in M6.1).
     - Ctrl+C cancels when busy or awaiting approval; when idle, a double press exits.
   - The approval prompt shows "1 of N" and a diff preview for `edit_file` and `write_file`.
+  - **Done:** `src/tui/app.tsx` is now importable and controller-driven; `src/tui/entry.tsx` owns bootstrap/rendering. State subscriptions drive the view, and approval prompts show queue position and file previews. Controller tests also verify streamed text is cleared when approval resumes.
 - [ ] **M8.4 Component tests** with `ink-testing-library` 4.0.0. It's verified with ink 8: typing, Enter, Esc and Ctrl+C all register. Use a fake controller and cover:
   - y/n/a approval.
   - Esc calling `cancel()`.

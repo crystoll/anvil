@@ -276,7 +276,7 @@ describe("session controller", () => {
 					{
 						message: {
 							role: "assistant",
-							content: "",
+							content: "Initial thought",
 							tool_calls: [
 								{ id: "call_1", function: { name: "write_file", arguments: {} } },
 								{ id: "call_2", function: { name: "write_file", arguments: {} } },
@@ -289,19 +289,24 @@ describe("session controller", () => {
 			[tool],
 		);
 		let pendingCount = 0;
+		let textWhenApprovalResumes = "";
 		controller.subscribe((event) => {
 			if (event.type === "agent" && event.event.kind === "pending") pendingCount++;
+			if (event.type === "state" && event.state.phase === "executing")
+				textWhenApprovalResumes = event.state.streamingText;
 		});
 
 		const submit = controller.submit("write twice");
 		await waitForRequests(mock, 1);
 		await vi.waitFor(() => expect(controller.getState().phase).toBe("awaiting_approval"));
 		await submit;
+		expect(controller.getState().streamingText).toBe("Initial thought");
 		mock.setScript({ frames: assistantFrames("complete") });
 		await controller.approve("always");
 
 		expect(tool.execute).toHaveBeenCalledTimes(2);
 		expect(pendingCount).toBe(1);
+		expect(textWhenApprovalResumes).toBe("");
 		expect(engine.messages().filter((message) => message.role === "tool")).toHaveLength(2);
 		expect(controller.getState().phase).toBe("idle");
 		await controller.shutdown();

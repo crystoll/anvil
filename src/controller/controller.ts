@@ -213,6 +213,7 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 
 		beginOperation();
 		try {
+			updateState({ streamingText: "" });
 			await dispatchInput(trimmed);
 		} finally {
 			endOperation();
@@ -227,7 +228,11 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 			return;
 		}
 		if (scope === "always") approvedTools.add(pending.call.tool.name);
-		await runAgent(options.agent.approve(), { phase: "executing", pending: undefined });
+		await runAgent(options.agent.approve(), {
+			phase: "executing",
+			pending: undefined,
+			streamingText: "",
+		});
 	};
 
 	const reject = async (reason?: string): Promise<void> => {
@@ -236,7 +241,11 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 			notice("No tool call is awaiting approval");
 			return;
 		}
-		await runAgent(options.agent.reject(reason), { phase: "executing", pending: undefined });
+		await runAgent(options.agent.reject(reason), {
+			phase: "executing",
+			pending: undefined,
+			streamingText: "",
+		});
 	};
 
 	const cancel = async (): Promise<void> => {

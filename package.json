@@ -30,7 +30,7 @@
 	"scripts": {
 		"dev": "tsx src/main.ts",
 		"dev:simple": "tsx src/cli.ts",
-		"dev:tui": "tsx src/tui/app.tsx",
+		"dev:tui": "tsx src/tui/entry.tsx",
 		"build": "tsup",
 		"prepare": "tsup",
 		"test": "vitest run",

@@ -1,78 +1,77 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { Box, render, Static, Text, useInput } from "ink";
+import { Box, type Key, Static, Text, useInput } from "ink";
 import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
-import { useEffect, useRef, useState } from "react";
-import { compactHistory } from "../agent/compact.js";
-import type { AgentEvent } from "../agent/loop.js";
-import { listSessions, loadSession } from "../session/index.js";
 import {
-	bootstrap,
-	expandFileRefs,
-	makeProvider,
-	parseFlags,
-	pingProvider,
-} from "../shared/bootstrap.js";
-import { guardProcess } from "../shared/crash-guard.js";
-import { createGracefulExit } from "../shared/graceful-exit.js";
-import { consumeAgentEvents } from "./consume-events.js";
+	type Dispatch,
+	type MutableRefObject,
+	type SetStateAction,
+	useCallback,
+	useEffect,
+	useRef,
+	useState,
+	useSyncExternalStore,
+} from "react";
+import type { AgentEvent } from "../agent/loop.js";
+import type {
+	ControllerEvent,
+	PendingApproval,
+	SessionController,
+} from "../controller/controller.js";
 
-const flags = parseFlags(process.argv);
-const ctx = await bootstrap(flags);
-if (flags.path) process.chdir(ctx.projectRoot);
+type Message = { id: number; text: string; dim?: boolean };
 
-const {
-	config,
-	projectRoot,
-	engine,
-	registry,
-	agent,
-	availableSkills,
-	availableAgents,
-	historyDir,
-	session,
-} = ctx;
-let { activeProviderName } = ctx;
-let activeSkill = ctx.activeSkill;
-let activeAgentDef = ctx.activeAgent;
-let requestExit = () => {};
-
-// Provider health — derived from bootstrap validation
-const defaultHealth = ctx.healthyProviders.get(activeProviderName);
-const providerWarning =
-	defaultHealth && defaultHealth.status !== "healthy"
-		? `${activeProviderName}: ${defaultHealth.message}`
-		: undefined;
-
-// === UI ===
-type Msg = { id: number; text: string; dim?: boolean };
-type TuiTurnState = {
-	response: string;
-	finishReason: string | undefined;
-	failed: boolean;
-	recoveryPending: boolean;
+export type TuiAppProps = {
+	controller: SessionController;
+	providerName: () => string;
+	activeSkillName: () => string | undefined;
+	contextSize: number;
+	initialNotices: string[];
+	commandNames: string[];
+	skillNames: string[];
+	listModels: () => Promise<string[]>;
+	onTurnComplete: () => Promise<void>;
+	onPromptUsage: (tokens: number) => void;
+	onExit: () => void;
 };
 
-const truncate = (s: string, max = 80): string => {
-	const one = s.replace(/\n/g, " ").trim();
-	return one.length > max ? `${one.slice(0, max)}…` : one;
+const truncate = (text: string, max = 80): string => {
+	const oneLine = text.replace(/\n/g, " ").trim();
+	return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
 };
 
-/** Produce a single-line summary of tool args for the approval prompt. */
 const summarizeArgs = (args: Record<string, unknown>): string => {
-	// For common tools, show the most meaningful argument
-	const primary =
-		(args.command as string | undefined) ??
-		(args.path as string | undefined) ??
-		(args.query as string | undefined) ??
-		(args.url as string | undefined);
+	const primary = [args.command, args.path, args.query, args.url].find(
+		(value): value is string => typeof value === "string",
+	);
 	if (primary) return truncate(primary, 120);
-	// Fallback: show first key=value, truncated
 	const first = Object.entries(args)[0];
-	if (!first) return "";
-	return truncate(`${first[0]}=${JSON.stringify(first[1])}`, 120);
+	return first ? truncate(`${first[0]}=${JSON.stringify(first[1])}`, 120) : "";
+};
+
+const useControllerState = (controller: SessionController) => {
+	const snapshot = useRef(controller.getState());
+	const subscribe = useCallback(
+		(onStoreChange: () => void) =>
+			controller.subscribe((event) => {
+				if (event.type !== "state") return;
+				snapshot.current = event.state;
+				onStoreChange();
+			}),
+		[controller],
+	);
+	const getSnapshot = useCallback(() => snapshot.current, []);
+	return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+};
+
+const contextColor = (percentage: number): string => {
+	if (percentage >= 90) return "red";
+	if (percentage >= 60) return "yellow";
+	return "gray";
+};
+
+const contextLabel = (percentage: number): string => {
+	if (percentage <= 0) return "";
+	return `[${percentage}%${percentage >= 90 ? "⚡" : ""}]`;
 };
 
 function StatusBar({
@@ -81,6 +80,7 @@ function StatusBar({
 	tokens,
 	lastPrompt,
 	contextSize,
+	activeSkill,
 	busy,
 }: {
 	provider: string;
@@ -88,18 +88,19 @@ function StatusBar({
 	tokens: number;
 	lastPrompt: number;
 	contextSize: number;
+	activeSkill: string | undefined;
 	busy: boolean;
 }) {
-	const label = `${provider}/${model}`;
 	const pct = lastPrompt > 0 ? Math.round((lastPrompt / contextSize) * 100) : 0;
-	const ctxColor = pct >= 90 ? "red" : pct >= 80 ? "yellow" : pct >= 60 ? "yellow" : "gray";
-	const indicator = pct >= 90 ? "⚡" : "";
+	const label = contextLabel(pct);
 	return (
 		<Box borderStyle="single" borderColor="gray" paddingX={1}>
-			<Text color="cyan">{label}</Text>
+			<Text color="cyan">
+				{provider}/{model}
+			</Text>
 			<Text> │ </Text>
-			<Text color={ctxColor}>{pct > 0 ? `[${pct}%${indicator}]` : ""}</Text>
-			{pct > 0 && <Text> │ </Text>}
+			<Text color={contextColor(pct)}>{label}</Text>
+			{label && <Text> │ </Text>}
 			<Text dimColor>
 				{busy ? "~" : ""}
 				{tokens} tok
@@ -111,678 +112,538 @@ function StatusBar({
 				</Text>
 			)}
 			{activeSkill && <Text> │ </Text>}
-			{activeSkill && <Text color="magenta">{activeSkill.name}</Text>}
+			{activeSkill && <Text color="magenta">{activeSkill}</Text>}
 		</Box>
 	);
 }
 
-function App({
-	providerWarning,
-	mcpWarnings,
-}: {
-	providerWarning: string | undefined;
-	mcpWarnings: string[];
-}) {
-	const initMsgs: Msg[] = [
-		...(providerWarning
-			? [{ id: 0, text: `⚠ ${providerWarning} — use /model to switch`, dim: true }]
-			: []),
-		...mcpWarnings.map((warning, index) => ({
-			id: index + (providerWarning ? 1 : 0),
-			text: `⚠ ${warning}`,
-			dim: true,
-		})),
-	];
-	const [messages, setMessages] = useState<Msg[]>(initMsgs);
+function ApprovalPrompt({ pending }: { pending: PendingApproval }) {
+	const { call } = pending;
+	const { tool, args } = call;
+	const path = typeof args.path === "string" ? args.path : "";
+
+	return (
+		<Box flexDirection="column">
+			<Text color="yellow">
+				⚡ [{pending.index}/{pending.total}] {tool.name}
+				{path ? `(${path})` : `: ${summarizeArgs(args)}`}
+			</Text>
+			{tool.name === "edit_file" &&
+				typeof args.search === "string" &&
+				typeof args.replace === "string" && (
+					<Box flexDirection="column" paddingLeft={2}>
+						<Text color="red">
+							{args.search
+								.split("\n")
+								.map((line) => `- ${line}`)
+								.join("\n")}
+						</Text>
+						<Text color="green">
+							{args.replace
+								.split("\n")
+								.map((line) => `+ ${line}`)
+								.join("\n")}
+						</Text>
+					</Box>
+				)}
+			{tool.name === "write_file" && typeof args.content === "string" && (
+				<Text color="green">{truncate(args.content, 300)}</Text>
+			)}
+			<Text dimColor>Allow? [y]es [n]o [a]lways · Esc cancels</Text>
+		</Box>
+	);
+}
+
+const showAgentInfo = (
+	event: AgentEvent,
+	addMessage: (text: string, dim?: boolean) => void,
+): void => {
+	if (event.kind === "trimmed") addMessage(`  [trimmed ${event.count} old messages]`, true);
+	if (event.kind === "overflow")
+		addMessage("⚠ context overflow detected — consider /compact or /new", true);
+	if (event.kind === "compacting") addMessage("  [compacting context...]", true);
+	if (event.kind === "compacted")
+		addMessage(
+			`  ⚡ compacted: ~${event.before.toLocaleString()} → ~${event.after.toLocaleString()} tokens`,
+			true,
+		);
+	if (event.kind === "done" && event.message) addMessage(`✓ ${event.message}`);
+	if (event.kind === "stuck" && event.message) addMessage(`✗ ${event.message}`, true);
+	if (event.kind === "warning") addMessage(`  ⚠ ${event.message}`, true);
+};
+
+type AgentEventContext = {
+	controller: SessionController;
+	addMessage: (text: string, dim?: boolean) => void;
+	setLastPrompt: Dispatch<SetStateAction<number>>;
+	setIsThinking: Dispatch<SetStateAction<boolean>>;
+	setElapsed: Dispatch<SetStateAction<number>>;
+	onPromptUsage: (tokens: number) => void;
+	thinkingStartedAt: MutableRefObject<number | undefined>;
+	partialDisplayed: MutableRefObject<boolean>;
+	finishReason: MutableRefObject<string | undefined>;
+};
+
+const handleAgentEvent = (event: AgentEvent, context: AgentEventContext): void => {
+	if (event.kind === "content") {
+		context.thinkingStartedAt.current = undefined;
+		context.setIsThinking(false);
+		context.partialDisplayed.current = false;
+		return;
+	}
+	if (event.kind === "reasoning") {
+		context.thinkingStartedAt.current ??= Date.now();
+		context.setIsThinking(true);
+		context.setElapsed(0);
+		return;
+	}
+	if (event.kind === "usage") {
+		context.finishReason.current = event.finishReason;
+		context.setLastPrompt(event.promptTokens);
+		context.onPromptUsage(event.promptTokens);
+		return;
+	}
+	if (event.kind === "tool_result") {
+		context.addMessage(`  ↳ ${event.name}: ${truncate(event.result)}`, true);
+		return;
+	}
+	if (event.kind === "error") {
+		const partial = context.controller.getState().streamingText;
+		if (partial) context.addMessage(`anvil: ${partial}`);
+		context.partialDisplayed.current = true;
+		if (event.status === "interrupted") context.addMessage("  [response interrupted]", true);
+		else if (event.status) context.addMessage("  [response ended with an error]", true);
+		context.addMessage(`  ⚠ ${event.message}`, true);
+		context.setIsThinking(false);
+		return;
+	}
+	showAgentInfo(event, context.addMessage);
+};
+
+type ControllerEventContext = AgentEventContext & {
+	onExit: () => void;
+};
+
+const handleControllerEvent = (event: ControllerEvent, context: ControllerEventContext): void => {
+	if (event.type === "notice") {
+		context.addMessage(event.message, true);
+		return;
+	}
+	if (event.type === "quit") {
+		context.onExit();
+		return;
+	}
+	if (event.type === "agent") handleAgentEvent(event.event, context);
+};
+
+type ApprovalDecision = "once" | "always" | "reject" | "cancel";
+
+type PreparedSubmission = {
+	trimmed: string;
+	command: string;
+	submission: string;
+	isTurn: boolean;
+};
+
+const prepareSubmission = (
+	value: string,
+	commandNames: string[],
+	skillNames: string[],
+): PreparedSubmission | undefined => {
+	const trimmed = value.trim();
+	if (!trimmed) return undefined;
+	const command = trimmed.split(/\s+/, 1)[0]?.slice(1).toLowerCase() ?? "";
+	const skillName = trimmed.startsWith("/") ? trimmed.slice(1).trim() : "";
+	const skillShorthand = skillNames.includes(skillName);
+	return {
+		trimmed,
+		command,
+		submission: skillShorthand ? `/skill ${skillName}` : trimmed,
+		isTurn:
+			(!commandNames.includes(command) && !skillShorthand) ||
+			["plan", "retry", "continue"].includes(command),
+	};
+};
+
+const showSubmission = (
+	value: string,
+	submission: PreparedSubmission,
+	addMessage: (text: string, dim?: boolean) => void,
+): void => {
+	if (!submission.isTurn) return;
+	const references = submission.trimmed.match(/(^|[\s])@([\w./-]+)/g);
+	if (references)
+		addMessage(
+			`  [attached: ${references.map((reference) => reference.trim().slice(1)).join(", ")}]`,
+			true,
+		);
+	if (submission.command === "plan")
+		addMessage(`[plan: ${submission.trimmed.slice(5).trim()}]`, true);
+	else if (!submission.trimmed.startsWith("/")) addMessage(`you: ${value}`);
+};
+
+type ControllerActionContext = {
+	setSubmitting: Dispatch<SetStateAction<boolean>>;
+	addMessage: (text: string, dim?: boolean) => void;
+	finishStreamSegment: () => void;
+	finishTurn: () => Promise<void>;
+};
+
+const runControllerAction = async (
+	action: () => Promise<void>,
+	context: ControllerActionContext,
+): Promise<void> => {
+	context.setSubmitting(true);
+	try {
+		await action();
+		context.finishStreamSegment();
+		await context.finishTurn();
+	} catch (error) {
+		context.addMessage(`  ⚠ ${error instanceof Error ? error.message : String(error)}`, true);
+		await context.finishTurn();
+	} finally {
+		context.setSubmitting(false);
+	}
+};
+
+type KeyboardContext = {
+	state: ReturnType<SessionController["getState"]>;
+	picker: string[] | null;
+	pickerIndex: number;
+	history: MutableRefObject<string[]>;
+	historyIndex: MutableRefObject<number>;
+	setPicker: Dispatch<SetStateAction<string[] | null>>;
+	setPickerIndex: Dispatch<SetStateAction<number>>;
+	setInput: Dispatch<SetStateAction<string>>;
+	onCtrlC: () => void;
+	onApproval: (decision: ApprovalDecision) => void;
+	onModelSelect: (model: string) => void;
+};
+
+const handlePickerInput = (key: Key, context: KeyboardContext): void => {
+	if (key.escape) context.setPicker(null);
+	else if (key.upArrow) context.setPickerIndex((index) => Math.max(0, index - 1));
+	else if (key.downArrow)
+		context.setPickerIndex((index) => Math.min((context.picker?.length ?? 1) - 1, index + 1));
+	else if (key.return) {
+		const model = context.picker?.[context.pickerIndex];
+		if (model) context.onModelSelect(model);
+	}
+};
+
+const handleApprovalInput = (value: string, key: Key, context: KeyboardContext): void => {
+	if (key.escape) context.onApproval("cancel");
+	else if (value.toLowerCase() === "y") context.onApproval("once");
+	else if (value.toLowerCase() === "a") context.onApproval("always");
+	else if (value.toLowerCase() === "n") context.onApproval("reject");
+};
+
+const handleHistoryInput = (key: Key, context: KeyboardContext): void => {
+	if (key.upArrow && context.history.current.length > 0) {
+		context.historyIndex.current = Math.min(
+			context.historyIndex.current + 1,
+			context.history.current.length - 1,
+		);
+		context.setInput(context.history.current[context.historyIndex.current] ?? "");
+	}
+	if (key.downArrow) {
+		context.historyIndex.current = Math.max(context.historyIndex.current - 1, -1);
+		context.setInput(
+			context.historyIndex.current < 0
+				? ""
+				: (context.history.current[context.historyIndex.current] ?? ""),
+		);
+	}
+};
+
+const handleTuiInput = (value: string, key: Key, context: KeyboardContext): void => {
+	if (key.ctrl && value === "c") {
+		context.onCtrlC();
+		return;
+	}
+	if (context.picker) {
+		handlePickerInput(key, context);
+		return;
+	}
+	if (context.state.pending && context.state.phase === "awaiting_approval") {
+		handleApprovalInput(value, key, context);
+		return;
+	}
+	if (key.escape && context.state.phase !== "idle") {
+		context.onApproval("cancel");
+		return;
+	}
+	handleHistoryInput(key, context);
+};
+
+type InputAreaProps = {
+	state: ReturnType<SessionController["getState"]>;
+	picker: string[] | null;
+	pickerIndex: number;
+	pickerLoading: boolean;
+	activeModel: string;
+	input: string;
+	setInput: Dispatch<SetStateAction<string>>;
+	onSubmit: (value: string) => void;
+};
+
+function InputArea({
+	state,
+	picker,
+	pickerIndex,
+	pickerLoading,
+	activeModel,
+	input,
+	setInput,
+	onSubmit,
+}: InputAreaProps) {
+	return (
+		<Box paddingX={1}>
+			{picker ? (
+				<Box flexDirection="column">
+					<Text dimColor>↑↓ select, Enter confirm, Esc cancel</Text>
+					{picker.map((model, index) => (
+						<Text key={model} {...(index === pickerIndex ? { color: "cyan" } : {})}>
+							{index === pickerIndex ? "❯ " : "  "}
+							{model}
+							{model === activeModel ? " ●" : ""}
+						</Text>
+					))}
+				</Box>
+			) : state.pending && state.phase === "awaiting_approval" ? (
+				<ApprovalPrompt pending={state.pending} />
+			) : (
+				<>
+					<Text color="green">{"❯ "}</Text>
+					{pickerLoading ? (
+						<Text dimColor>Loading models…</Text>
+					) : (
+						<TextInput value={input} onChange={setInput} onSubmit={onSubmit} />
+					)}
+				</>
+			)}
+		</Box>
+	);
+}
+
+export function App({
+	controller,
+	providerName,
+	activeSkillName,
+	contextSize,
+	initialNotices,
+	commandNames,
+	skillNames,
+	listModels,
+	onTurnComplete,
+	onPromptUsage,
+	onExit,
+}: TuiAppProps) {
+	const state = useControllerState(controller);
+	const [messages, setMessages] = useState<Message[]>(() =>
+		initialNotices.map((text, id) => ({ id, text: `⚠ ${text}`, dim: true })),
+	);
 	const [input, setInput] = useState("");
-	const [tokens, setTokens] = useState(0);
 	const [lastPrompt, setLastPrompt] = useState(0);
-	const [streaming, setStreaming] = useState("");
-	const [elapsed, setElapsed] = useState(0);
 	const [isThinking, setIsThinking] = useState(false);
-	const thinkingStart = useRef<number | null>(null);
-	const [busy, setBusyState] = useState(false);
-	const busyRef = useRef(false);
-	const setBusy = (v: boolean) => {
-		busyRef.current = v;
-		setBusyState(v);
-		if (!v) {
-			thinkingStart.current = null;
-			setIsThinking(false);
+	const [elapsed, setElapsed] = useState(0);
+	const [picker, setPicker] = useState<string[] | null>(null);
+	const [pickerIndex, setPickerIndex] = useState(0);
+	const [pickerLoading, setPickerLoading] = useState(false);
+	const [submitting, setSubmitting] = useState(false);
+	const nextMessageId = useRef(messages.length);
+	const history = useRef<string[]>([]);
+	const historyIndex = useRef(-1);
+	const lastCtrlC = useRef(0);
+	const thinkingStartedAt = useRef<number | undefined>(undefined);
+	const activeTurn = useRef(false);
+	const partialDisplayed = useRef(false);
+	const finishReason = useRef<string | undefined>(undefined);
+
+	const addMessage = useCallback((text: string, dim = false): void => {
+		const id = nextMessageId.current++;
+		setMessages((previous) => [...previous, { id, text, dim }]);
+	}, []);
+
+	const finishStreamSegment = useCallback((): void => {
+		const current = controller.getState();
+		if (current.streamingText && !partialDisplayed.current)
+			addMessage(`anvil: ${current.streamingText}`);
+		else if (!current.streamingText && finishReason.current)
+			addMessage(`  [no content — finish_reason: ${finishReason.current}]`, true);
+		partialDisplayed.current = false;
+		finishReason.current = undefined;
+		setIsThinking(false);
+		thinkingStartedAt.current = undefined;
+	}, [addMessage, controller]);
+
+	const finishTurn = useCallback(async (): Promise<void> => {
+		if (!activeTurn.current || controller.getState().phase !== "idle") return;
+		activeTurn.current = false;
+		try {
+			await onTurnComplete();
+		} catch (error) {
+			addMessage(
+				`  ⚠ stop hook failed: ${error instanceof Error ? error.message : String(error)}`,
+				true,
+			);
 		}
+	}, [addMessage, controller, onTurnComplete]);
+
+	const beginStreamSegment = (): void => {
+		partialDisplayed.current = false;
+		finishReason.current = undefined;
 	};
 
-	// Tick elapsed seconds while the model is thinking (reasoning phase)
+	useEffect(() => {
+		const context: ControllerEventContext = {
+			controller,
+			addMessage,
+			setLastPrompt,
+			setIsThinking,
+			setElapsed,
+			onPromptUsage,
+			thinkingStartedAt,
+			partialDisplayed,
+			finishReason,
+			onExit,
+		};
+		return controller.subscribe((event) => handleControllerEvent(event, context));
+	}, [addMessage, controller, onExit, onPromptUsage]);
+
 	useEffect(() => {
 		const interval = setInterval(() => {
-			if (thinkingStart.current !== null) {
-				setElapsed(Math.floor((Date.now() - thinkingStart.current) / 1000));
-			}
+			if (thinkingStartedAt.current !== undefined)
+				setElapsed(Math.floor((Date.now() - thinkingStartedAt.current) / 1000));
 		}, 1000);
 		return () => clearInterval(interval);
 	}, []);
 
-	const [pendingTool, setPendingTool] = useState<string | null>(null);
-	const pendingToolName = useRef<string | null>(null);
-	const autoApproved = useRef(new Set<string>());
-	const [picker, setPicker] = useState<string[] | null>(null);
-	const [pickerIdx, setPickerIdx] = useState(0);
-	const nextId = useRef(initMsgs.length);
-	const history = useRef<string[]>([]);
-	const histIdx = useRef(-1);
+	const isBusy = submitting || state.phase !== "idle";
 
-	const addMsg = (text: string, dim = false) => {
-		const id = nextId.current++;
-		setMessages((prev) => [...prev, { id, text, dim }]);
+	const submit = async (value: string): Promise<void> => {
+		const submission = prepareSubmission(value, commandNames, skillNames);
+		if (!submission || isBusy) return;
+		setInput("");
+		history.current = [value, ...history.current.slice(0, 99)];
+		historyIndex.current = -1;
+		activeTurn.current = submission.isTurn;
+		if (submission.command === "new") setMessages([]);
+		showSubmission(value, submission, addMessage);
+		beginStreamSegment();
+		await runControllerAction(() => controller.submit(submission.submission), {
+			setSubmitting,
+			addMessage,
+			finishStreamSegment,
+			finishTurn,
+		});
 	};
 
-	const handlePickerKey = (key: {
-		upArrow: boolean;
-		downArrow: boolean;
-		escape: boolean;
-		return: boolean;
-	}) => {
-		if (key.upArrow) setPickerIdx((i) => Math.max(0, i - 1));
-		if (key.downArrow) setPickerIdx((i) => Math.min((picker?.length ?? 1) - 1, i + 1));
-		if (key.escape) setPicker(null);
-		if (key.return && picker) {
-			const picked = picker[pickerIdx];
-			setPicker(null);
-			if (!picked) return;
-			const slashIdx = picked.indexOf("/");
-			switchProvider(picked.slice(0, slashIdx), picked.slice(slashIdx + 1));
+	const approve = async (decision: ApprovalDecision): Promise<void> => {
+		setInput("");
+		lastCtrlC.current = 0;
+		if (decision === "always" && state.pending)
+			addMessage(`  [auto-approving ${state.pending.call.tool.name} for this session]`, true);
+		beginStreamSegment();
+		await runControllerAction(
+			async () => {
+				if (decision === "once") await controller.approve("once");
+				else if (decision === "always") await controller.approve("always");
+				else if (decision === "reject") await controller.reject("User declined");
+				else await controller.cancel();
+			},
+			{ setSubmitting, addMessage, finishStreamSegment, finishTurn },
+		);
+	};
+
+	const openModelPicker = async (): Promise<void> => {
+		setPickerLoading(true);
+		try {
+			const models = await listModels();
+			if (models.length === 0) addMessage("[no models available]", true);
+			else {
+				setPickerIndex(0);
+				setPicker(models);
+			}
+		} catch (error) {
+			addMessage(
+				`[failed to list models: ${error instanceof Error ? error.message : String(error)}]`,
+				true,
+			);
+		} finally {
+			setPickerLoading(false);
 		}
 	};
 
-	const lastCtrlC = useRef(0);
+	const selectModel = async (model: string): Promise<void> => {
+		setPicker(null);
+		await runControllerAction(() => controller.submit(`/model ${model}`), {
+			setSubmitting,
+			addMessage,
+			finishStreamSegment,
+			finishTurn,
+		});
+	};
 
-	const handleCtrlC = () => {
+	const handleSubmit = (value: string): void => {
+		if (value.trim() === "/model") {
+			setInput("");
+			void openModelPicker();
+			return;
+		}
+		void submit(value);
+	};
+
+	const handleCtrlC = (): void => {
 		if (picker) {
 			setPicker(null);
+			return;
+		}
+		if (state.phase !== "idle" || submitting) {
+			lastCtrlC.current = Date.now();
+			void approve("cancel");
 			return;
 		}
 		const now = Date.now();
 		if (now - lastCtrlC.current < 1500) {
-			requestExit();
+			onExit();
 			return;
 		}
 		lastCtrlC.current = now;
-		if (busyRef.current) {
-			void agent.cancel();
-			return;
-		}
-		addMsg("  [press Ctrl+C again to exit]", true);
+		addMessage("  [press Ctrl+C again to exit]", true);
 	};
 
-	const handleApprovalKey = (input: string, key: { escape: boolean }) => {
-		if (input === "y" || input === "Y") handleApproval("y");
-		else if (input === "a" || input === "A") handleApproval("a");
-		else if (input === "n" || input === "N") handleApproval("n");
-		else if (key.escape) void cancelPendingApproval();
-	};
+	useInput((value, key) =>
+		handleTuiInput(value, key, {
+			state,
+			picker,
+			pickerIndex,
+			history,
+			historyIndex,
+			setPicker,
+			setPickerIndex,
+			setInput,
+			onCtrlC: handleCtrlC,
+			onApproval: (decision) => void approve(decision),
+			onModelSelect: (model) => void selectModel(model),
+		}),
+	);
 
-	const cancelPendingApproval = async () => {
-		setPendingTool(null);
-		pendingToolName.current = null;
-		setInput("");
-		lastCtrlC.current = 0;
-		setBusy(true);
-		await agent.cancel();
-		addMsg("  [cancelled]", true);
-		finishTurn();
-	};
-
-	const handleHistoryNav = (key: { upArrow: boolean; downArrow: boolean }) => {
-		if (key.upArrow && history.current.length > 0) {
-			histIdx.current = Math.min(histIdx.current + 1, history.current.length - 1);
-			setInput(history.current[histIdx.current] ?? "");
-		}
-		if (key.downArrow) {
-			histIdx.current = Math.max(histIdx.current - 1, -1);
-			setInput(histIdx.current < 0 ? "" : (history.current[histIdx.current] ?? ""));
-		}
-	};
-
-	useInput((_input, key) => {
-		if (key.ctrl && _input === "c") {
-			handleCtrlC();
-			return;
-		}
-		if (pendingTool) {
-			handleApprovalKey(_input, key);
-			return;
-		}
-		if (picker) {
-			handlePickerKey(key);
-			return;
-		}
-		if (key.escape && busyRef.current) {
-			void agent.cancel();
-			return;
-		}
-		handleHistoryNav(key);
-	});
-
-	const persistSession = () => {
-		session
-			.save({ promptTokens: lastPrompt, totalTokens: tokens })
-			.orTee((error) => addMsg(`  ⚠ ${error}`, true));
-	};
-
-	/** Reads the ref because `pendingTool` is stale after an await. A turn paused for approval is
-	 * saved and idle, but Stop hooks wait until the turn is really over. */
-	const finishTurn = () => {
-		setBusy(false);
-		persistSession();
-		if (!pendingToolName.current) ctx.fireStopHooks().catch(() => {});
-	};
-
-	const handlePendingEvent = async (
-		event: AgentEvent & { kind: "pending" },
-		response: string,
-	): Promise<number> => {
-		if (autoApproved.current.has(event.call.tool.name)) {
-			addMsg(`  ↳ ${event.call.tool.name} [auto-approved]`, true);
-			const len = await processEvents(agent.approve());
-			return len === 0 ? response.length : len;
-		}
-		pendingToolName.current = event.call.tool.name;
-		setPendingTool(
-			`[${event.index}/${event.total}] ${event.call.tool.name}: ${summarizeArgs(event.call.args)}`,
-		);
-		if (response) {
-			addMsg(`anvil: ${response}`);
-			setStreaming("");
-		}
-		return response.length;
-	};
-
-	const clearThinking = () => {
-		thinkingStart.current = null;
-		setIsThinking(false);
-		setStreaming("");
-	};
-
-	const startThinking = () => {
-		if (thinkingStart.current === null) {
-			thinkingStart.current = Date.now();
-			setElapsed(0);
-		}
-		setIsThinking(true);
-		setStreaming("");
-	};
-
-	const showPartialResponseStatus = (
-		state: { response: string },
-		status?: "error" | "interrupted",
-	) => {
-		if (!state.response) return;
-		addMsg(`anvil: ${state.response}`);
-		const label =
-			status === "interrupted" ? "[response interrupted]" : "[response ended with an error]";
-		addMsg(`  ${label}`, true);
-	};
-
-	/** Handle streaming content/reasoning/pending/tool_result events.
-	 * Returns a number to short-circuit, false if unhandled, undefined to continue. */
-	const handleStreamEvent = async (
-		event: AgentEvent,
-		state: { response: string },
-	): Promise<number | false | undefined> => {
-		if (event.kind === "content") {
-			state.response += event.text;
-			thinkingStart.current = null;
-			setIsThinking(false);
-			setStreaming(`anvil: ${state.response}`);
-			return undefined;
-		}
-		if (event.kind === "reasoning") {
-			startThinking();
-			return undefined;
-		}
-		if (event.kind === "pending") {
-			clearThinking();
-			return handlePendingEvent(event, state.response);
-		}
-		if (event.kind === "tool_result") {
-			clearThinking();
-			addMsg(`  ↳ ${event.name}: ${truncate(event.result)}`, true);
-			return undefined;
-		}
-		return false;
-	};
-
-	/** Handle non-streaming agent events (usage, error, state, info).
-	 * Returns a number to short-circuit, or undefined to continue. */
-	const handleStreamError = (event: AgentEvent & { kind: "error" }, state: TuiTurnState): void => {
-		showPartialResponseStatus(state, event.status);
-		state.response = "";
-		state.finishReason = undefined;
-		state.failed = true;
-		state.recoveryPending = false;
-		setStreaming("");
-		addMsg(`  ⚠ ${event.message}`, true);
-	};
-
-	const updateRecoveryState = (event: AgentEvent, state: TuiTurnState): void => {
-		if (event.kind === "compacted") state.recoveryPending = true;
-		if (event.kind === "round" && state.recoveryPending) {
-			state.failed = false;
-			state.recoveryPending = false;
-		}
-	};
-
-	const handleMetaEvent = (event: AgentEvent, state: TuiTurnState): number | undefined => {
-		updateRecoveryState(event, state);
-		if (event.kind === "usage") {
-			setTokens((t) => t + event.totalTokens);
-			setLastPrompt(event.promptTokens);
-			if (event.finishReason) state.finishReason = event.finishReason;
-			return undefined;
-		}
-		if (event.kind === "error") {
-			handleStreamError(event, state);
-			return undefined;
-		}
-		if (event.kind === "state" && event.state === "streaming") setStreaming("anvil: [generating…]");
-		else handleInfoEvent(event, addMsg);
-		return undefined;
-	};
-
-	const finalizeResponse = (state: { response: string; finishReason: string | undefined }) => {
-		if (state.response) addMsg(`anvil: ${state.response}`);
-		setStreaming("");
-		if (!state.response && state.finishReason)
-			addMsg(`  [no content — finish_reason: ${state.finishReason}]`, true);
-	};
-
-	const consumeEvents = async (events: AsyncGenerator<AgentEvent>): Promise<number> => {
-		const state = {
-			response: "",
-			finishReason: undefined as string | undefined,
-			failed: false,
-			recoveryPending: false,
-		};
-		const earlyResult = await consumeAgentEvents(events, async (event) => {
-			const streamResult = await handleStreamEvent(event, state);
-			if (streamResult === false) {
-				return handleMetaEvent(event, state);
-			}
-			return streamResult;
-		});
-		if (earlyResult !== undefined) return earlyResult;
-		finalizeResponse(state);
-		return state.failed ? -1 : state.response.length;
-	};
-
-	/** A turn that throws ends like an error event, so the TUI stays usable and the turn is saved. */
-	const processEvents = (events: AsyncGenerator<AgentEvent>): Promise<number> =>
-		consumeEvents(events).catch((error: unknown) => {
-			addMsg(`  ⚠ ${error instanceof Error ? error.message : String(error)}`, true);
-			return -1;
-		});
-
-	// === Commands ===
-
-	const switchProvider = (name: string, model: string) => {
-		const entry = config.providers[name];
-		if (!entry) {
-			addMsg(`[unknown provider: ${name}]`, true);
-			return;
-		}
-		pingProvider(name, entry, config.connectTimeout * 1000).then((health) => {
-			if (health.status !== "healthy") {
-				addMsg(`[${name}: ${health.message}]`, true);
-				return;
-			}
-			const p = makeProvider(name, entry, {
-				streamTimeout: config.streamTimeout,
-				connectTimeout: config.connectTimeout,
-			});
-			engine.setProvider(p);
-			engine.setModel(model);
-			activeProviderName = name;
-			addMsg(`[model → ${name}/${model}]`, true);
-		});
-	};
-
-	const listModels = (providerName: string) => {
-		const health = ctx.healthyProviders.get(providerName);
-		if (!health) {
-			addMsg(`[unknown provider: ${providerName}]`, true);
-			return;
-		}
-		if (health.status !== "healthy") {
-			addMsg(`[${providerName}: ${health.message}]`, true);
-			return;
-		}
-		const entry = config.providers[providerName];
-		if (!entry) return;
-		const current = `${activeProviderName}/${engine.model()}`;
-		addMsg(`[provider: ${providerName} | active: ${current}]`, true);
-		makeProvider(providerName, entry, {
-			streamTimeout: config.streamTimeout,
-			connectTimeout: config.connectTimeout,
-		})
-			.listModels()
-			.then((res) => {
-				if (res.isErr()) {
-					addMsg(`[${providerName}: failed to list models]`, true);
-					return;
-				}
-				const models = res.value;
-				if (models.length === 0) {
-					addMsg("[no models found]", true);
-					return;
-				}
-				for (const name of models) {
-					const fq = `${providerName}/${name}`;
-					const marker = fq === current ? " ●" : "";
-					addMsg(`  ${fq}${marker}`, true);
-				}
-			});
-	};
-
-	const listAllModels = () => {
-		const healthy = [...ctx.healthyProviders.entries()].filter(([, h]) => h.status === "healthy");
-		if (healthy.length === 0) {
-			addMsg("[no healthy providers]", true);
-			return;
-		}
-		const promises = healthy.map(async ([name]) => {
-			const entry = config.providers[name];
-			if (!entry) return [];
-			const result = await makeProvider(name, entry, {
-				streamTimeout: config.streamTimeout,
-				connectTimeout: config.connectTimeout,
-			}).listModels();
-			return result.isOk() ? result.value.map((m) => `${name}/${m}`) : [];
-		});
-		Promise.all(promises).then((results) => {
-			const models = results.flat();
-			if (models.length === 0) {
-				addMsg("[no models available]", true);
-				return;
-			}
-			setPickerIdx(0);
-			setPicker(models);
-		});
-	};
-
-	const cmdModel = (arg: string): true => {
-		if (arg.startsWith("set ")) {
-			const fq = arg.slice(4).trim();
-			const slashIdx = fq.indexOf("/");
-			if (slashIdx > 0) {
-				switchProvider(fq.slice(0, slashIdx), fq.slice(slashIdx + 1));
-			} else {
-				engine.setModel(fq);
-			}
-			const cfgPath = join(homedir(), ".anvil", "config.yaml");
-			const raw = readFileSync(cfgPath, "utf-8");
-			const updated = raw.includes("default_model:")
-				? raw.replace(/^default_model:.*/m, `default_model: ${fq}`)
-				: `${raw.trimEnd()}\ndefault_model: ${fq}\n`;
-			if (updated === raw && !raw.includes("default_model:")) {
-				addMsg(`[warning: default_model key not found in config — added it]`, true);
-			}
-			writeFileSync(cfgPath, updated);
-			addMsg(`[default → ${fq}]`, true);
-		} else if (arg.startsWith("@")) {
-			listModels(arg.slice(1));
-		} else if (arg.includes("/")) {
-			const slashIdx = arg.indexOf("/");
-			switchProvider(arg.slice(0, slashIdx), arg.slice(slashIdx + 1));
-		} else if (arg) {
-			engine.setModel(arg);
-			addMsg(`[model → ${activeProviderName}/${arg}]`, true);
-		} else {
-			listAllModels();
-		}
-		return true;
-	};
-
-	const cmdSkill = (arg: string): true => {
-		if (!arg) {
-			const list = availableSkills.map((s) => s.name).join(", ");
-			addMsg(`[skills: ${list || "none"}]`, true);
-			return true;
-		}
-		const found = availableSkills.find((s) => s.name === arg);
-		if (found) {
-			activeSkill = found;
-			ctx.setActiveSkill(found);
-			addMsg(`[skill → ${arg}]`, true);
-		} else {
-			addMsg(`[skill "${arg}" not found]`, true);
-		}
-		return true;
-	};
-
-	const cmdRewind = (arg: string) => {
-		const n = Number.parseInt(arg, 10);
-		if (Number.isNaN(n) || n < 0) {
-			addMsg("[usage: /rewind N]", true);
-			return;
-		}
-		const keep = engine.messages().slice(0, n * 2);
-		engine.reset();
-		engine.loadMessages([...keep]);
-		addMsg(`[rewound to turn ${n}]`, true);
-	};
-
-	const cmdHistory = () => {
-		const sessions = listSessions(historyDir);
-		if (sessions.length === 0) {
-			addMsg("[no sessions]", true);
-			return;
-		}
-		for (const s of sessions.slice(0, 10)) {
-			const loaded = loadSession(historyDir, s.id);
-			const preview = loaded.isOk()
-				? (loaded.value.messages.find((m) => m.role === "user")?.content ?? "")
-						.replace(/\n/g, " ")
-						.slice(0, 50)
-				: "";
-			addMsg(`  ${s.id.slice(0, 8)} ${preview}`, true);
-		}
-	};
-
-	const cmdTranscript = () => {
-		const msgs = engine.messages();
-		if (msgs.length === 0) {
-			addMsg("[no messages to export]", true);
-			return;
-		}
-		const dir = join(homedir(), ".anvil", "transcripts");
-		mkdirSync(dir, { recursive: true });
-		const md = msgs
-			.map((m) => {
-				const role =
-					m.role === "user" ? "**You**" : m.role === "assistant" ? "**Assistant**" : `*${m.role}*`;
-				return `${role}:\n${m.content ?? ""}\n`;
-			})
-			.join("\n---\n\n");
-		const filename = `${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.md`;
-		const path = join(dir, filename);
-		writeFileSync(path, md);
-		addMsg(`[transcript → ${path}]`, true);
-	};
-
-	const cmdAgent = (arg: string) => {
-		if (!arg) {
-			const lines = availableAgents.map((a) => {
-				const marker = a.name === activeAgentDef?.name ? " ●" : "";
-				return `  ${a.name}${marker}${a.description ? ` — ${a.description}` : ""}`;
-			});
-			addMsg(lines.length > 0 ? lines.join("\n") : "[no agents]", true);
-			return;
-		}
-		const found = availableAgents.find((a) => a.name === arg);
-		if (!found) {
-			addMsg(`[agent "${arg}" not found]`, true);
-			return;
-		}
-		activeAgentDef = found;
-		ctx.setActiveAgent(found);
-		addMsg(`[agent → ${arg}]`, true);
-	};
-
-	const cmdContext = () => {
-		const contextSize = config.contextSize ?? 128000;
-		const pct = lastPrompt > 0 ? Math.round((lastPrompt / contextSize) * 100) : 0;
-		const toolCount = registry.all().length;
-		const toolTokens = Math.round(JSON.stringify(registry.schemas()).length / 4);
-		const trimAt = Math.round(contextSize * 0.8);
-		const barWidth = 20;
-		const filled = Math.round((pct / 100) * barWidth);
-		const bar = "█".repeat(filled) + "░".repeat(barWidth - filled);
-		const hint = pct >= 60 ? "\n  hint: /compact to manually free context" : "";
-		addMsg(
-			`[context]\n  limit:     ${contextSize.toLocaleString()} tokens\n  used:      ~${lastPrompt.toLocaleString()} (${pct}%)  ${bar}\n  tools:     ${toolCount} (~${toolTokens.toLocaleString()} tokens)\n  trim at:   80% (~${trimAt.toLocaleString()} tokens)\n  compact:   on overflow (auto)${hint}`,
-			true,
-		);
-	};
-
-	const cmdCompact = () => {
-		const messages = [...engine.messages()];
-		const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
-		addMsg("  [compacting context...]", true);
-		compactHistory(ctx.provider, engine.model(), messages, { debug: flags.debug }).then(
-			(result) => {
-				if (result.isErr()) {
-					addMsg(`  ⚠ compaction failed: ${result.error.message}`, true);
-					return;
-				}
-				engine.loadMessages(result.value);
-				const afterTokens = Math.round(result.value.map((m) => m.content).join("").length / 4);
-				setLastPrompt(afterTokens);
-				addMsg(
-					`  ⚡ compacted: ~${beforeTokens.toLocaleString()} → ~${afterTokens.toLocaleString()} tokens`,
-					true,
-				);
-			},
-		);
-	};
-
-	const simpleCommands: Record<string, () => void> = {
-		"/quit": requestExit,
-		"/exit": requestExit,
-		"/new": () => {
-			engine.reset();
-			setMessages([]);
-			setTokens(0);
-			setLastPrompt(0);
-			setBusy(false);
-			session.startNew();
-			addMsg("[new session]", true);
-		},
-		"/usage": () => addMsg(`[${tokens} tok | ${engine.messages().length} msgs]`, true),
-		"/history": () => cmdHistory(),
-		"/transcript": () => cmdTranscript(),
-		"/context": () => cmdContext(),
-	};
-
-	const handleCommand = (cmd: string): boolean => {
-		const simple = simpleCommands[cmd];
-		if (simple) {
-			simple();
-			return true;
-		}
-		if (cmd.startsWith("/model")) return cmdModel(cmd.slice(6).trim());
-		if (cmd === "/compact") {
-			cmdCompact();
-			return true;
-		}
-		if (cmd.startsWith("/skill")) return cmdSkill(cmd.slice(6).trim());
-		if (cmd.startsWith("/rewind")) {
-			cmdRewind(cmd.slice(7).trim());
-			return true;
-		}
-		if (cmd.startsWith("/agent")) {
-			cmdAgent(cmd.slice(6).trim());
-			return true;
-		}
-		const skillMatch = availableSkills.find((s) => s.name === cmd.slice(1));
-		if (skillMatch) {
-			activeSkill = skillMatch;
-			ctx.setActiveSkill(skillMatch);
-			addMsg(`[skill → ${skillMatch.name}]`, true);
-			return true;
-		}
-		return false;
-	};
-
-	// === Message handling ===
-
-	const handleApproval = async (value: string) => {
-		const key = value.trim().toLowerCase();
-		const approved = key === "y" || key === "a";
-		if (key === "a" && pendingToolName.current) {
-			autoApproved.current.add(pendingToolName.current);
-			addMsg(`  [auto-approving ${pendingToolName.current} for this session]`, true);
-		}
-		setPendingTool(null);
-		pendingToolName.current = null;
-		setInput("");
-		lastCtrlC.current = 0;
-		setBusy(true);
-		await processEvents(approved ? agent.approve() : agent.reject(value));
-		finishTurn();
-	};
-
-	const sendMessage = async (value: string) => {
-		addMsg(`you: ${value}`);
-		const refs = value.match(/(^|[\s])@([\w./-]+)/g);
-		if (refs) {
-			const paths = refs.map((r) => r.trim().slice(1));
-			addMsg(`  [attached: ${paths.join(", ")}]`, true);
-		}
-		lastCtrlC.current = 0;
-		setBusy(true);
-		const len = await processEvents(agent.send(expandFileRefs(value, projectRoot)));
-		if (len === 0 && !pendingToolName.current) {
-			addMsg("  [empty response, retrying…]", true);
-			await processEvents(agent.send("Please try again."));
-		}
-		finishTurn();
-	};
-
-	const handlePlan = async (task: string) => {
-		if (!task) {
-			addMsg("[usage: /plan <task>]", true);
-			return;
-		}
-		addMsg(`[plan: ${task}]`, true);
-		lastCtrlC.current = 0;
-		setBusy(true);
-		await processEvents(
-			agent.send(`Break this task into numbered steps (just the steps, no explanation):\n${task}`),
-		);
-		finishTurn();
-	};
-
-	const handleSubmit = async (value: string) => {
-		if (!value.trim()) return;
-		if (busy) return;
-		setInput("");
-		history.current = [value, ...history.current.slice(0, 99)];
-		histIdx.current = -1;
-		const cmd = value.trim();
-		if (cmd.startsWith("/plan")) {
-			await handlePlan(cmd.slice(5).trim());
-			return;
-		}
-		if (cmd.startsWith("/") && handleCommand(cmd)) return;
-		await sendMessage(value);
-	};
+	const streaming =
+		state.phase === "streaming"
+			? state.streamingText
+				? `anvil: ${state.streamingText}`
+				: isThinking
+					? ""
+					: "anvil: [generating…]"
+			: "";
 
 	return (
 		<Box flexDirection="column" height="100%">
 			<Static items={messages}>
-				{(m) => (
-					<Box key={m.id} paddingX={1}>
-						<Text dimColor={m.dim ?? false}>{m.text}</Text>
+				{(message) => (
+					<Box key={message.id} paddingX={1}>
+						<Text dimColor={message.dim ?? false}>{message.text}</Text>
 					</Box>
 				)}
 			</Static>
@@ -791,87 +652,24 @@ function App({
 				{isThinking && !streaming && <Text color="gray">anvil: [thinking… {elapsed}s]</Text>}
 			</Box>
 			<StatusBar
-				provider={activeProviderName}
-				model={engine.model()}
-				tokens={tokens}
+				provider={providerName()}
+				model={state.model}
+				tokens={state.tokens.totalTokens}
 				lastPrompt={lastPrompt}
-				contextSize={config.contextSize}
-				busy={busy}
+				contextSize={contextSize}
+				activeSkill={activeSkillName()}
+				busy={isBusy}
 			/>
-			<Box paddingX={1}>
-				{picker ? (
-					<Box flexDirection="column">
-						<Text dimColor>↑↓ select, Enter confirm, Esc cancel</Text>
-						{picker.map((m, i) => (
-							<Text key={m} {...(i === pickerIdx ? { color: "cyan" } : {})}>
-								{i === pickerIdx ? "❯ " : "  "}
-								{m}
-								{m === `${activeProviderName}/${engine.model()}` ? " ●" : ""}
-							</Text>
-						))}
-					</Box>
-				) : pendingTool ? (
-					<Box flexDirection="column">
-						<Text color="yellow">⚡ {pendingTool}</Text>
-						<Text dimColor>Allow? [y]es [n]o [a]lways </Text>
-					</Box>
-				) : (
-					<>
-						<Text color="green">{"❯ "}</Text>
-						<TextInput value={input} onChange={setInput} onSubmit={handleSubmit} />
-					</>
-				)}
-			</Box>
+			<InputArea
+				state={state}
+				picker={picker}
+				pickerIndex={pickerIndex}
+				pickerLoading={pickerLoading}
+				activeModel={`${providerName()}/${state.model}`}
+				input={input}
+				setInput={setInput}
+				onSubmit={handleSubmit}
+			/>
 		</Box>
 	);
 }
-
-/** Handle informational agent events that only require addMsg — extracted to reduce processEvents complexity. */
-const handleInfoEvent = (
-	event: AgentEvent,
-	addMsg: (text: string, dim?: boolean) => void,
-): void => {
-	if (event.kind === "trimmed") {
-		addMsg(`  [trimmed ${event.count} old messages]`, true);
-		return;
-	}
-	if (event.kind === "overflow") {
-		addMsg("⚠ context overflow detected — consider /compact or /new", true);
-		return;
-	}
-	if (event.kind === "compacting") {
-		addMsg("  [compacting context...]", true);
-		return;
-	}
-	if (event.kind === "compacted") {
-		addMsg(
-			`  ⚡ compacted: ~${event.before.toLocaleString()} → ~${event.after.toLocaleString()} tokens`,
-			true,
-		);
-	}
-	if (event.kind === "done" && event.message) addMsg(`✓ ${event.message}`);
-	if (event.kind === "stuck" && event.message) addMsg(`✗ ${event.message}`, true);
-	if (event.kind === "warning") addMsg(`  ⚠ ${event.message}`, true);
-};
-
-function Root() {
-	return <App providerWarning={providerWarning} mcpWarnings={ctx.mcpWarnings} />;
-}
-
-const app = render(<Root />, { exitOnCtrlC: false });
-const gracefulExit = createGracefulExit({
-	cancel: agent.cancel,
-	closeUi: () => app.unmount(),
-	flush: session.save,
-	shutdown: ctx.shutdown,
-	print: (message) => process.stderr.write(message),
-	exit: (code) => {
-		process.exitCode = code;
-		process.stderr.write("", () => process.stdout.write("", () => process.exit(code)));
-	},
-});
-requestExit = () => {
-	void gracefulExit.run();
-};
-gracefulExit.install(process);
-guardProcess({ flush: session.save, restoreTerminal: () => app.unmount() });
