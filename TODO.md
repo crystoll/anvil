@@ -473,12 +473,13 @@ type SessionController = {
     - Ctrl+C cancels when busy or awaiting approval; when idle, a double press exits.
   - The approval prompt shows "1 of N" and a diff preview for `edit_file` and `write_file`.
   - **Done:** `src/tui/app.tsx` is now importable and controller-driven; `src/tui/entry.tsx` owns bootstrap/rendering. State subscriptions drive the view, and approval prompts show queue position and file previews. Controller tests also verify streamed text is cleared when approval resumes.
-- [ ] **M8.4 Component tests** with `ink-testing-library` 4.0.0. It's verified with ink 8: typing, Enter, Esc and Ctrl+C all register. Use a fake controller and cover:
+- [x] **M8.4 Component tests** with `ink-testing-library` 4.0.0, verified against the project's Ink 7.1.1 and React 19 dependencies. Use a fake controller and cover:
   - y/n/a approval.
   - Esc calling `cancel()`.
   - Ctrl+C semantics.
   - ↑/↓ history.
   - Rendering of pending prompts, streaming text and notices.
+  - **Done:** 11 component tests cover approval decisions, cancellation keys during streaming and approval, idle double-Ctrl+C exit, history navigation, approval previews, streaming updates and notices.
 - [ ] **M8.5 Delete the duplicated orchestration** from both UIs once parity is verified.
 - [ ] **M8.6 Docs.**
   - `docs/architecture.md`: add the controller layer.

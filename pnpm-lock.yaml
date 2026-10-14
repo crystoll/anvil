@@ -212,6 +212,9 @@ importers:
       dprint:
         specifier: 0.62.0
         version: 0.62.0
+      ink-testing-library:
+        specifier: 4.0.0
+        version: 4.0.0(@types/react@19.3.0)
       msw:
         specifier: 3.0.3
         version: 3.0.3(@types/node@22.20.5)(graphql@16.14.2)(typescript@7.0.2)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.27.7)(tsx@4.23.15))
@@ -1638,6 +1641,15 @@ packages:
     peerDependencies:
       ink: '>=4.0.0'
       react: '>=18.0.0'
+
+  ink-testing-library@4.0.0:
+    resolution: {integrity: sha512-yF92kj3pmBvk7oKbSq5vEALO//o7Z9Ck/OaLNlkzXNeYdwfpxMQkSowGTFUCS5MSu9bWfSZMewGpp7bFc66D7Q==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/react': '>=18.0.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
 
   ink-text-input@6.0.0:
     resolution: {integrity: sha512-Fw64n7Yha5deb1rHY137zHTAbSTNelUKuB5Kkk2HACXEtwIHBCf9OH2tP/LQ9fRYTl1F0dZgbW0zPnZk6FA9Lw==}
@@ -3197,6 +3209,10 @@ snapshots:
       cli-spinners: 2.9.2
       ink: 7.1.1(@types/react@19.3.0)(react@19.3.0)
       react: 19.3.0
+
+  ink-testing-library@4.0.0(@types/react@19.3.0):
+    optionalDependencies:
+      '@types/react': 19.3.0
 
   ink-text-input@6.0.0(ink@7.1.1(@types/react@19.3.0)(react@19.3.0))(react@19.3.0):
     dependencies:
