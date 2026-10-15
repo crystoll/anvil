@@ -195,7 +195,12 @@ describe("TUI App", () => {
 			pending: {
 				call: {
 					tool: editTool,
-					args: { path: "notes.md", search: "old text", replace: "new text" },
+					args: {
+						path: "notes.md",
+						search: "old text",
+						replace: "new text",
+						replace_all: true,
+					},
 					callId: "call-1",
 					raw: "{}",
 				},
@@ -209,6 +214,7 @@ describe("TUI App", () => {
 		expect(screen.lastFrame()).toContain("[2/3] edit_file(notes.md)");
 		expect(screen.lastFrame()).toContain("- old text");
 		expect(screen.lastFrame()).toContain("+ new text");
+		expect(screen.lastFrame()).toContain("replace_all: true");
 	});
 
 	it("renders streamed text and controller notices", async () => {

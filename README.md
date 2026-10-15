@@ -139,7 +139,7 @@ If anvil crashes, it saves the conversation first and writes the details to `~/.
 | `web_search`      | auto     | Search the web (DuckDuckGo)         |
 | `web_fetch`       | auto     | Fetch URL and extract readable text |
 | `write_file`      | y/n      | Write/create a file                 |
-| `edit_file`       | y/n      | Edit part of a file                 |
+| `edit_file`       | y/n      | Whitespace-tolerant edit            |
 | `run_cmd`         | y/n      | Run a shell command                 |
 
 ## Configuration

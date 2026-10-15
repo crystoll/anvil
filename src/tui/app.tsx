@@ -132,6 +132,9 @@ function ApprovalPrompt({ pending }: { pending: PendingApproval }) {
 				typeof args.search === "string" &&
 				typeof args.replace === "string" && (
 					<Box flexDirection="column" paddingLeft={2}>
+						{args.replace_all === true && (
+							<Text color="yellow">replace_all: true — replaces every match</Text>
+						)}
 						<Text color="red">
 							{args.search
 								.split("\n")

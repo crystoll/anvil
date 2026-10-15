@@ -550,12 +550,13 @@ type SessionController = {
   - **Done:** common malformed JSON is repaired before tool execution; unrecoverable or non-object arguments return the tool schema and a required-fields example to the model.
 - [x] **M10.7 Recover tool calls written as text.** Handle `<tool_call>{…}</tool_call>` (Qwen/Hermes), fenced JSON and bare `{"name", "arguments"}` objects, in assistant messages only. **Test first:** one fixture per format.
   - **Done:** the agent recognizes complete tagged, fenced and bare JSON calls in assistant messages, including repaired JSON syntax; user messages are never interpreted as tool calls.
-- [ ] **M10.8 More tolerant `edit_file`.**
+- [x] **M10.8 More tolerant `edit_file`.**
   - Normalize CRLF.
   - Match in three passes: exact, then line-trimmed, then whitespace-normalized.
   - Multiple matches are an error that lists the count and line numbers, unless `replace_all: true`.
   - No match returns the closest region with line numbers.
   - **Test first:** one fixture per case.
+  - **Done:** edits normalize line endings and apply the three matching passes; ambiguous edits require `replace_all`, which is highlighted in both approval UIs, and failed matches include a numbered nearby excerpt.
 - [ ] **M10.9 `run_cmd` for agents.**
   - Use a non-interactive environment: `CI=1`, `PAGER=cat`, `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`.
   - Keep the head and the tail of the output: the first 2K plus the last 6K characters, with "… N chars omitted …" between. Errors are at the tail (F19).

@@ -227,6 +227,7 @@ const formatPending = (call: PendingCall, index: number, total: number): string 
 			String(args.search),
 			String(args.replace),
 			position,
+			args.replace_all === true,
 		);
 	if (tool.name === "write_file" && typeof args.content === "string") {
 		const preview = args.content.length > 300 ? `${args.content.slice(0, 300)}…` : args.content;
@@ -243,8 +244,10 @@ const formatEditDiff = (
 	search: string,
 	replace: string,
 	position: string,
+	replaceAll: boolean,
 ): string => {
-	const lines = [`\n  🔧 ${position}edit_file(${path})`];
+	const scope = replaceAll ? " — replace all matches" : "";
+	const lines = [`\n  🔧 ${position}edit_file(${path})${scope}`];
 	for (const line of search.split("\n")) lines.push(`\x1b[31m  - ${line}\x1b[0m`);
 	for (const line of replace.split("\n")) lines.push(`\x1b[32m  + ${line}\x1b[0m`);
 	return lines.join("\n");

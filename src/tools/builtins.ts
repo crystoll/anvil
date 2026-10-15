@@ -33,6 +33,94 @@ const objSchema = (required: string[], properties: Record<string, unknown>) => (
 
 const strProp = (description: string) => ({ type: "string", description });
 const intProp = (description: string) => ({ type: "integer", description });
+const normalizeLineEndings = (text: string): string => text.replace(/\r\n?/g, "\n");
+
+type EditMatch = { start: number; end: number; line: number };
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const addLineNumbers = (
+	content: string,
+	matches: Array<{ start: number; end: number }>,
+): EditMatch[] => {
+	let cursor = 0;
+	let line = 1;
+	return matches.map(({ start, end }) => {
+		while (cursor < start) {
+			if (content[cursor] === "\n") line++;
+			cursor++;
+		}
+		return { start, end, line };
+	});
+};
+
+const regexMatches = (text: string, pattern: RegExp): EditMatch[] =>
+	addLineNumbers(
+		text,
+		[...text.matchAll(pattern)].map((match) => ({
+			start: match.index,
+			end: match.index + match[0].length,
+		})),
+	);
+
+const exactMatches = (content: string, search: string): EditMatch[] => {
+	const matches: Array<{ start: number; end: number }> = [];
+	let start = content.indexOf(search);
+	while (start >= 0) {
+		matches.push({ start, end: start + search.length });
+		start = content.indexOf(search, start + search.length);
+	}
+	return addLineNumbers(content, matches);
+};
+
+const lineTrimmedMatches = (content: string, search: string): EditMatch[] => {
+	const lines = search.split("\n").map((line) => escapeRegExp(line.trim()));
+	const pattern = `^[\\t ]*${lines.join("[\\t ]*\\n[\\t ]*")}[\\t ]*$`;
+	return regexMatches(content, new RegExp(pattern, "gm"));
+};
+
+const whitespaceNormalizedMatches = (content: string, search: string): EditMatch[] => {
+	const pattern = search.trim().split(/\s+/).map(escapeRegExp).join("\\s+");
+	return pattern ? regexMatches(content, new RegExp(pattern, "g")) : [];
+};
+
+const findEditMatches = (content: string, search: string): EditMatch[] => {
+	const exact = exactMatches(content, search);
+	if (exact.length || !search.trim()) return exact;
+	const lineTrimmed = lineTrimmedMatches(content, search);
+	return lineTrimmed.length ? lineTrimmed : whitespaceNormalizedMatches(content, search);
+};
+
+const closestRegion = (content: string, search: string): string => {
+	const lines = content.split("\n");
+	const searchTerms = new Set(search.toLowerCase().match(/[a-z0-9_]+/g) ?? []);
+	const closestLine = lines.reduce(
+		(best, line, index) => {
+			const lineTerms = new Set(line.toLowerCase().match(/[a-z0-9_]+/g) ?? []);
+			const score = [...searchTerms].filter((term) => lineTerms.has(term)).length;
+			return score > best.score ? { index, score } : best;
+		},
+		{ index: 0, score: -1 },
+	).index;
+	const start = Math.max(0, closestLine - 1);
+	const end = Math.min(lines.length, Math.max(start + search.split("\n").length, closestLine + 2));
+	const excerpt = lines
+		.slice(start, end)
+		.map((line, index) => `${start + index + 1}: ${line}`)
+		.join("\n");
+	return `Closest region at lines ${start + 1}-${end}:\n${excerpt}`;
+};
+
+const replaceMatches = (content: string, matches: EditMatch[], replace: string): string => {
+	let cursor = 0;
+	const parts: string[] = [];
+	for (const match of matches) {
+		parts.push(content.slice(cursor, match.start), replace);
+		cursor = match.end;
+	}
+	parts.push(content.slice(cursor));
+	return parts.join("");
+};
 
 /** Execute a shell command and terminate its process group on cancellation or timeout. */
 export const runCmd: Tool = {
@@ -244,29 +332,36 @@ export const writeFileTool: Tool = {
 /** Search and replace in a file. */
 export const editFileTool: Tool = {
 	name: "edit_file",
-	description: "Search and replace text in a file",
+	description: "Search and replace text in a file; multiple matches require replace_all",
 	schema: objSchema(["path", "search", "replace"], {
 		path: strProp("Project-relative file path"),
 		search: strProp("Exact text to find"),
 		replace: strProp("Replacement text"),
+		replace_all: { type: "boolean", description: "Replace every match (default false)" },
 	}),
 	needsApproval: true,
 	timeout: 5000,
 	execute: async (args, context) => {
 		const path = String(args.path ?? "");
-		const search = String(args.search ?? "");
-		const replace = String(args.replace ?? "");
+		const search = normalizeLineEndings(String(args.search ?? ""));
+		const replace = normalizeLineEndings(String(args.replace ?? ""));
 		const fullPath = resolve(context.projectRoot, path);
 		if (search === "") throw new Error("Search string must not be empty");
 
-		const content = await readFile(fullPath, "utf-8");
-		if (!content.includes(search)) {
-			throw new Error(`Search string not found in ${path}`);
-		}
+		const content = normalizeLineEndings(await readFile(fullPath, "utf-8"));
+		const matches = findEditMatches(content, search);
+		if (!matches.length)
+			throw new Error(`Search string not found in ${path}.\n${closestRegion(content, search)}`);
+		const replaceAll = args.replace_all === true;
+		if (matches.length > 1 && !replaceAll)
+			throw new Error(
+				`Search has ${matches.length} matches on lines ${matches.map(({ line }) => line).join(", ")}. Set replace_all: true to replace all matches.`,
+			);
+		const selected = replaceAll ? matches : matches.slice(0, 1);
 		await backupFile(fullPath, context.projectRoot);
-		const updated = content.replace(search, () => replace);
+		const updated = replaceMatches(content, selected, replace);
 		await writeFile(fullPath, updated, "utf-8");
-		return `Edited ${path}: replaced ${search.split("\n").length} lines`;
+		return `Edited ${path}: replaced ${selected.length} match${selected.length === 1 ? "" : "es"}`;
 	},
 };
 
