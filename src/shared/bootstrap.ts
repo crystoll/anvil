@@ -36,6 +36,7 @@ import {
 	createSessionWriter,
 	listSessions,
 	loadSession,
+	type SessionMeta,
 	type SessionWriter,
 	type SessionWriterOptions,
 } from "../session/index.js";
@@ -54,6 +55,7 @@ export type Flags = {
 	path: string | undefined;
 	yes: boolean;
 	resume: boolean;
+	resumeId?: string;
 	debug: boolean;
 };
 
@@ -125,12 +127,29 @@ export const parseFlags = (argv: string[]): Flags => {
 		const i = args.indexOf(flag);
 		return i >= 0 ? args[i + 1] : undefined;
 	};
+	const resumeIndex = args.indexOf("--resume");
+	const resumeCandidate = resumeIndex >= 0 ? args[resumeIndex + 1] : undefined;
 	const flagIndices = new Set(
 		["--model", "--skill", "--agent", "-c"]
 			.map((f) => args.indexOf(f))
 			.filter((i) => i >= 0)
 			.flatMap((i) => [i, i + 1]),
 	);
+	const hasProjectPathBeforeResume =
+		args.findIndex(
+			(argument, index) =>
+				index < resumeIndex && !argument.startsWith("-") && !flagIndices.has(index),
+		) >= 0;
+	const resumeId =
+		resumeCandidate &&
+		/^[a-f\d]{1,8}$/i.test(resumeCandidate) &&
+		(hasProjectPathBeforeResume || !existsSync(resolve(resumeCandidate)))
+			? resumeCandidate
+			: undefined;
+	if (resumeIndex >= 0) {
+		flagIndices.add(resumeIndex);
+		if (resumeId) flagIndices.add(resumeIndex + 1);
+	}
 	const posIdx = args.findIndex((a, i) => !a.startsWith("-") && !flagIndices.has(i));
 
 	return {
@@ -140,7 +159,8 @@ export const parseFlags = (argv: string[]): Flags => {
 		command: flagVal("-c"),
 		path: posIdx >= 0 ? args[posIdx] : undefined,
 		yes: args.includes("--yes"),
-		resume: args.includes("--resume"),
+		resume: resumeIndex >= 0,
+		...(resumeId ? { resumeId } : {}),
 		debug: args.includes("--debug"),
 	};
 };
@@ -333,16 +353,71 @@ const setupLsp = (projectRoot: string, registry: ReturnType<typeof createRegistr
 	};
 };
 
+type ResumeResult = { id?: string; notice?: string };
+
+const restoreSession = (
+	historyDir: string,
+	session: SessionMeta,
+	engine: ReturnType<typeof createEngine>,
+): boolean => {
+	const loaded = loadSession(historyDir, session.id);
+	if (loaded.isErr()) return false;
+	engine.loadMessages(repairHistory(loaded.value.messages).messages);
+	return true;
+};
+
+const resumeExplicitSession = (
+	historyDir: string,
+	engine: ReturnType<typeof createEngine>,
+	resumeId: string,
+): ResumeResult => {
+	const matches = listSessions(historyDir).filter(
+		(session) => session.id === resumeId || session.id.startsWith(resumeId),
+	);
+	if (matches.length === 0) return { notice: `No session found matching "${resumeId}".` };
+	if (matches.length > 1)
+		return {
+			notice: `Session ID "${resumeId}" is ambiguous: ${matches.map((session) => session.id).join(", ")}`,
+		};
+	const selected = matches[0];
+	if (!selected) return { notice: `No session found matching "${resumeId}".` };
+	if (!restoreSession(historyDir, selected, engine))
+		return { notice: `Couldn't load session "${selected.id}".` };
+	return { id: selected.id };
+};
+
 const tryResumeSession = (
 	historyDir: string,
 	engine: ReturnType<typeof createEngine>,
-): string | undefined => {
+	projectRoot: string,
+	resumeId?: string,
+): ResumeResult => {
+	if (resumeId) return resumeExplicitSession(historyDir, engine, resumeId);
 	const sessions = listSessions(historyDir);
-	if (!sessions[0]) return undefined;
-	const loaded = loadSession(historyDir, sessions[0].id);
-	if (loaded.isErr()) return undefined;
-	engine.loadMessages(repairHistory(loaded.value.messages).messages);
-	return sessions[0].id;
+
+	const projectSessions = sessions.filter((session) => session.cwd === projectRoot);
+	const projectSession = projectSessions.find((session) =>
+		restoreSession(historyDir, session, engine),
+	);
+	if (projectSession) return { id: projectSession.id };
+
+	const fallbackSession = sessions.find((session) => restoreSession(historyDir, session, engine));
+	if (!fallbackSession) {
+		return sessions.length > 0
+			? { notice: "No readable saved sessions; starting a new session." }
+			: {};
+	}
+	const reason =
+		projectSessions.length > 0
+			? `No readable session found for ${projectRoot}`
+			: `No session found for ${projectRoot}`;
+	const project = fallbackSession.cwd
+		? ` from ${fallbackSession.cwd}`
+		: " with no saved project path";
+	return {
+		id: fallbackSession.id,
+		notice: `${reason}; resumed the latest available session${project}.`,
+	};
 };
 
 /**
@@ -350,13 +425,19 @@ const tryResumeSession = (
  * answer being streamed. One-shot runs are never saved.
  */
 export const openSession = (
-	flags: Pick<Flags, "command" | "resume">,
+	flags: Pick<Flags, "command" | "resume" | "resumeId">,
 	historyDir: string,
 	engine: ReturnType<typeof createEngine>,
 	options: SessionWriterOptions = {},
+	projectRoot = process.cwd(),
 ): SessionWriter => {
-	const resumedId = flags.resume ? tryResumeSession(historyDir, engine) : undefined;
-	const session = createSessionWriter(historyDir, engine.messages, resumedId, options);
+	const resumeResult = flags.resume
+		? tryResumeSession(historyDir, engine, projectRoot, flags.resumeId)
+		: undefined;
+	const session = createSessionWriter(historyDir, engine.messages, resumeResult?.id, {
+		...options,
+		...(resumeResult?.notice ? { resumeNotice: resumeResult.notice } : {}),
+	});
 	// A failed save is reported by the save the UI makes at the end of the turn.
 	if (!flags.command) engine.onCommit(() => session.save());
 	return session;
@@ -452,15 +533,21 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	// Agent loop
 	const agentHooks = activeAgent?.hooks ?? {};
 	const hookCtx = { session_id: Date.now().toString(), cwd: projectRoot };
-	const session = openSession(flags, p.historyDir, engine, {
-		getMetadata: () => ({
-			cwd: projectRoot,
-			provider: engine.getProvider().name,
-			model: engine.model(),
-			...(activeAgent ? { agent: activeAgent.name } : {}),
-			...(activeSkill ? { skill: activeSkill.name } : {}),
-		}),
-	});
+	const session = openSession(
+		flags,
+		p.historyDir,
+		engine,
+		{
+			getMetadata: () => ({
+				cwd: projectRoot,
+				provider: engine.getProvider().name,
+				model: engine.model(),
+				...(activeAgent ? { agent: activeAgent.name } : {}),
+				...(activeSkill ? { skill: activeSkill.name } : {}),
+			}),
+		},
+		projectRoot,
+	);
 	const agent = createAgentLoop(engine, registry, {
 		maxRounds: config.maxRounds,
 		projectRoot,

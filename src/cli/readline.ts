@@ -16,10 +16,11 @@ import { createStatusBar } from "../ui/statusbar.js";
 import { createReadlineInput } from "./readline-input.js";
 
 const flags = parseFlags(process.argv);
-if (flags.path) process.chdir(flags.path);
 const ctx = await bootstrap(flags);
+if (flags.path) process.chdir(ctx.projectRoot);
 const { config, projectRoot, engine, session } = ctx;
 for (const warning of ctx.mcpWarnings) console.error(`⚠ ${warning}`);
+if (session.resumeNotice) console.error(`⚠ ${session.resumeNotice}`);
 
 const controllerSession = flags.command ? { ...session, save: () => ok(undefined) } : session;
 const commands = createAppCommandRegistry(ctx);

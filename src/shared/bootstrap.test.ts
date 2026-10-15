@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { HttpResponse, http } from "msw";
@@ -9,7 +9,13 @@ import { createEngine } from "../engine/index.js";
 import type { ConnectedServer } from "../mcp/index.js";
 import type { Message, Provider, StreamChunk } from "../provider/types.js";
 import { listSessions, loadSession, saveSession } from "../session/index.js";
-import { makeProvider, openSession, pingProvider, shutdownServices } from "./bootstrap.js";
+import {
+	makeProvider,
+	openSession,
+	parseFlags,
+	pingProvider,
+	shutdownServices,
+} from "./bootstrap.js";
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
@@ -255,6 +261,132 @@ describe("openSession", () => {
 		expect(latestSaved()).toEqual([question, { role: "user", content: "And the tests?" }]);
 	});
 
+	it("continues the newest session for the current project", () => {
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(new Date(1000));
+			saveSession(historyDir, [question], "project01", undefined, {
+				cwd: "/work/project",
+			})._unsafeUnwrap();
+			vi.setSystemTime(new Date(2000));
+			const newestProjectSession = saveSession(
+				historyDir,
+				[{ role: "user", content: "Recent project work" }],
+				"project02",
+				undefined,
+				{ cwd: "/work/project" },
+			)._unsafeUnwrap();
+			vi.setSystemTime(new Date(3000));
+			saveSession(
+				historyDir,
+				[{ role: "user", content: "Other project" }],
+				"other0001",
+				undefined,
+				{
+					cwd: "/work/other",
+				},
+			);
+			const engine = newEngine();
+
+			const session = openSession(
+				{ command: undefined, resume: true },
+				historyDir,
+				engine,
+				{},
+				"/work/project",
+			);
+
+			expect(session.id()).toBe(newestProjectSession);
+			expect(engine.messages()).toEqual([{ role: "user", content: "Recent project work" }]);
+			expect(session.resumeNotice).toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("falls back to the latest global session with a notice", () => {
+		saveSession(historyDir, [question], "elsewhere1", undefined, { cwd: "/work/elsewhere" });
+		const engine = newEngine();
+
+		const session = openSession(
+			{ command: undefined, resume: true },
+			historyDir,
+			engine,
+			{},
+			"/work/project",
+		);
+
+		expect(session.id()).toBe("elsewhere1");
+		expect(session.resumeNotice).toContain("No session found for /work/project");
+		expect(engine.messages()).toEqual([question]);
+	});
+
+	it("resumes an explicitly selected session by unique id prefix", () => {
+		saveSession(historyDir, [{ role: "user", content: "Latest" }], "latest01");
+		saveSession(historyDir, [question], "specific1");
+		const engine = newEngine();
+
+		const session = openSession(
+			{ command: undefined, resume: true, resumeId: "spec" },
+			historyDir,
+			engine,
+		);
+
+		expect(session.id()).toBe("specific1");
+		expect(session.resumeNotice).toBeUndefined();
+		expect(engine.messages()).toEqual([question]);
+	});
+
+	it("does not fall back when an explicit session id is missing", () => {
+		saveSession(historyDir, [question], "existing1");
+		const engine = newEngine();
+
+		const session = openSession(
+			{ command: undefined, resume: true, resumeId: "missing1" },
+			historyDir,
+			engine,
+			{},
+			"/work/project",
+		);
+
+		expect(session.id()).toBeUndefined();
+		expect(session.resumeNotice).toContain('No session found matching "missing1"');
+		expect(engine.messages()).toEqual([]);
+	});
+
+	it("does not fall back when an explicit session id prefix is ambiguous", () => {
+		saveSession(historyDir, [question], "abc00001");
+		saveSession(historyDir, [{ role: "user", content: "Other" }], "abc00002");
+		const engine = newEngine();
+
+		const session = openSession(
+			{ command: undefined, resume: true, resumeId: "abc" },
+			historyDir,
+			engine,
+		);
+
+		expect(session.id()).toBeUndefined();
+		expect(session.resumeNotice).toContain("is ambiguous");
+		expect(engine.messages()).toEqual([]);
+	});
+
+	it("reports when saved sessions cannot be read", () => {
+		const id = saveSession(historyDir, [question])._unsafeUnwrap();
+		writeFileSync(join(historyDir, `${id}.json`), "{");
+		const engine = newEngine();
+
+		const session = openSession(
+			{ command: undefined, resume: true },
+			historyDir,
+			engine,
+			{},
+			"/work/project",
+		);
+
+		expect(session.id()).toBeUndefined();
+		expect(session.resumeNotice).toContain("No readable saved sessions");
+	});
+
 	it("repairs unanswered tool calls when resuming a session", () => {
 		const interruptedHistory: Message[] = [
 			question,
@@ -279,5 +411,30 @@ describe("openSession", () => {
 		expect(engine.messages()).toEqual(repairedHistory);
 		expect(listSessions(historyDir)).toHaveLength(1);
 		expect(loadSession(historyDir, id)._unsafeUnwrap().messages).toEqual(repairedHistory);
+	});
+});
+
+describe("parseFlags resume options", () => {
+	it("parses an explicit session id without consuming the project path", () => {
+		expect(parseFlags(["node", "anvil", "/work/project", "--resume", "abc12345"])).toMatchObject({
+			path: "/work/project",
+			resume: true,
+			resumeId: "abc12345",
+		});
+	});
+
+	it("keeps a path following --resume as a project path, not a session id", () => {
+		const flags = parseFlags(["node", "anvil", "--resume", "/work/project"]);
+		expect(flags).toMatchObject({
+			path: "/work/project",
+			resume: true,
+		});
+		expect(flags.resumeId).toBeUndefined();
+	});
+
+	it("keeps a bare project directory following --resume as a path", () => {
+		const flags = parseFlags(["node", "anvil", "--resume", "project-dir"]);
+		expect(flags.path).toBe("project-dir");
+		expect(flags.resumeId).toBeUndefined();
 	});
 });

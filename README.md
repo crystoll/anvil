@@ -116,14 +116,15 @@ pnpm dev -- ~/code/myproject        # Open a specific project directory
 pnpm dev -- --model qwen3.6:27b    # Override model
 pnpm dev -- --skill code-review     # Start with a skill active
 pnpm dev -- --agent explorer        # Use a specific agent config
-pnpm dev -- --resume                # Resume last session
+pnpm dev -- --resume                # Resume latest session for this project
+pnpm dev -- --resume abc12345       # Resume a specific session (or unique ID prefix)
 pnpm dev -- -c "task description"   # Non-interactive: skip tools requiring approval, then exit
 pnpm dev -- -c "task description" --yes  # Non-interactive: approve all tool calls, then exit
 pnpm dev -- --debug                 # Show finish_reason in token display
 pnpm dev -- ~/code/project -c "run tests"  # One-shot in a specific directory
 ```
 
-If anvil crashes, it saves the conversation first and writes the details to `~/.anvil/logs/`. Pick up where you left off with `--resume`.
+If anvil crashes, it saves the conversation first and writes the details to `~/.anvil/logs/`. Pick up where you left off with `--resume`; it prefers the latest session for the current project and reports when it falls back to another project. Use `--resume <id>` to select a specific session by ID or unique prefix.
 
 In one-shot `-c` mode, tools that require approval are skipped by default. The tool result is
 returned to the model and the skipped call is reported on stderr. Pass `--yes` only when you

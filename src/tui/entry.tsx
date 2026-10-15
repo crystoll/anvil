@@ -65,6 +65,7 @@ const initialNotices = [
 			]
 		: []),
 	...ctx.mcpWarnings,
+	...(ctx.session.resumeNotice ? [ctx.session.resumeNotice] : []),
 ];
 const app = render(
 	<App
