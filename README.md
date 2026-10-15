@@ -184,7 +184,7 @@ Or set the `OLLAMA_NUM_CTX` environment variable to change Ollama's default for 
 export OLLAMA_NUM_CTX=65536  # applies to all requests that don't specify num_ctx
 ```
 
-Anvil calibrates its context estimate from provider-reported token usage, proactively compacts around 80% of the configured context window, and retries after overflow signals at 95% or more. Starting with a context size that matches your workload still avoids unnecessary compaction.
+Anvil calibrates its context estimate from provider-reported token usage, proactively compacts around 80% of the configured context window, and retries after overflow signals at 95% or more. Before output starts, transient connection errors, HTTP 503s, and timeouts are retried with backoff; after streaming starts, partial output is kept and can be retried with `/retry`. Starting with a context size that matches your workload still avoids unnecessary compaction.
 
 ## Per-Project Customization
 

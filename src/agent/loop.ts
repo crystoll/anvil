@@ -6,6 +6,7 @@ import type { Registry, Tool, ToolExecutionContext } from "../tools/registry.js"
 import { parseToolArgs } from "../tools/registry.js";
 import { compactHistory } from "./compact.js";
 import { isOverflow, PROACTIVE_COMPACTION_RATIO } from "./overflow.js";
+import { type RetryStreamEvent, retryBeforeFirstToken } from "./retry.js";
 
 /** Agent loop states. */
 export type AgentState = "idle" | "streaming" | "pending" | "executing" | "done" | "stuck";
@@ -66,9 +67,67 @@ type ActiveRun = {
 	started: boolean;
 };
 
+type RoundSignals = {
+	finishReason?: string;
+	promptTokens?: number;
+	estimatedHistoryTokens: number;
+	estimatedToolTokens: number;
+	content: string;
+	errorMessage?: string;
+};
+
+type ResponseState = { hasPartialAnswer: boolean; hasResponseStarted: boolean };
+
 const CANCEL_WAIT_MS = 5000;
 const CANCELLED_TOOL_RESULT = "[cancelled by user]";
 const SKIPPED_TOOL_RESULT = "Skipped: agent ended before this call could run.";
+
+const resetRoundSignals = (signals: RoundSignals): void => {
+	delete signals.finishReason;
+	delete signals.promptTokens;
+	delete signals.errorMessage;
+	signals.content = "";
+};
+
+const accumulateSignal = (signals: RoundSignals, event: EngineEvent): void => {
+	if (event.kind === "chunk") {
+		if (event.chunk.finishReason) signals.finishReason = event.chunk.finishReason;
+		if (event.chunk.content) signals.content += event.chunk.content;
+		if (event.chunk.usage) signals.promptTokens = event.chunk.usage.promptTokens;
+	}
+	if (event.kind === "error") signals.errorMessage = event.error.message;
+};
+
+const handleRetriedStreamEvent = (
+	item: RetryStreamEvent,
+	signals: RoundSignals,
+	response: ResponseState,
+): AgentEvent | undefined => {
+	if (item.kind === "retry") {
+		resetRoundSignals(signals);
+		response.hasPartialAnswer = false;
+		response.hasResponseStarted = false;
+		return {
+			kind: "warning",
+			message: `Retrying ${item.retry}/${item.total} in ${item.delayMs / 1000}s after ${item.error.message}`,
+		};
+	}
+
+	const event = item.event;
+	accumulateSignal(signals, event);
+	if (event.kind === "chunk") {
+		response.hasPartialAnswer ||= Boolean(event.chunk.content || event.chunk.reasoning);
+		response.hasResponseStarted ||= response.hasPartialAnswer || Boolean(event.chunk.toolCall);
+	}
+
+	const mapped = mapStreamEvent(event, signals.finishReason);
+	if (mapped?.kind !== "error" || mapped.status !== "error" || !response.hasResponseStarted)
+		return mapped;
+	const suffix = response.hasPartialAnswer
+		? " Partial answer kept. Use /retry to try again."
+		: " Use /retry to try again.";
+	return { ...mapped, message: `${mapped.message}${suffix}` };
+};
 
 /** Creates an agent loop that orchestrates engine + tools with approval gating. */
 export const createAgentLoop = (engine: Engine, registry: Registry, config: AgentConfig) => {
@@ -418,28 +477,10 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		return { action: "executed", events: allEvents };
 	};
 
-	type RoundSignals = {
-		finishReason?: string;
-		promptTokens?: number;
-		estimatedHistoryTokens: number;
-		estimatedToolTokens: number;
-		content: string;
-		errorMessage?: string;
-	};
-
 	const checkRoundOverflow = (signals: RoundSignals): AgentEvent | undefined => {
 		const contextSize = currentContextSize();
 		if (contextSize <= 0) return undefined;
 		return isOverflow({ ...signals, contextSize }) ? { kind: "overflow" } : undefined;
-	};
-
-	const accumulateSignal = (signals: RoundSignals, event: EngineEvent): void => {
-		if (event.kind === "chunk") {
-			if (event.chunk.finishReason) signals.finishReason = event.chunk.finishReason;
-			if (event.chunk.content) signals.content += event.chunk.content;
-			if (event.chunk.usage) signals.promptTokens = event.chunk.usage.promptTokens;
-		}
-		if (event.kind === "error") signals.errorMessage = event.error.message;
 	};
 
 	const calibrateTokenEstimate = (signals: RoundSignals): void => {
@@ -476,13 +517,17 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			...requestMessages,
 		]);
 		signals.estimatedToolTokens = Math.round(JSON.stringify(schemas).length / 4);
-		for await (const event of engine.stream(
-			schemas,
-			{ ...(contextSize > 0 ? { contextSize } : {}), signal },
-			requestMessages,
+		const response: ResponseState = { hasPartialAnswer: false, hasResponseStarted: false };
+		for await (const item of retryBeforeFirstToken(
+			() =>
+				engine.stream(
+					schemas,
+					{ ...(contextSize > 0 ? { contextSize } : {}), signal },
+					requestMessages,
+				),
+			signal,
 		)) {
-			accumulateSignal(signals, event);
-			const mapped = mapStreamEvent(event, signals.finishReason);
+			const mapped = handleRetriedStreamEvent(item, signals, response);
 			if (mapped) yield mapped;
 		}
 		const overflowEvent = checkRoundOverflow(signals);

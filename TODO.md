@@ -534,9 +534,10 @@ type SessionController = {
   - Treat `prompt_eval_count` at 95 % of `num_ctx` or more as an overflow: Ollama silently drops the oldest tokens, including the system prompt.
   - **Test first:** mocked final chunks trigger compaction.
   - **Done:** provider-reported prompt usage calibrates trimming for the active provider/model; final-chunk usage compacts at 80% and signals overflow at 95%.
-- [ ] **M10.4 Retry with backoff before the first token.**
+- [x] **M10.4 Retry with backoff before the first token.**
   - On connection refused, a 503, or a timeout while the model loads: retry 3 times (after 2 s, 5 s, 15 s) with a visible "retrying 2/3" notice.
   - Mid-stream failures keep the partial answer (M5) and suggest `/retry`.
+  - **Done:** transient failures are retried only before response output begins; cancelling backoff stops immediately, and mid-stream errors retain partial content with a `/retry` hint.
 - [ ] **M10.5 `/retry` and `/continue`.**
   - `/retry` drops a failed or interrupted partial and re-runs the turn.
   - `/continue` grants another `max_rounds` after "Round cap reached", or continues after `finishReason: "length"`.

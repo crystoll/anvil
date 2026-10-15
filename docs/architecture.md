@@ -201,6 +201,7 @@ idle → streaming → pending → executing → streaming → ...
 - **Read-only tools auto-execute**: `list_dir`, `glob`, `search`, `read_file`
 - **Retry on malformed tool calls**: Send error back to model, let it retry
 - **Context management**: Calibrate the chars/4 estimate from provider usage, pre-trim at 80%, compact after usage reaches 80%, and treat 95% as overflow with one retry per turn
+- **Stream reliability**: Retry connection, 503, and timeout errors up to three times before output starts; preserve partial output after streaming begins and suggest `/retry`
 
 ## Tool Registry
 

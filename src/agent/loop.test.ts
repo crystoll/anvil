@@ -152,12 +152,16 @@ describe("agent loop", () => {
 	});
 
 	it("reports errors for partial streamed answers", async () => {
-		const provider = mockProvider([
+		const requests: Message[][] = [];
+		const provider = mockProvider(
 			[
-				{ content: "partial", done: false },
-				{ done: true, error: { kind: "connection", message: "socket closed" } },
+				[
+					{ content: "partial", done: false },
+					{ done: true, error: { kind: "connection", message: "socket closed" } },
+				],
 			],
-		]);
+			(messages) => requests.push(messages),
+		);
 		const engine = createEngine(provider, "test");
 		const loop = createAgentLoop(engine, createRegistry(), {
 			maxRounds: 5,
@@ -169,19 +173,58 @@ describe("agent loop", () => {
 
 		expect(events).toContainEqual({
 			kind: "error",
-			message: "socket closed",
+			message: "socket closed Partial answer kept. Use /retry to try again.",
 			status: "error",
 		});
+		expect(requests).toHaveLength(1);
 		expect(engine.messages().at(-1)).toMatchObject({
 			content: "partial",
 			status: "error",
 		});
 	});
 
+	it("retries transient failures before output and reports each backoff", async () => {
+		vi.useFakeTimers();
+		try {
+			const requests: Message[][] = [];
+			const provider = mockProvider(
+				[
+					[{ done: true, error: { kind: "connection", message: "connection refused" } }],
+					[{ done: true, error: { kind: "api", status: 503, message: "model loading" } }],
+					[{ done: true, error: { kind: "timeout", message: "model loading" } }],
+					[{ content: "ready", done: false }, { done: true }],
+				],
+				(messages) => requests.push(messages),
+			);
+			const loop = createAgentLoop(createEngine(provider, "test"), createRegistry(), {
+				maxRounds: 3,
+				projectRoot: "/tmp",
+				systemPrompt: "test",
+			});
+
+			const result = collect(loop.send("hello"));
+			await vi.runAllTimersAsync();
+			const events = await result;
+
+			expect(requests).toHaveLength(4);
+			expect(
+				events.filter((event) => event.kind === "warning").map((event) => event.message),
+			).toEqual([
+				"Retrying 1/3 in 2s after connection refused",
+				"Retrying 2/3 in 5s after model loading",
+				"Retrying 3/3 in 15s after model loading",
+			]);
+			expect(events).toContainEqual({ kind: "content", text: "ready" });
+			expect(events.some((event) => event.kind === "error")).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("does not recover JSON from a user message as a tool call", async () => {
 		const userInput = '{"name":"list_dir","arguments":{"path":"."}}';
 		const provider = mockProvider([
-			[{ done: true, error: { kind: "connection", message: "offline" } }],
+			[{ done: true, error: { kind: "api", status: 400, message: "invalid request" } }],
 		]);
 		const engine = createEngine(provider, "test");
 		const registry = createRegistry();
