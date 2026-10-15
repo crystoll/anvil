@@ -142,6 +142,23 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	type ProcessedToolCalls = Exclude<ToolCallOutcome, { action: "error_fed_back" }>;
 	type ToolCallStep = ProcessedToolCalls | { action: "continue"; events: AgentEvent[] };
 
+	type ApprovalRequirement = { required: boolean } | { error: string };
+
+	const getApprovalRequirement = async (
+		tool: Tool,
+		args: Record<string, unknown>,
+		context: ToolExecutionContext,
+	): Promise<ApprovalRequirement> => {
+		if (tool.needsApproval) return { required: true };
+		if (!tool.requiresApproval) return { required: false };
+		try {
+			return { required: await tool.requiresApproval(args, context) };
+		} catch (error) {
+			const detail = error instanceof Error ? error.message : String(error);
+			return { error: `Error: Unable to validate tool path: ${detail}` };
+		}
+	};
+
 	let state: AgentState = "idle";
 	let pendingCall: PendingCall | null = null;
 	let queuedCalls: QueuedToolCall[] = [];
@@ -439,7 +456,15 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return { action: "error_fed_back" };
 		}
 
-		if (tool.needsApproval) {
+		const approval = await getApprovalRequirement(tool, argsResult.value, {
+			signal,
+			projectRoot: config.projectRoot,
+		});
+		if ("error" in approval) {
+			engine.addToolResult(call.id, approval.error);
+			return { action: "error_fed_back" };
+		}
+		if (approval.required) {
 			pendingCall = { tool, args: argsResult.value, callId: call.id, raw: call.arguments };
 			return {
 				action: "pending",

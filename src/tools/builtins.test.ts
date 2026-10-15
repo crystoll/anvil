@@ -1,5 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	realpathSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -46,6 +55,27 @@ describe("file history", () => {
 		expect(backups.length).toBe(1);
 		expect(readFileSync(join(histDir, backups[0] as string), "utf-8")).toBe("foo bar baz");
 		expect(readFileSync(join(ROOT, "edit-me.txt"), "utf-8")).toBe("foo qux baz");
+	});
+
+	it("stores external-file backups inside the project history", async () => {
+		const projectRoot = join(ROOT, "nested", "project");
+		const externalPath = join(ROOT, "outside.txt");
+		mkdirSync(projectRoot, { recursive: true });
+		writeFileSync(externalPath, "original");
+
+		await writeFileTool.execute(
+			{ path: externalPath, content: "updated" },
+			{ ...context, projectRoot },
+		);
+
+		const historyDir = join(
+			projectRoot,
+			".anvil/file-history/_external",
+			createHash("sha256").update(realpathSync(externalPath)).digest("hex"),
+		);
+		const backups = readdirSync(historyDir);
+		expect(readFileSync(join(historyDir, backups[0] as string), "utf-8")).toBe("original");
+		expect(readFileSync(externalPath, "utf-8")).toBe("updated");
 	});
 });
 
@@ -139,6 +169,22 @@ describe("edit_file", () => {
 
 		await expect(edit).rejects.toThrow(/must not be empty/);
 		expect(readFileSync(join(ROOT, "keep.txt"), "utf-8")).toBe("hello");
+	});
+});
+
+describe("glob path confinement", () => {
+	it("does not return files reached through a symlink outside the project", async () => {
+		const projectRoot = join(ROOT, "project");
+		const outsideRoot = join(ROOT, "outside");
+		mkdirSync(projectRoot);
+		mkdirSync(outsideRoot);
+		writeFileSync(join(outsideRoot, "secret.ts"), "private");
+		symlinkSync(outsideRoot, join(projectRoot, "linked"));
+
+		const result = await glob.execute({ pattern: "**/*.ts" }, { ...context, projectRoot });
+
+		expect(result).not.toContain("secret.ts");
+		expect(result).not.toContain("private");
 	});
 });
 

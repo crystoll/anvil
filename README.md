@@ -126,21 +126,25 @@ If anvil crashes, it saves the conversation first and writes the details to `~/.
 
 ## Built-in Tools
 
-| Tool              | Approval | Description                         |
-| ----------------- | -------- | ----------------------------------- |
-| `list_dir`        | auto     | List directory contents             |
-| `glob`            | auto     | Find files by pattern               |
-| `search`          | auto     | Search file contents                |
-| `read_file`       | auto     | Read a file                         |
-| `project_context` | auto     | Project overview (deps, git, tree)  |
-| `git_status`      | auto     | Git status and branch               |
-| `git_diff`        | auto     | Git diff (staged or unstaged)       |
-| `git_log`         | auto     | Recent commit history               |
-| `web_search`      | auto     | Search the web (DuckDuckGo)         |
-| `web_fetch`       | auto     | Fetch URL and extract readable text |
-| `write_file`      | y/n      | Write/create a file                 |
-| `edit_file`       | y/n      | Whitespace-tolerant edit            |
-| `run_cmd`         | y/n      | Run a shell command                 |
+| Tool              | Approval    | Description                         |
+| ----------------- | ----------- | ----------------------------------- |
+| `list_dir`        | conditional | List directory contents             |
+| `glob`            | conditional | Find files by pattern               |
+| `search`          | conditional | Search file contents                |
+| `read_file`       | conditional | Read a file                         |
+| `project_context` | auto        | Project overview (deps, git, tree)  |
+| `git_status`      | auto        | Git status and branch               |
+| `git_diff`        | auto        | Git diff (staged or unstaged)       |
+| `git_log`         | auto        | Recent commit history               |
+| `web_search`      | auto        | Search the web (DuckDuckGo)         |
+| `web_fetch`       | auto        | Fetch URL and extract readable text |
+| `write_file`      | y/n         | Write/create a file                 |
+| `edit_file`       | y/n         | Whitespace-tolerant edit            |
+| `run_cmd`         | y/n         | Run a shell command                 |
+
+Read-only file tools are auto-approved only when the canonical target stays inside the
+project. Any path that resolves outside the project—including `~`, absolute paths, parent
+traversal, and symlink targets—requires approval; glob results outside the project are omitted.
 
 ## Configuration
 

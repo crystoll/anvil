@@ -1,8 +1,12 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
 import { describe, expect, it, vi } from "vitest";
 import { createEngine } from "../engine/engine.js";
 import { validateHistory } from "../engine/history.js";
 import type { Message, Provider, StreamChunk } from "../provider/types.js";
+import { readFileTool } from "../tools/builtins.js";
 import type { Tool } from "../tools/registry.js";
 import { createRegistry } from "../tools/registry.js";
 import type { AgentEvent } from "./loop.js";
@@ -132,6 +136,22 @@ const runCmdTool: Tool = {
 	...dummyReadTool,
 	name: "run_cmd",
 	description: "run a command",
+};
+
+const runReadFileCall = async (path: string, projectRoot: string) => {
+	const execute = vi.fn(async () => "file contents");
+	const registry = createRegistry();
+	registry.register({ ...readFileTool, execute });
+	const loop = createAgentLoop(
+		createEngine(
+			mockProvider([toolCallChunks("call_1", "read_file", JSON.stringify({ path }))]),
+			"test",
+		),
+		registry,
+		{ maxRounds: 2, projectRoot, systemPrompt: "test" },
+	);
+	const events = await collect(loop.send("read this file"));
+	return { events, execute };
 };
 
 describe("agent loop", () => {
@@ -410,6 +430,77 @@ describe("agent loop", () => {
 
 		expect(events.some((e) => e.kind === "tool_result" && e.name === "list_dir")).toBe(true);
 		expect(loop.state()).toBe("idle");
+	});
+
+	it.each(["../outside.txt", "/etc/passwd", "~/.ssh/id_rsa"])(
+		"requires approval for file paths outside the project: %s",
+		async (path) => {
+			const { events, execute } = await runReadFileCall(path, "/tmp");
+
+			expect(events.some((event) => event.kind === "pending")).toBe(true);
+			expect(execute).not.toHaveBeenCalled();
+		},
+	);
+
+	it("requires approval for a symlink that resolves outside the project", async () => {
+		const testRoot = mkdtempSync(join(tmpdir(), "anvil-path-approval-"));
+		const projectRoot = join(testRoot, "project");
+		const outsidePath = join(testRoot, "outside.txt");
+		mkdirSync(projectRoot);
+		writeFileSync(outsidePath, "secret");
+		symlinkSync(outsidePath, join(projectRoot, "escape.txt"));
+
+		try {
+			const { events, execute } = await runReadFileCall("escape.txt", projectRoot);
+
+			expect(events.some((event) => event.kind === "pending")).toBe(true);
+			expect(execute).not.toHaveBeenCalled();
+		} finally {
+			rmSync(testRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("auto-approves file paths that resolve inside the project", async () => {
+		const { events, execute } = await runReadFileCall("src/index.ts", "/tmp");
+
+		expect(events.some((event) => event.kind === "pending")).toBe(false);
+		expect(execute).toHaveBeenCalled();
+	});
+
+	it("reads an external symlink target only after approval", async () => {
+		const testRoot = mkdtempSync(join(tmpdir(), "anvil-path-read-"));
+		const projectRoot = join(testRoot, "project");
+		const outsidePath = join(testRoot, "outside.txt");
+		mkdirSync(projectRoot);
+		writeFileSync(outsidePath, "approved external contents");
+		symlinkSync(outsidePath, join(projectRoot, "escape.txt"));
+
+		try {
+			const provider = mockProvider([
+				toolCallChunks("call_1", "read_file", '{"path":"escape.txt"}'),
+				[{ content: "Done", done: false }, { done: true }],
+			]);
+			const registry = createRegistry();
+			registry.register(readFileTool);
+			const loop = createAgentLoop(createEngine(provider, "test"), registry, {
+				maxRounds: 2,
+				projectRoot,
+				systemPrompt: "test",
+			});
+
+			const events = await collect(loop.send("read this file"));
+			expect(events.some((event) => event.kind === "pending")).toBe(true);
+
+			const approvedEvents = await collect(loop.approve());
+			expect(
+				approvedEvents.some(
+					(event) =>
+						event.kind === "tool_result" && event.result.includes("approved external contents"),
+				),
+			).toBe(true);
+		} finally {
+			rmSync(testRoot, { recursive: true, force: true });
+		}
 	});
 
 	it("resumes queued tool calls in order after approval and preserves request history", async () => {

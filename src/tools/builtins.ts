@@ -1,14 +1,18 @@
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, opendir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { copyFile, mkdir, opendir, readFile, realpath, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fetchAndExtract } from "../web/web-fetch.js";
 import { searchWeb } from "../web/web-search.js";
+import {
+	isGlobOutsideProject,
+	isPathOutsideProject,
+	resolveGlobPattern,
+	resolveRealPath,
+} from "./path-policy.js";
 import type { Tool } from "./registry.js";
-
-const expandTilde = (p: string): string => (p.startsWith("~/") ? join(homedir(), p.slice(2)) : p);
 
 const HISTORY_DIR = ".anvil/file-history";
 const RUN_CMD_TIMEOUT_MS = 300_000;
@@ -27,9 +31,14 @@ const MAX_GIT_DIFF_OUTPUT_LENGTH = 20_000;
 /** Save a backup of a file before overwriting it. */
 export const backupFile = async (fullPath: string, projectRoot: string): Promise<void> => {
 	if (!existsSync(fullPath)) return;
-	const rel = relative(projectRoot, fullPath);
+	const root = await realpath(projectRoot);
+	const rel = relative(root, fullPath);
+	const isExternal = rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+	const historyPath = isExternal
+		? join("_external", createHash("sha256").update(fullPath).digest("hex"))
+		: rel;
 	const ts = new Date().toISOString().replace(/[:.]/g, "-");
-	const dest = join(projectRoot, HISTORY_DIR, rel, ts);
+	const dest = join(root, HISTORY_DIR, historyPath, ts);
 	await mkdir(join(dest, ".."), { recursive: true });
 	await copyFile(fullPath, dest);
 };
@@ -374,6 +383,8 @@ export const readFileTool: Tool = {
 		limit: intProp("Max lines to return (default 200; maximum 2,000)"),
 	}),
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 5000,
 	execute: async (args, context) => {
 		const path = String(args.path ?? "");
@@ -385,7 +396,7 @@ export const readFileTool: Tool = {
 			Number.isSafeInteger(requestedLimit) && requestedLimit > 0
 				? Math.min(requestedLimit, MAX_READ_FILE_LINES)
 				: 200;
-		const fullPath = resolve(context.projectRoot, expandTilde(path));
+		const fullPath = await resolveRealPath(path, context.projectRoot, true);
 
 		const content = await readFile(fullPath);
 		if (content.includes(0)) throw new Error(`Refusing to read binary file: ${path}`);
@@ -402,11 +413,13 @@ export const writeFileTool: Tool = {
 		content: strProp("Full file contents to write"),
 	}),
 	needsApproval: true,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 5000,
 	execute: async (args, context) => {
 		const path = String(args.path ?? "");
 		const content = String(args.content ?? "");
-		const fullPath = resolve(context.projectRoot, path);
+		const fullPath = await resolveRealPath(path, context.projectRoot, true);
 
 		await backupFile(fullPath, context.projectRoot);
 		await mkdir(join(fullPath, ".."), { recursive: true });
@@ -426,12 +439,14 @@ export const editFileTool: Tool = {
 		replace_all: { type: "boolean", description: "Replace every match (default false)" },
 	}),
 	needsApproval: true,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 5000,
 	execute: async (args, context) => {
 		const path = String(args.path ?? "");
 		const search = normalizeLineEndings(String(args.search ?? ""));
 		const replace = normalizeLineEndings(String(args.replace ?? ""));
-		const fullPath = resolve(context.projectRoot, path);
+		const fullPath = await resolveRealPath(path, context.projectRoot, true);
 		if (search === "") throw new Error("Search string must not be empty");
 
 		const content = normalizeLineEndings(await readFile(fullPath, "utf-8"));
@@ -459,10 +474,12 @@ export const listDir: Tool = {
 		path: strProp("Project-relative directory path (use '.' for root)"),
 	}),
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? "."), context.projectRoot, true),
 	timeout: 5000,
 	execute: async (args, context) => {
 		const path = String(args.path ?? ".");
-		const fullPath = resolve(context.projectRoot, path);
+		const fullPath = await resolveRealPath(path, context.projectRoot, true);
 		const directory = await opendir(fullPath);
 		const entries: string[] = [];
 		let truncated = false;
@@ -488,26 +505,37 @@ export const glob: Tool = {
 	description: "Find up to 100 files matching a glob pattern",
 	schema: objSchema(["pattern"], { pattern: strProp("Glob pattern (e.g. '**/*.ts')") }),
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isGlobOutsideProject(String(args.pattern ?? ""), context.projectRoot),
 	timeout: 10_000,
 	execute: async (args, context) => {
 		const pattern = String(args.pattern ?? "");
 		const { glob: fsGlob } = await import("node:fs/promises");
+		const resolvedGlob = await resolveGlobPattern(pattern, context.projectRoot);
 		const excluded = new Set(["node_modules", ".git", "dist", "build", ".anvil"]);
 		const files: string[] = [];
+		let skippedExternal = 0;
+		let checked = 0;
 		let truncated = false;
-		for await (const f of fsGlob(pattern, {
-			cwd: context.projectRoot,
+		for await (const f of fsGlob(resolvedGlob.pattern, {
+			cwd: resolvedGlob.cwd,
 			exclude: (p) => excluded.has(p),
 		})) {
-			if (files.length >= MAX_DIRECTORY_RESULTS) {
+			if (checked >= MAX_DIRECTORY_RESULTS) {
 				truncated = true;
 				break;
 			}
+			checked++;
+			if (await isPathOutsideProject(f, resolvedGlob.cwd)) {
+				skippedExternal++;
+				continue;
+			}
 			files.push(f);
 		}
-		if (files.length === 0) return "No files found";
+		if (files.length === 0 && skippedExternal === 0) return "No files found";
 		return [
 			files.join("\n"),
+			skippedExternal > 0 ? `Skipped ${skippedExternal} results outside the project` : "",
 			truncated ? `Glob results truncated after ${MAX_DIRECTORY_RESULTS} results` : "",
 		]
 			.filter(Boolean)
@@ -706,12 +734,16 @@ export const search: Tool = {
 		regex: { type: "boolean", description: "Treat query as a regular expression" },
 	}),
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? "."), context.projectRoot, true),
 	timeout: SEARCH_TIMEOUT_MS + PROCESS_KILL_GRACE_MS + 1000,
 	execute: async (args, context) => {
 		const query = String(args.query ?? "");
 		if (!query) throw new Error("Search query must not be empty");
 		const path = String(args.path ?? ".");
-		const searchPath = relative(context.projectRoot, resolve(context.projectRoot, path)) || ".";
+		const fullPath = await resolveRealPath(path, context.projectRoot, true);
+		const root = await realpath(context.projectRoot);
+		const searchPath = relative(root, fullPath) || ".";
 		return searchFiles(query, searchPath, args.regex === true, context);
 	},
 };

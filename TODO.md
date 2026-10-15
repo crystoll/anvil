@@ -585,9 +585,9 @@ type SessionController = {
 
 ## M11 — Safety hardening (1.5 d)
 
-- [ ] **M11.1 Path confinement.**
-  - **Change:** file tools resolve real paths, including `~`, `..` and symlinks. Auto-approval applies only inside the project root; anything outside needs approval.
-  - **Test first:** `../`, absolute paths, symlink escapes and `~/.ssh/id_rsa` each produce a pending approval.
+- [x] **M11.1 Path confinement.**
+  - File and LSP paths resolve canonical targets, including `~`, parent traversal, and symlinks. Read-only tools auto-approve only inside the project; outside targets require approval. Glob results outside the project are omitted.
+  - **Validated:** traversal, absolute, home-directory, symlink, and in-project approval behavior.
 - [ ] **M11.2 `web_fetch` needs approval** unless the domain is listed in `web.allow_domains`. **Test first:** the registry's approval rules.
 - [ ] **M11.3 No argument injection.**
   - **Change:** `git_diff` rejects refs that start with `-` and uses a `--` separator. Every tool passes argv arrays to `execFile` or `spawn`, never interpolating into a shell string.

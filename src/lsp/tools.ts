@@ -1,6 +1,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { backupFile } from "../tools/builtins.js";
+import { isPathOutsideProject, resolveRealPath } from "../tools/path-policy.js";
 import type { Tool } from "../tools/registry.js";
 import type { TextEdit } from "./client.js";
 import { formatDiagnostics, type LspManager } from "./manager.js";
@@ -17,10 +19,12 @@ export const createLspDiagnosticsTool = (manager: LspManager): Tool => ({
 		},
 	},
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 10000,
 	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = await resolveRealPath(path, projectRoot, true);
 
 		if (!manager.supports(fullPath)) {
 			return `No language server configured for ${path}`;
@@ -48,10 +52,12 @@ export const createLspDefinitionTool = (manager: LspManager): Tool => ({
 		},
 	},
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 10000,
 	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = await resolveRealPath(path, projectRoot, true);
 		const locs = await manager.definition(fullPath, Number(args.line), Number(args.character));
 		if (locs.length === 0) return "No definition found";
 		return locs
@@ -74,10 +80,12 @@ export const createLspReferencesTool = (manager: LspManager): Tool => ({
 		},
 	},
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 10000,
 	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = await resolveRealPath(path, projectRoot, true);
 		const locs = await manager.references(fullPath, Number(args.line), Number(args.character));
 		if (locs.length === 0) return "No references found";
 		return `${locs.length} reference(s):\n${locs.map((l) => `  ${fileFromUri(l.uri, projectRoot)}:${l.line}:${l.character}`).join("\n")}`;
@@ -99,10 +107,12 @@ export const createLspHoverTool = (manager: LspManager): Tool => ({
 		},
 	},
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 10000,
 	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = await resolveRealPath(path, projectRoot, true);
 		const info = await manager.hover(fullPath, Number(args.line), Number(args.character));
 		return info ?? "No hover information available";
 	},
@@ -120,10 +130,12 @@ export const createLspSymbolsTool = (manager: LspManager): Tool => ({
 		},
 	},
 	needsApproval: false,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 10000,
 	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = await resolveRealPath(path, projectRoot, true);
 		const symbols = await manager.documentSymbols(fullPath);
 		if (symbols.length === 0) return `${path}: no symbols found`;
 		return symbols
@@ -134,8 +146,11 @@ export const createLspSymbolsTool = (manager: LspManager): Tool => ({
 
 const fileFromUri = (uri: string, projectRoot: string): string => {
 	try {
-		const path = new URL(uri).pathname;
-		return path.startsWith(projectRoot) ? path.slice(projectRoot.length + 1) : path;
+		const path = fileURLToPath(uri);
+		const relativePath = relative(projectRoot, path);
+		return relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)
+			? path
+			: relativePath;
 	} catch {
 		return uri;
 	}
@@ -156,10 +171,12 @@ export const createLspRenameTool = (manager: LspManager): Tool => ({
 		},
 	},
 	needsApproval: true,
+	requiresApproval: async (args, context) =>
+		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 15000,
 	execute: async (args, { projectRoot }) => {
 		const path = String(args.path ?? "");
-		const fullPath = resolve(projectRoot, path);
+		const fullPath = await resolveRealPath(path, projectRoot, true);
 		const edits = await manager.rename(
 			fullPath,
 			Number(args.line),
@@ -173,7 +190,9 @@ export const createLspRenameTool = (manager: LspManager): Tool => ({
 		const results: string[] = [];
 		for (const { uri, edits: fileEdits } of edits) {
 			const filePath = fileFromUri(uri, projectRoot);
-			const absPath = resolve(projectRoot, filePath);
+			if (await isPathOutsideProject(filePath, projectRoot))
+				throw new Error(`Refusing to rename files outside the project: ${filePath}`);
+			const absPath = await resolveRealPath(filePath, projectRoot);
 			await backupFile(absPath, projectRoot);
 			const content = applyEdits(readFileSync(absPath, "utf-8"), fileEdits);
 			writeFileSync(absPath, content, "utf-8");

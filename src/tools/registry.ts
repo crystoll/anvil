@@ -15,6 +15,10 @@ export type Tool = {
 	description: string;
 	schema: Record<string, unknown>;
 	needsApproval: boolean;
+	requiresApproval?: (
+		args: Record<string, unknown>,
+		context: ToolExecutionContext,
+	) => Promise<boolean>;
 	timeout: number;
 	execute: (args: Record<string, unknown>, context: ToolExecutionContext) => Promise<string>;
 };
