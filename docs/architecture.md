@@ -129,7 +129,7 @@ src/
 ├── controller/              Headless session controller + shared commands
 ├── shared/bootstrap.ts      Startup orchestration and AppContext
 ├── config/                  YAML loader, validation, env var interpolation
-├── provider/                Ollama native + OpenAI-compatible streaming
+├── provider/                Ollama native, OpenAI-compatible, llama.cpp
 ├── engine/                  Message history, streaming, model switching
 ├── agent/                   State machine — send/approve/reject/cancel
 ├── agents/                  Agent YAML configs — guards, hooks, trust levels
@@ -147,10 +147,11 @@ src/
 
 ## Provider Layer
 
-Two provider implementations, same `Provider` interface:
+Provider adapters implement the same `Provider` interface:
 
 - **Ollama native** (`/api/chat`) — auto-detected when endpoint has no `/v1` suffix. NDJSON streaming, `options.num_ctx` for runtime context control, native tool call format.
 - **OpenAI-compatible** (`/v1/chat/completions`) — for LM Studio, llama.cpp, LiteLLM, OpenRouter, or Ollama with `/v1` suffix. SSE streaming, standard tool call deltas.
+- **llama.cpp** — OpenAI-compatible streaming plus health checks and context-size detection.
 
 ```typescript
 type StreamChunk = {
@@ -168,7 +169,7 @@ Robustness:
 - Connection timeout — accounts for model cold-loading
 - Partial tool call recovery — repair common malformed JSON, recover tagged/fenced/bare assistant-text calls, and return schema-guided feedback when repair fails
 - Empty response detection — retry once before reporting failure
-- Graceful degradation — never hang, every await has a timeout
+- Bounded external operations — provider streams, tool execution, and language-server requests use timeouts where supported
 
 ## Shared Session Controller
 
@@ -233,7 +234,9 @@ YAML definitions in `.anvil/agents/` control tool access, auto-approval, path gu
 
 ## Error Handling
 
-All fallible operations return `Result<T, E>` or `ResultAsync<T, E>` (neverthrow). No thrown exceptions in business logic. Errors are typed discriminated unions.
+Expected failures at provider, configuration, and filesystem boundaries use `Result<T, E>` or
+`ResultAsync<T, E>` where that makes recovery explicit. Some internal invariants and third-party
+operations can still throw; process and UI boundaries report or log those failures.
 
 ## Configuration
 

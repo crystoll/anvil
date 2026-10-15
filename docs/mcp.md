@@ -1,6 +1,6 @@
 # MCP (Model Context Protocol)
 
-Connect external tool servers to Anvil. Any MCP server that supports stdio or HTTP transport works.
+Connect external tool servers to Anvil. Servers can use stdio or Streamable HTTP transport.
 
 ## Configuration
 

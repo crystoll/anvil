@@ -1,85 +1,72 @@
-# Model Recommendations
+# Models and Hardware
 
-Tested with `scripts/model-test.ts` — 4 tasks per model: simple Q&A, single tool use, multi-step tool chain (Obsidian vault), and LSP write-and-fix loop.
+The default model is `gemma4:e4b`, but the best choice depends on your hardware and workload.
+Use a model with tool-calling support for agent mode, and benchmark it on your own machine.
 
-## Summary
+## Historical Benchmark Snapshot
 
-| Model           | Size | Architecture | Avg Time | Completion Tokens | Reliability |
-| --------------- | ---- | ------------ | -------- | ----------------- | ----------- |
-| **gemma4:e4b**  | 8GB  | MoE          | **19s**  | 1332              | 4/4 ✅      |
-| **qwen3.6:35b** | 22GB | MoE          | **17s**  | 871               | 4/4 ✅      |
-| qwen3.6:27b     | 16GB | Dense        | 66s      | 878               | 4/4 ✅      |
-| qwen3-agentic   | 8GB  | Dense        | 70s      | 2951              | 4/4 ✅      |
+These results are from a previous machine-specific run. The run date and exact model revisions
+were not recorded, so treat the numbers as historical examples rather than current rankings. The
+older run used four tasks, including an Obsidian MCP workflow and an LSP write-and-fix task; the
+current benchmark script uses safe, project-local read-only tasks instead.
 
-## Recommendations
+| Model           | Download size | Architecture | Avg Time | Completion Tokens | Reliability |
+| --------------- | ------------- | ------------ | -------- | ----------------- | ----------- |
+| **gemma4:e4b**  | 8GB           | MoE          | **19s**  | 1332              | 4/4         |
+| **qwen3.6:35b** | 22GB          | MoE          | **17s**  | 871               | 4/4         |
+| qwen3.6:27b     | 16GB          | Dense        | 66s      | 878               | 4/4         |
+| qwen3-agentic   | 8GB           | Dense        | 70s      | 2951              | 4/4         |
 
-### Default: `gemma4:e4b`
+## Observations from That Run
 
-Best all-rounder for daily use:
+### Project default: `gemma4:e4b`
 
-- Fast (19s average across all task types)
-- Reliable tool calling — chains search → read → analyze without issues
-- Compact output — doesn't over-explain
-- Self-corrects with LSP feedback
-- Low memory footprint (8GB)
+This is Anvil's built-in default, not a universal recommendation. It completed all four recorded
+tasks in an average of 19 seconds and produced 1,332 completion tokens.
 
-### Power: `qwen3.6:35b`
+### Fastest in this run: `qwen3.6:35b`
 
-Fastest overall (17s avg) despite being largest:
+It averaged 17 seconds across the recorded tasks and used 871 completion tokens. This result is
+specific to the benchmark setup and model revision.
 
-- MoE architecture — only activates subset of parameters per token
-- Most token-efficient (871 total completion tokens across 4 tasks)
-- Excellent for complex tasks where quality matters
-- Requires 22GB VRAM
+### Other recorded results
 
-### Deep reasoning: `qwen3.6:27b`
-
-Most capable per-parameter but slow:
-
-- Dense architecture — all 27B params active per token
-- 3-4x slower than MoE models (66s average)
-- Same output quality as 35b for these tasks
-- Use when you need maximum reasoning but aren't time-constrained
-
-### Avoid for agentic work: `qwen3-agentic`
-
-Despite the name, not ideal:
-
-- Extremely verbose (2951 completion tokens — 3x more than others)
-- Slow (70s average)
-- Works correctly but wastes tokens on explanations
-- May be better for single-shot generation, not tool loops
-
-## Observations
-
-- **All models reliably chain tools.** The MCP Obsidian search → read pipeline works across all tested models.
-- **LSP feedback loop works.** All models detect diagnostics and attempt fixes. `gemma4:e4b` uses a clean pattern: write → check diagnostics → rewrite.
-- **MoE models are faster.** Both gemma4:e4b (8GB) and qwen3.6:35b (22GB) use MoE, explaining their speed advantage over dense models.
-- **Token efficiency correlates with quality.** Models that produce fewer tokens tend to give more focused, actionable responses.
+`qwen3.6:27b` averaged 66 seconds and 878 completion tokens. `qwen3-agentic` averaged 70 seconds
+and 2,951 completion tokens. These measurements do not establish general model quality or current
+performance.
 
 ## Running Tests
 
+Run from the repository root with Ollama running and the model(s) already available. The current
+harness runs simple Q&A, a directory listing, and a project-local search-and-read task. It does not
+require an Obsidian vault or modify project files.
+
 ```bash
 # Test all Ollama models:
-tsx scripts/model-test.ts
+pnpm exec tsx scripts/model-test.ts
 
 # Test specific models:
-tsx scripts/model-test.ts gemma4:e4b qwen3.6:35b
+pnpm exec tsx scripts/model-test.ts gemma4:e4b qwen3.6:35b
 ```
 
 ## Hardware
 
-Tested on macOS with Apple Silicon. All models served via Ollama. Times include cold-start (first model load ~5-10s extra, subsequent runs faster).
+The historical benchmark was run on macOS with Apple Silicon using Ollama. Model loading and
+generation times vary by hardware, quantization, context size, and whether the model is already
+loaded.
 
 ---
 
 ## Hardware Setup Guides
 
+The values and model tags below are examples, not current hardware or model recommendations.
+Check the current model's disk size and context requirements before pulling it.
+
 ### Apple Silicon Mac (M-series)
 
 Ollama uses unified memory — the same pool serves both CPU and GPU. This means large models fit without a discrete GPU, but memory is shared with the OS and other apps.
 
-#### Recommended: M3 Pro 36GB
+#### Example: M3 Pro with 36GB unified memory
 
 | Model                                | Size  | Fits in 36GB? | Notes                      |
 | ------------------------------------ | ----- | ------------- | -------------------------- |
@@ -144,7 +131,8 @@ The key constraint: at 64k context with q4_0 KV cache, the cache alone takes ~3-
 | `qwen3.5:27b-q4_K_M` | 17GB  | ⚠ ~25% CPU       | ⚠ ~40% CPU       | Same tradeoff                   |
 | `muse-glimmer:30b`   | 18GB  | ⚠ ~30% CPU       | ⚠ ~40% CPU       | Meta agentic model, partial     |
 
-**For 16GB VRAM with long context (64k+):** the sweet spot is `qwen3.5:9b-q8_0` — latest generation, 11GB, fully in VRAM with room for KV cache, fast. The quality gap vs 27B models is real but qwen3.5 is meaningfully stronger than qwen3 at the same size.
+**Example for 16GB VRAM with long context (64k+):** `qwen3.5:9b-q8_0` was an 11GB option in
+this guide's test environment. Check the current tag size and runtime memory before downloading.
 
 ```bash
 ollama pull qwen3.5:9b-q8_0

@@ -1,7 +1,7 @@
 {
 	"name": "anvil",
 	"version": "0.3.0",
-	"description": "Multi-pane terminal interface for local-first AI development workflows",
+	"description": "AI coding agent with a local-first terminal interface",
 	"license": "MIT",
 	"author": "crystoll",
 	"repository": {

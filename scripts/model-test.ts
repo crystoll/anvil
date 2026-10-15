@@ -1,18 +1,18 @@
 #!/usr/bin/env tsx
 /**
  * Model testing harness — runs repeatable tasks across all available models.
- * Usage: tsx scripts/model-test.ts [model1 model2 ...]
+ * Usage: pnpm exec tsx scripts/model-test.ts [model1 model2 ...]
  * If no models specified, tests all available Ollama models.
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 
 type TestCase = {
 	name: string;
-	category: "qa" | "tool_chain" | "lsp";
+	category: "qa" | "tool_use";
 	prompt: string;
 	/** Check if output indicates success */
-	check: (output: string) => boolean;
+	check: (result: { output: string; toolCalls: string[] }) => boolean;
 	timeoutSec: number;
 };
 
@@ -27,36 +27,29 @@ type Result = {
 	toolCalls: string[];
 };
 
+const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
+
 const TEST_CASES: TestCase[] = [
 	{
 		name: "simple_qa",
 		category: "qa",
 		prompt: "What is 2+2? Reply with just the number.",
-		check: (out) => out.includes("4"),
+		check: ({ output }) => output.includes("4"),
 		timeoutSec: 60,
 	},
 	{
 		name: "tool_list_dir",
-		category: "tool_chain",
+		category: "tool_use",
 		prompt: "List the files in the src/ directory",
-		check: (out) => out.includes("list_dir") || out.includes("cli.ts"),
+		check: ({ toolCalls }) => toolCalls.includes("list_dir"),
 		timeoutSec: 60,
 	},
 	{
 		name: "tool_chain_search_read",
-		category: "tool_chain",
+		category: "tool_use",
 		prompt:
-			"Search my obsidian vault for 'bard build', read the first result, and summarize it in one sentence",
-		check: (out) => out.includes("obsidian.search") && out.includes("obsidian.read"),
-		timeoutSec: 180,
-	},
-	{
-		name: "lsp_write_and_fix",
-		category: "lsp",
-		prompt:
-			"Write a file /tmp/model-test.ts with content 'const x: number = \"hello\";' then fix any type errors the LSP reports",
-		check: (out) =>
-			out.includes("write_file") && (out.includes("edit_file") || out.includes("write_file done")),
+			"Search src/ for createSessionController, read the matching file, and summarize its responsibility in one sentence",
+		check: ({ toolCalls }) => toolCalls.includes("search") && toolCalls.includes("read_file"),
 		timeoutSec: 120,
 	},
 ];
@@ -95,30 +88,37 @@ const parseTokens = (
 
 const runTest = (model: string, test: TestCase): Result => {
 	const start = Date.now();
-	let output = "";
 	const toolCalls: string[] = [];
 
-	try {
-		output = execSync(
-			`timeout ${test.timeoutSec} tsx src/cli.ts --debug --model "${model}" -c "${test.prompt.replace(/"/g, '\\"')}"`,
-			{ encoding: "utf-8", cwd: process.cwd(), stdio: ["pipe", "pipe", "pipe"] },
-		);
-	} catch (e: unknown) {
-		const err = e as { stdout?: string; status?: number };
-		output = err.stdout ?? "";
-		if (err.status === 124) output += "\n[TIMEOUT]";
-	}
+	const execution = spawnSync(
+		process.execPath,
+		["--import", "tsx", "src/cli.ts", "--debug", "--model", model, "-c", test.prompt],
+		{
+			encoding: "utf-8",
+			cwd: process.cwd(),
+			timeout: test.timeoutSec * 1000,
+			maxBuffer: 10 * 1024 * 1024,
+		},
+	);
+	const output = [
+		execution.stdout ?? "",
+		execution.error?.code === "ETIMEDOUT" ? "\n[TIMEOUT]" : "",
+		execution.error && execution.error.code !== "ETIMEDOUT"
+			? `\n[ERROR: ${execution.error.message}]`
+			: "",
+	].join("");
+	const normalizedOutput = output.replace(ANSI_ESCAPE_PATTERN, "");
 
 	const timeSec = Math.round((Date.now() - start) / 1000);
-	const { tokens, finishReason } = parseTokens(output);
+	const { tokens, finishReason } = parseTokens(normalizedOutput);
 
-	for (const m of output.matchAll(/↳ (\S+) done/g)) toolCalls.push(m[1] ?? "");
+	for (const m of normalizedOutput.matchAll(/↳ (\S+) done/g)) toolCalls.push(m[1] ?? "");
 
 	return {
 		model,
 		test: test.name,
 		category: test.category,
-		success: test.check(output),
+		success: execution.status === 0 && test.check({ output: normalizedOutput, toolCalls }),
 		timeSec,
 		tokens,
 		finishReason,
@@ -182,3 +182,4 @@ for (const model of models) {
 }
 
 formatTable(results);
+if (results.some((result) => !result.success)) process.exitCode = 1;

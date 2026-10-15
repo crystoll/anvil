@@ -4,11 +4,13 @@
 
 ## Overview
 
-Anvil supports multiple LLM providers. Switch between local (Ollama) and remote (LiteLLM, OpenRouter, any OpenAI-compatible gateway) models using fully-qualified `provider/model` names.
+Anvil supports multiple LLM providers. Switch between local (Ollama) and remote (LiteLLM,
+OpenRouter, or another OpenAI-compatible gateway) models using `provider/model` names. A bare
+model name selects a model from the current provider.
 
 ## Design
 
-- **Fully-qualified names**: Every model is `provider/model` — always explicit, always copy-pasteable
+- **Fully-qualified display names**: Models are shown as `provider/model`; a bare model name selects from the current provider
 - **No stateful selection**: No numbered lists, no "last listed" tracking
 - **Session-scoped**: Provider/model switching persists for the current session only
 - **Env var interpolation**: `${ENV_VAR}` syntax in config YAML for endpoints and API keys
@@ -47,7 +49,9 @@ for response headers.
 
 ## Usage
 
-### List models (current provider)
+### List or choose a model (current provider)
+
+In the readline CLI, `/model` lists models. In the TUI, it opens a picker.
 
 ```
 /model
@@ -81,14 +85,18 @@ for response headers.
 
 ### Persist default
 
-```
-/model set litellm/ollama/gemma4:e4b
-→ [default → litellm/ollama/gemma4:e4b]
+Change `default_provider` and `default_model` in `~/.anvil/config.yaml` to make a selection the
+default for future sessions. `/model` switches only the current session.
+
+```yaml
+default_provider: litellm
+default_model: ollama/gemma4:e4b
 ```
 
 ### Status bar
 
-Always shows fully-qualified: `ollama/gemma4:e4b` or `litellm/ollama/gemma4:e4b`
+The TUI status bar shows the provider and model, such as `ollama/gemma4:e4b`. The readline
+status bar shows the model name.
 
 ## Setup: LiteLLM Local
 

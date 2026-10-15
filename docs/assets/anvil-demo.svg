@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="952" height="244" viewBox="0 0 952 244" role="img" aria-label="Anvil — tool-assisted session">
+<rect width="100%" height="100%" rx="14" fill="#11131a"/>
+<path d="M14 0h924a14 14 0 0 1 14 14v34H0V14A14 14 0 0 1 14 0" fill="#242631"/>
+<circle cx="22" cy="22" r="6" fill="#f38ba8"/>
+<circle cx="44" cy="22" r="6" fill="#f9e2af"/>
+<circle cx="66" cy="22" r="6" fill="#a6e3a1"/>
+<text x="88" y="27" fill="#bac2de" font-family="sans-serif" font-size="13">Anvil — tool-assisted session</text>
+<rect x="0" y="48" width="952" height="196" fill="#11131a"/>
+<g font-family="SFMono-Regular, Consolas, monospace" font-size="15"><text x="28" y="66" fill="#cdd6f4"> you: Find the default model and context size</text>
+<text x="28" y="90" fill="#a6adc8">   ↳ read_file: default_model is gemma4:e4b; context_size is 32768</text>
+<text x="28" y="114" fill="#cdd6f4"> anvil: Anvil defaults to gemma4:e4b with a 32k-token context window.</text>
+<text x="28" y="138" fill="#cdd6f4">┌──────────────────────────────────────────────────────────────────────────────────────────────────┐</text>
+<text x="28" y="162" fill="#89b4fa">│ ollama/gemma4:e4b │ 0 tok                                                                        │</text>
+<text x="28" y="186" fill="#cdd6f4">└──────────────────────────────────────────────────────────────────────────────────────────────────┘</text>
+<text x="28" y="210" fill="#a6e3a1"> ❯</text></g>
+</svg>

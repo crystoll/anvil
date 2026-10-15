@@ -26,6 +26,17 @@ const readFileWhenReady = async (path: string): Promise<string> => {
 };
 
 const isProcessRunning = (pid: number): boolean => {
+	if (process.platform === "linux") {
+		try {
+			const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
+			const state = stat.slice(stat.lastIndexOf(")") + 2).split(" ", 1)[0];
+			return state !== undefined && state !== "Z";
+		} catch (error) {
+			if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+			throw error;
+		}
+	}
+
 	try {
 		process.kill(pid, 0);
 		return true;
