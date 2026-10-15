@@ -398,6 +398,17 @@ describe("trimToFit", () => {
 		expect(last?.content).toContain("c");
 	});
 
+	it("uses observed token calibration when trimming history", () => {
+		const engine = createEngine(mockProvider([]), "m");
+		engine.setSystem("sys");
+		engine.addUser("a".repeat(400));
+		engine.addUser("b".repeat(400));
+
+		expect(engine.trimToFit(300)).toBe(0);
+		expect(engine.trimToFit(300, 2)).toBe(1);
+		expect(engine.messages().map((message) => message.content)).toEqual(["sys", "a".repeat(400)]);
+	});
+
 	it("preserves the first user task when trimming", () => {
 		const engine = createEngine(mockProvider([]), "m");
 		engine.setSystem("sys");

@@ -1005,12 +1005,10 @@ it("auto-compacts on overflow and retries", async () => {
 			callIdx++;
 			async function* gen() {
 				if (callIdx === 1) {
-					// First call: simulate overflow (finish_reason: length + no content = context full)
 					yield {
-						content: "",
-						finishReason: "length",
+						content: "Potentially truncated output",
 						done: true,
-						usage: { promptTokens: 30000, totalTokens: 30001 },
+						usage: { promptTokens: 31_130, totalTokens: 31_131 },
 					} satisfies StreamChunk;
 				} else {
 					// After compaction: normal response
@@ -1058,6 +1056,102 @@ it("auto-compacts on overflow and retries", async () => {
 	expect(kinds).toContain("compacting");
 	expect(kinds).toContain("compacted");
 	expect(kinds).toContain("content");
+});
+
+it("proactively compacts after a final chunk reports 80% context usage", async () => {
+	const provider: Provider = {
+		...mockProvider([
+			[
+				{ content: "Finished", done: false },
+				{ done: true, usage: { promptTokens: 800, totalTokens: 820 } },
+			],
+		]),
+		completeChat: vi.fn(() => okAsync({ content: "Conversation summary", toolCalls: [] })),
+	};
+	const engine = createEngine(provider, "test");
+	engine.loadMessages([
+		{ role: "user", content: "Original task" },
+		{ role: "assistant", content: "Old response" },
+		{ role: "user", content: "Question one" },
+		{ role: "assistant", content: "Answer one" },
+		{ role: "user", content: "Question two" },
+		{ role: "assistant", content: "Answer two" },
+		{ role: "user", content: "Latest question" },
+		{ role: "assistant", content: "Latest answer" },
+	]);
+	const loop = createAgentLoop(engine, createRegistry(), {
+		maxRounds: 2,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+		provider,
+		streamOpts: { contextSize: 1000 },
+	});
+
+	const events = await collect(loop.send("hello"));
+
+	expect(provider.completeChat).toHaveBeenCalledOnce();
+	expect(events.map((event) => event.kind)).toContain("compacted");
+	expect(events.some((event) => event.kind === "content" && event.text === "Finished")).toBe(true);
+});
+
+it("calibrates history trimming from provider-reported prompt usage", async () => {
+	const requests: Message[][] = [];
+	let streamCount = 0;
+	const provider: Provider = {
+		name: "mock",
+		streamChat: (_model, messages) => {
+			requests.push(messages);
+			streamCount++;
+			async function* chunks() {
+				if (streamCount === 1) {
+					yield {
+						toolCall: {
+							index: 0,
+							id: "call-1",
+							name: "list_dir",
+							argumentsFragment: '{"path":"."}',
+						},
+						done: false,
+					} satisfies StreamChunk;
+					yield { done: true, usage: { promptTokens: 3_199, totalTokens: 3_201 } };
+					return;
+				}
+				yield { content: "Finished", done: false };
+				yield { done: true, usage: { promptTokens: 1_000, totalTokens: 1_001 } };
+			}
+			return okAsync(chunks());
+		},
+		completeChat: () => okAsync({ content: "Unused", toolCalls: [] }),
+		supportsTools: () => true,
+		listModels: () => okAsync([]),
+	};
+	const engine = createEngine(provider, "test");
+	engine.loadMessages([
+		{ role: "user", content: "task".repeat(300) },
+		{ role: "assistant", content: "old".repeat(1_200) },
+		{ role: "user", content: "question".repeat(100) },
+		{ role: "assistant", content: "answer".repeat(300) },
+		{ role: "user", content: "more".repeat(200) },
+		{ role: "assistant", content: "history".repeat(200) },
+	]);
+	const registry = createRegistry();
+	registry.register({
+		...listDirTool,
+		execute: async () => "tool result ".repeat(125),
+	});
+	const loop = createAgentLoop(engine, registry, {
+		maxRounds: 3,
+		projectRoot: "/tmp",
+		systemPrompt: "test",
+		provider,
+		streamOpts: { contextSize: 4_000 },
+	});
+
+	await collect(loop.send("hello"));
+
+	expect(streamCount).toBe(2);
+	expect(requests[0]?.some((message) => message.content.startsWith("old".repeat(100)))).toBe(true);
+	expect(requests[1]?.some((message) => message.content.startsWith("old".repeat(100)))).toBe(false);
 });
 
 it("uses live prompt, provider, and context size after switching settings", async () => {
@@ -1165,6 +1259,9 @@ it("continues without retry when compaction fails", async () => {
 	expect(kinds).toContain("compacting");
 	// Should NOT have compacted (it failed)
 	expect(kinds).not.toContain("compacted");
+	expect(events.some((event) => event.kind === "warning" && event.message.includes("failed"))).toBe(
+		true,
+	);
 	// Should not infinitely loop — stops at round cap
 	expect(callIdx).toBeLessThanOrEqual(2);
 });

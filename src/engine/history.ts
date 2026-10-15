@@ -77,3 +77,16 @@ export const prepareHistoryForRequest = (history: readonly Message[], debug = fa
 	if (debug) console.debug(`anvil: repaired history before provider request: ${validation.error}`);
 	return repaired;
 };
+
+/** Estimate message tokens at roughly four characters per token, with optional calibration. */
+export const estimateMessageTokens = (message: Message, scale = 1): number => {
+	const toolArgs = (message.toolCalls ?? []).reduce(
+		(total, call) => total + call.arguments.length,
+		0,
+	);
+	const characters = message.content.length + (message.reasoning?.length ?? 0) + toolArgs;
+	return Math.round((characters / 4 + 4) * scale);
+};
+
+export const estimateMessagesTokens = (messages: readonly Message[], scale = 1): number =>
+	messages.reduce((total, message) => total + estimateMessageTokens(message, scale), 0);

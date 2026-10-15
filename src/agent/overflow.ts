@@ -8,6 +8,9 @@ export type OverflowSignals = {
 	errorMessage?: string;
 };
 
+export const PROACTIVE_COMPACTION_RATIO = 0.8;
+const OVERFLOW_RATIO = 0.95;
+
 const OVERFLOW_PATTERNS = [
 	/prompt is too long/i,
 	/exceeds.*context/i,
@@ -31,7 +34,10 @@ export const isOverflow = (signals: OverflowSignals): boolean => {
 	}
 
 	// Usage exceeds context — silent overflow
-	if (signals.promptTokens && signals.promptTokens > signals.contextSize) {
+	if (
+		signals.promptTokens !== undefined &&
+		signals.promptTokens >= Math.ceil(signals.contextSize * OVERFLOW_RATIO)
+	) {
 		return true;
 	}
 

@@ -92,7 +92,7 @@ export const formatContextSummary = (usage: ContextUsage): string =>
 		`  used:      ~${usage.used.toLocaleString()} (${usage.percentage}%)`,
 		`  tools:     ${usage.toolCount} (~${usage.toolTokens.toLocaleString()} tokens)`,
 		`  trim at:   80% (~${usage.trimAt.toLocaleString()} tokens)`,
-		"  compact:   on overflow (auto)",
+		"  compact:   auto at ~80%; overflow retry at 95%",
 		usage.percentage >= 60 ? "  hint: /compact to manually free context" : "",
 	]
 		.filter(Boolean)

@@ -40,6 +40,14 @@ describe("isOverflow", () => {
 			expect(isOverflow({ promptTokens: 33000, contextSize })).toBe(true);
 		});
 
+		it("detects overflow when prompt usage reaches 95% of context", () => {
+			expect(isOverflow({ promptTokens: 31_130, contextSize })).toBe(true);
+		});
+
+		it("does not detect overflow below 95% of context", () => {
+			expect(isOverflow({ promptTokens: 31_129, contextSize })).toBe(false);
+		});
+
 		it("does not flag when usage is within bounds", () => {
 			expect(isOverflow({ promptTokens: 20000, contextSize })).toBe(false);
 		});

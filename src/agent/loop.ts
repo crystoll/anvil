@@ -1,10 +1,11 @@
 import { okAsync, ResultAsync } from "neverthrow";
 import type { Engine, EngineEvent } from "../engine/engine.js";
+import { estimateMessagesTokens } from "../engine/history.js";
 import type { Message, Provider, ToolCall } from "../provider/types.js";
 import type { Registry, Tool, ToolExecutionContext } from "../tools/registry.js";
 import { parseToolArgs } from "../tools/registry.js";
 import { compactHistory } from "./compact.js";
-import { isOverflow } from "./overflow.js";
+import { isOverflow, PROACTIVE_COMPACTION_RATIO } from "./overflow.js";
 
 /** Agent loop states. */
 export type AgentState = "idle" | "streaming" | "pending" | "executing" | "done" | "stuck";
@@ -87,6 +88,9 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	let queuedCalls: QueuedToolCall[] = [];
 	let rounds = 0;
 	let activeRun: ActiveRun | null = null;
+	let tokenEstimateScale = 1;
+	let calibratedProvider: Provider | undefined;
+	let calibratedModel = "";
 	const recentCalls: string[] = [];
 	let originalGoal = "";
 
@@ -417,6 +421,8 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	type RoundSignals = {
 		finishReason?: string;
 		promptTokens?: number;
+		estimatedHistoryTokens: number;
+		estimatedToolTokens: number;
 		content: string;
 		errorMessage?: string;
 	};
@@ -436,16 +442,40 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		if (event.kind === "error") signals.errorMessage = event.error.message;
 	};
 
+	const calibrateTokenEstimate = (signals: RoundSignals): void => {
+		if (!signals.promptTokens || signals.estimatedHistoryTokens <= 0) return;
+		const observedScale =
+			(signals.promptTokens - signals.estimatedToolTokens) / signals.estimatedHistoryTokens;
+		if (!Number.isFinite(observedScale) || observedScale <= 0) return;
+		const boundedScale = Math.min(4, Math.max(0.5, observedScale));
+		tokenEstimateScale = (tokenEstimateScale + boundedScale) / 2;
+	};
+
+	const resetEstimateForModelChange = (): void => {
+		const provider = currentProvider() ?? engine.getProvider();
+		const model = engine.model();
+		if (provider === calibratedProvider && model === calibratedModel) return;
+		calibratedProvider = provider;
+		calibratedModel = model;
+		tokenEstimateScale = 1;
+	};
+
 	/** Stream one round and collect engine events into agent events. */
 	async function* streamRound(
 		signal: AbortSignal,
 		requestMessages: readonly Message[],
+		signals: RoundSignals,
 	): AsyncGenerator<AgentEvent> {
-		const trimEvent = maybeTrimContext(engine, currentContextSize());
+		resetEstimateForModelChange();
+		const trimEvent = maybeTrimContext(engine, currentContextSize(), tokenEstimateScale);
 		if (trimEvent) yield trimEvent;
 		const contextSize = currentContextSize();
 		const schemas = contextSize ? registry.filteredSchemas(contextSize) : registry.schemas();
-		const signals: RoundSignals = { content: "" };
+		signals.estimatedHistoryTokens = estimateMessagesTokens([
+			...engine.messages(),
+			...requestMessages,
+		]);
+		signals.estimatedToolTokens = Math.round(JSON.stringify(schemas).length / 4);
 		for await (const event of engine.stream(
 			schemas,
 			{ ...(contextSize > 0 ? { contextSize } : {}), signal },
@@ -573,16 +603,26 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		if (!provider) return false;
 		yield { kind: "compacting" };
 		const messages = [...engine.messages()];
-		const beforeTokens = Math.round(messages.map((m) => m.content).join("").length / 4);
+		const beforeTokens = estimateMessagesTokens(messages, tokenEstimateScale);
 		const contextSize = currentContextSize();
 		const result = await compactHistory(provider, engine.model(), messages, {
 			debug: config.debug ?? false,
 			...(contextSize > 0 ? { contextSize } : {}),
 		});
-		if (result.isErr()) return false;
+		if (result.isErr()) {
+			yield { kind: "warning", message: `Context compaction failed: ${result.error.message}` };
+			return false;
+		}
 		const compacted = result.value;
+		if (compacted === messages) {
+			yield {
+				kind: "warning",
+				message: "Context is near its limit, but there is not enough history to compact.",
+			};
+			return false;
+		}
 		engine.loadMessages(compacted);
-		const afterTokens = Math.round(compacted.map((m) => m.content).join("").length / 4);
+		const afterTokens = estimateMessagesTokens(compacted, tokenEstimateScale);
 		yield { kind: "compacted", before: beforeTokens, after: afterTokens };
 		return true;
 	}
@@ -594,14 +634,33 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		requestMessages: readonly Message[],
 	): AsyncGenerator<AgentEvent, "continue" | "ok"> {
 		let overflowed = false;
-		for await (const event of streamRound(signal, requestMessages)) {
+		const signals: RoundSignals = {
+			content: "",
+			estimatedHistoryTokens: 0,
+			estimatedToolTokens: 0,
+		};
+		for await (const event of streamRound(signal, requestMessages, signals)) {
 			if (event.kind === "overflow") overflowed = true;
 			yield event;
 		}
+		calibrateTokenEstimate(signals);
 		if (overflowed && !compacted.done && !signal.aborted) {
 			compacted.done = true;
 			const success = yield* tryCompact();
 			if (success) return "continue";
+		}
+		const contextSize = currentContextSize();
+		if (
+			!signals.errorMessage &&
+			!overflowed &&
+			signals.promptTokens !== undefined &&
+			contextSize > 0 &&
+			signals.promptTokens >= Math.ceil(contextSize * PROACTIVE_COMPACTION_RATIO) &&
+			!compacted.done &&
+			!signal.aborted
+		) {
+			compacted.done = true;
+			yield* tryCompact();
 		}
 		return "ok";
 	}
@@ -703,10 +762,11 @@ const mapStreamEvent = (event: EngineEvent, lastFinishReason?: string): AgentEve
 const maybeTrimContext = (
 	engine: Engine,
 	contextSize: number,
+	estimateScale: number,
 ): (AgentEvent & { kind: "trimmed" }) | undefined => {
 	if (contextSize <= 0) return undefined;
 	const budget = Math.round(contextSize * 0.8);
-	const trimmed = engine.trimToFit(budget);
+	const trimmed = engine.trimToFit(budget, estimateScale);
 	return trimmed > 0 ? { kind: "trimmed", count: trimmed } : undefined;
 };
 

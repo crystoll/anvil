@@ -184,7 +184,7 @@ Or set the `OLLAMA_NUM_CTX` environment variable to change Ollama's default for 
 export OLLAMA_NUM_CTX=65536  # applies to all requests that don't specify num_ctx
 ```
 
-Anvil detects context overflow (repeated empty responses, error messages) and will auto-compact the conversation history when it occurs — but starting with a context size that matches your workload avoids compaction in the first place.
+Anvil calibrates its context estimate from provider-reported token usage, proactively compacts around 80% of the configured context window, and retries after overflow signals at 95% or more. Starting with a context size that matches your workload still avoids unnecessary compaction.
 
 ## Per-Project Customization
 

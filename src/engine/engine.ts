@@ -6,7 +6,11 @@ import type {
 	StreamOptions,
 	ToolSchema,
 } from "../provider/types.js";
-import { prepareHistoryForRequest } from "./history.js";
+import {
+	estimateMessagesTokens,
+	estimateMessageTokens,
+	prepareHistoryForRequest,
+} from "./history.js";
 
 export type EngineOptions = {
 	debug?: boolean;
@@ -41,8 +45,8 @@ export type Engine = {
 	) => AsyncIterable<EngineEvent>;
 	cancel: () => void;
 	reset: () => void;
-	/** Trim oldest messages to stay within a token budget. Returns number of messages removed. */
-	trimToFit: (maxTokens: number) => number;
+	/** Trim oldest messages to a token budget, adjusting the chars/4 estimate by observed usage. */
+	trimToFit: (maxTokens: number, estimateScale?: number) => number;
 	/** Rewrite last message content as a tool call (for proxy recovery). */
 	rewriteLastAsToolCall: (call: { id: string; name: string; arguments: string }) => boolean;
 	/**
@@ -384,7 +388,8 @@ export const createEngine = (
 		stream,
 		cancel,
 		reset,
-		trimToFit: (maxTokens: number) => trimMessages(history, maxTokens),
+		trimToFit: (maxTokens: number, estimateScale = 1) =>
+			trimMessages(history, maxTokens, estimateScale),
 		rewriteLastAsToolCall: (call) => {
 			const last = history[history.length - 1];
 			if (!last || last.toolCalls?.length || !last.content) return false;
@@ -402,8 +407,8 @@ export const createEngine = (
 };
 
 /** Remove oldest messages (preserving system) until under budget. Keeps tool pairs atomic. */
-const trimMessages = (history: Message[], maxTokens: number): number => {
-	let currentTotal = history.reduce((a, m) => a + estimateMessageTokens(m), 0);
+const trimMessages = (history: Message[], maxTokens: number, estimateScale: number): number => {
+	let currentTotal = estimateMessagesTokens(history, estimateScale);
 	if (currentTotal <= maxTokens) return 0;
 
 	let removed = 0;
@@ -417,7 +422,7 @@ const trimMessages = (history: Message[], maxTokens: number): number => {
 	if (firstUserIndex > systemOffset) {
 		const leadingMessages = history.splice(systemOffset, firstUserIndex - systemOffset);
 		currentTotal -= leadingMessages.reduce(
-			(total, message) => total + estimateMessageTokens(message),
+			(total, message) => total + estimateMessageTokens(message, estimateScale),
 			0,
 		);
 		removed += leadingMessages.length;
@@ -428,11 +433,11 @@ const trimMessages = (history: Message[], maxTokens: number): number => {
 		const msg = history[headLength];
 		if (!msg) break;
 		if (hasToolCalls(msg)) {
-			const { count, tokens } = removeToolGroup(history, headLength);
+			const { count, tokens } = removeToolGroup(history, headLength, estimateScale);
 			currentTotal -= tokens;
 			removed += count;
 		} else {
-			currentTotal -= estimateMessageTokens(msg);
+			currentTotal -= estimateMessageTokens(msg, estimateScale);
 			history.splice(headLength, 1);
 			removed++;
 		}
@@ -443,11 +448,15 @@ const trimMessages = (history: Message[], maxTokens: number): number => {
 const hasToolCalls = (m: Message): boolean =>
 	m.role === "assistant" && (m.toolCalls?.length ?? 0) > 0;
 
-const removeToolGroup = (history: Message[], index: number): { count: number; tokens: number } => {
+const removeToolGroup = (
+	history: Message[],
+	index: number,
+	estimateScale: number,
+): { count: number; tokens: number } => {
 	const msg = history[index];
 	if (!msg) return { count: 0, tokens: 0 };
 	const ids = new Set((msg.toolCalls ?? []).map((tc) => tc.id));
-	let tokens = estimateMessageTokens(msg);
+	let tokens = estimateMessageTokens(msg, estimateScale);
 	history.splice(index, 1);
 	let count = 1;
 	while (
@@ -457,15 +466,9 @@ const removeToolGroup = (history: Message[], index: number): { count: number; to
 	) {
 		const result = history[index];
 		if (!result) break;
-		tokens += estimateMessageTokens(result);
+		tokens += estimateMessageTokens(result, estimateScale);
 		history.splice(index, 1);
 		count++;
 	}
 	return { count, tokens };
-};
-
-/** Rough token estimate for a message (~4 chars per token). */
-const estimateMessageTokens = (m: Message): number => {
-	const toolArgs = (m.toolCalls ?? []).reduce((a, tc) => a + tc.arguments.length, 0);
-	return Math.round((m.content.length + (m.reasoning?.length ?? 0) + toolArgs) / 4) + 4;
 };

@@ -528,11 +528,12 @@ type SessionController = {
 - [x] **M10.2 One source of timeout defaults.**
   - Split `first_token_timeout` (model load plus prompt eval; 300 s by default for local models) from `stream_timeout` (stall between chunks; 120 s); keep `connect_timeout` separate.
   - **Done:** shared constants now supply config and provider defaults; streaming applies the first-token timeout before its first response chunk and the stream timeout thereafter. Non-streaming completions receive a bounded budget for all three phases.
-- [ ] **M10.3 Real token accounting.**
+- [x] **M10.3 Real token accounting.**
   - Calibrate the chars/4 estimate with `prompt_eval_count` and `eval_count`, or OpenAI's `usage`.
   - Compact proactively at about 80 % of `num_ctx`.
   - Treat `prompt_eval_count` at 95 % of `num_ctx` or more as an overflow: Ollama silently drops the oldest tokens, including the system prompt.
   - **Test first:** mocked final chunks trigger compaction.
+  - **Done:** provider-reported prompt usage calibrates trimming for the active provider/model; final-chunk usage compacts at 80% and signals overflow at 95%.
 - [ ] **M10.4 Retry with backoff before the first token.**
   - On connection refused, a 503, or a timeout while the model loads: retry 3 times (after 2 s, 5 s, 15 s) with a visible "retrying 2/3" notice.
   - Mid-stream failures keep the partial answer (M5) and suggest `/retry`.
