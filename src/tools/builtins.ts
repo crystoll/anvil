@@ -13,7 +13,9 @@ const expandTilde = (p: string): string => (p.startsWith("~/") ? join(homedir(),
 const HISTORY_DIR = ".anvil/file-history";
 const RUN_CMD_TIMEOUT_MS = 300_000;
 const PROCESS_KILL_GRACE_MS = 2000;
-const MAX_RUN_CMD_OUTPUT_LENGTH = 8000;
+const MAX_RUN_CMD_HEAD_LENGTH = 2000;
+const MAX_RUN_CMD_TAIL_LENGTH = 6000;
+const MAX_RUN_CMD_OUTPUT_LENGTH = MAX_RUN_CMD_HEAD_LENGTH + MAX_RUN_CMD_TAIL_LENGTH;
 
 /** Save a backup of a file before overwriting it. */
 export const backupFile = async (fullPath: string, projectRoot: string): Promise<void> => {
@@ -142,12 +144,20 @@ const executeCommand = (
 		const child = spawn("sh", ["-c", command], {
 			cwd: context.projectRoot,
 			detached: true,
+			env: {
+				...process.env,
+				CI: "1",
+				PAGER: "cat",
+				GIT_PAGER: "cat",
+				GIT_TERMINAL_PROMPT: "0",
+			},
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		const stdoutDecoder = new StringDecoder("utf8");
 		const stderrDecoder = new StringDecoder("utf8");
-		let output = "";
-		let outputTruncated = false;
+		let outputHead = "";
+		let outputTail = "";
+		let outputLength = 0;
 		let termination: "cancelled" | "timeout" | undefined;
 		let processError: Error | undefined;
 		let terminationError: Error | undefined;
@@ -155,9 +165,11 @@ const executeCommand = (
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
 
 		const appendOutput = (chunk: string): void => {
-			const available = MAX_RUN_CMD_OUTPUT_LENGTH - output.length;
-			if (chunk.length > available) outputTruncated = true;
-			if (available > 0) output += chunk.slice(0, available);
+			outputLength += chunk.length;
+			const headCapacity = MAX_RUN_CMD_HEAD_LENGTH - outputHead.length;
+			outputHead += chunk.slice(0, headCapacity);
+			const remainder = chunk.slice(headCapacity);
+			if (remainder) outputTail = (outputTail + remainder).slice(-MAX_RUN_CMD_TAIL_LENGTH);
 		};
 
 		const sendSignal = (signal: NodeJS.Signals): void => {
@@ -207,8 +219,8 @@ const executeCommand = (
 				timeoutMs: RUN_CMD_TIMEOUT_MS,
 				processError,
 				terminationError,
-				output,
-				outputTruncated,
+				output: outputHead + outputTail,
+				omittedOutputLength: Math.max(0, outputLength - MAX_RUN_CMD_OUTPUT_LENGTH),
 			});
 			resolveResult(outcome);
 		});
@@ -223,7 +235,7 @@ type CommandOutcome = {
 	processError: Error | undefined;
 	terminationError: Error | undefined;
 	output: string;
-	outputTruncated: boolean;
+	omittedOutputLength: number;
 };
 
 const signalProcessGroup = (pid: number | undefined, signal: NodeJS.Signals): Error | undefined => {
@@ -262,10 +274,9 @@ const commandStatus = (outcome: CommandOutcome): string => {
 
 const commandOutput = (outcome: CommandOutcome): string =>
 	[
-		outcome.output,
-		outcome.outputTruncated
-			? `[output truncated after ${MAX_RUN_CMD_OUTPUT_LENGTH} characters]`
-			: "",
+		outcome.omittedOutputLength > 0
+			? `${outcome.output.slice(0, MAX_RUN_CMD_HEAD_LENGTH)}\n… ${outcome.omittedOutputLength} chars omitted …\n${outcome.output.slice(MAX_RUN_CMD_HEAD_LENGTH)}`
+			: outcome.output,
 		outcome.terminationError ? `Termination error: ${outcome.terminationError.message}` : "",
 	]
 		.filter(Boolean)

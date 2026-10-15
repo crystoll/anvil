@@ -557,9 +557,10 @@ type SessionController = {
   - No match returns the closest region with line numbers.
   - **Test first:** one fixture per case.
   - **Done:** edits normalize line endings and apply the three matching passes; ambiguous edits require `replace_all`, which is highlighted in both approval UIs, and failed matches include a numbered nearby excerpt.
-- [ ] **M10.9 `run_cmd` for agents.**
+- [x] **M10.9 `run_cmd` for agents.**
   - Use a non-interactive environment: `CI=1`, `PAGER=cat`, `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`.
   - Keep the head and the tail of the output: the first 2K plus the last 6K characters, with "… N chars omitted …" between. Errors are at the tail (F19).
+  - **Done:** commands receive the non-interactive environment, and captured output retains its first 2K and last 6K characters around an omission count.
 - [ ] **M10.10 Useful `search`.**
   - Use `rg`, falling back to `git grep -n`, then `grep -rnF`.
   - Search fixed strings by default; `regex: true` opts in to regex.

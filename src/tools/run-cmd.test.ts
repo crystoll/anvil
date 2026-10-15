@@ -113,6 +113,20 @@ describe("run_cmd", () => {
 		expect(result).toContain("stdin ended");
 	});
 
+	it("sets non-interactive environment variables for commands", async () => {
+		const command = nodeCommand(
+			"console.log(JSON.stringify({ CI: process.env.CI, PAGER: process.env.PAGER, GIT_PAGER: process.env.GIT_PAGER, GIT_TERMINAL_PROMPT: process.env.GIT_TERMINAL_PROMPT }))",
+		);
+		const result = await runCmd.execute(
+			{ command },
+			{ signal: new AbortController().signal, projectRoot: ROOT },
+		);
+
+		expect(result).toContain(
+			'{"CI":"1","PAGER":"cat","GIT_PAGER":"cat","GIT_TERMINAL_PROMPT":"0"}',
+		);
+	});
+
 	it("reports non-zero exit codes and keeps stderr output", async () => {
 		const result = await runCmd.execute(
 			{ command: `${nodeCommand('console.error("failure")')}; exit 7` },
@@ -123,15 +137,19 @@ describe("run_cmd", () => {
 		expect(result).toContain("failure");
 	});
 
-	it("drains output after reaching the retained output limit", async () => {
-		const command = nodeCommand('process.stdout.write("x".repeat(2 * 1024 * 1024))');
+	it("drains output while retaining the head and tail around an omission marker", async () => {
+		const command = nodeCommand(
+			'process.stdout.write("H".repeat(3000) + "M".repeat(2 * 1024 * 1024) + "T".repeat(3000))',
+		);
 		const result = await runCmd.execute(
 			{ command },
 			{ signal: new AbortController().signal, projectRoot: ROOT },
 		);
 
 		expect(result).toContain("Exit code: 0");
-		expect(result).toContain("[output truncated after 8000 characters]");
+		expect(result).toContain("H".repeat(2000));
+		expect(result).toContain("T".repeat(3000));
+		expect(result).toContain("… 2095152 chars omitted …");
 		expect(result.length).toBeLessThan(9000);
 	});
 
