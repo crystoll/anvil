@@ -91,4 +91,56 @@ describe("web_fetch extractReadable", () => {
 			vi.unstubAllGlobals();
 		}
 	});
+
+	it("blocks redirects from allowlisted domains to unlisted domains", async () => {
+		const fetchMock = vi.fn(
+			async () =>
+				new Response(null, {
+					status: 302,
+					headers: { location: "https://outside.test/target" },
+				}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		try {
+			const result = await fetchAndExtract("https://docs.example.com/start", 8000, undefined, [
+				"docs.example.com",
+			]);
+
+			expect(result.isErr()).toBe(true);
+			if (result.isErr()) expect(result.error).toContain("outside.test");
+			expect(fetchMock).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("follows redirects only when each host is allowlisted", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				new Response(null, {
+					status: 302,
+					headers: { location: "/guide" },
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					`<html><body><article><h1>Guide</h1><p>${"Useful article content ".repeat(12)}</p></article></body></html>`,
+					{ status: 200, headers: { "content-type": "text/html" } },
+				),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		try {
+			const result = await fetchAndExtract("https://docs.example.com/start", 8000, undefined, [
+				"docs.example.com",
+			]);
+
+			expect(result.isOk()).toBe(true);
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
 });

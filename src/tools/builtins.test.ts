@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	createWebFetchTool,
 	editFileTool,
 	gitDiff,
 	glob,
@@ -185,6 +186,35 @@ describe("glob path confinement", () => {
 
 		expect(result).not.toContain("secret.ts");
 		expect(result).not.toContain("private");
+	});
+});
+
+describe("web_fetch approval", () => {
+	it("auto-approves exact allowlisted domains case-insensitively", async () => {
+		const tool = createWebFetchTool(["Docs.Example.com"]);
+
+		await expect(
+			tool.requiresApproval?.({ url: "https://docs.example.com/guide" }, context),
+		).resolves.toBe(false);
+	});
+
+	it("requires approval for unlisted domains and their subdomains", async () => {
+		const tool = createWebFetchTool(["example.com"]);
+
+		await expect(
+			tool.requiresApproval?.({ url: "https://outside.test/page" }, context),
+		).resolves.toBe(true);
+		await expect(
+			tool.requiresApproval?.({ url: "https://docs.example.com/page" }, context),
+		).resolves.toBe(true);
+	});
+
+	it("requires approval for unsupported URL schemes", async () => {
+		const tool = createWebFetchTool(["example.com"]);
+
+		await expect(tool.requiresApproval?.({ url: "file:///etc/passwd" }, context)).resolves.toBe(
+			true,
+		);
 	});
 });
 

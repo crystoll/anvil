@@ -39,7 +39,7 @@ import {
 	type SessionWriter,
 } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
-import { builtinTools, createRegistry } from "../tools/index.js";
+import { builtinTools, createRegistry, createWebFetchTool } from "../tools/index.js";
 import { settleWithin } from "./settle-within.js";
 
 // === Types ===
@@ -402,7 +402,11 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 
 	// Registry + skills + agents
 	const registry = createRegistry();
-	for (const tool of builtinTools) registry.register(tool);
+	for (const tool of builtinTools) {
+		registry.register(
+			tool.name === "web_fetch" ? createWebFetchTool(config.web.allowDomains) : tool,
+		);
+	}
 	const availableSkills = discoverSkills(p.skillDirs);
 	let activeSkill: Skill | undefined = flags.skill
 		? availableSkills.find((s) => s.name === flags.skill)

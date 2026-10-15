@@ -137,7 +137,7 @@ If anvil crashes, it saves the conversation first and writes the details to `~/.
 | `git_diff`        | auto        | Git diff (staged or unstaged)       |
 | `git_log`         | auto        | Recent commit history               |
 | `web_search`      | auto        | Search the web (DuckDuckGo)         |
-| `web_fetch`       | auto        | Fetch URL and extract readable text |
+| `web_fetch`       | conditional | Fetch URL and extract readable text |
 | `write_file`      | y/n         | Write/create a file                 |
 | `edit_file`       | y/n         | Whitespace-tolerant edit            |
 | `run_cmd`         | y/n         | Run a shell command                 |
@@ -149,6 +149,16 @@ traversal, and symlink targets—requires approval; glob results outside the pro
 ## Configuration
 
 Global config at `~/.anvil/config.yaml`, created on first run. Change `default_model` to switch models, add providers for remote gateways. See [docs/multi-provider.md](docs/multi-provider.md) for multi-provider setup.
+
+`web_fetch` prompts for approval unless the URL's exact hostname is listed under
+`web.allow_domains`. Entries do not include subdomains automatically, and redirects from an
+allowlisted host are followed only when each destination host is also listed:
+
+```yaml
+web:
+  allow_domains:
+    - docs.example.com
+```
 
 Per-project customization uses agents, skills, and prompts — not a local config file.
 

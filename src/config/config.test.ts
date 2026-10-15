@@ -24,6 +24,7 @@ describe("config loader", () => {
 		expect(config.defaultModel).toBe("gemma4:e4b");
 		expect(config.providers.ollama).toBeDefined();
 		expect(config.providers.ollama?.endpoint).toBe("http://localhost:11434");
+		expect(config.web.allowDomains).toEqual([]);
 		expect(config).toMatchObject({ keepAlive: "30m" });
 		expect(existsSync(CONFIG_PATH)).toBe(true);
 	});
@@ -85,6 +86,47 @@ providers:
 		expect(config.connectTimeout).toBe(300);
 		expect(config).toMatchObject({ firstTokenTimeout: 300 });
 		expect(config.maxRounds).toBe(25);
+		expect(config.web.allowDomains).toEqual([]);
+	});
+
+	it("loads exact web domains allowed for automatic fetches", () => {
+		writeFileSync(
+			CONFIG_PATH,
+			`default_provider: ollama
+default_model: qwen3:8b
+providers:
+  ollama:
+    endpoint: http://localhost:11434
+web:
+  allow_domains:
+    - docs.example.com
+    - example.org
+`,
+		);
+
+		const result = loadConfig(CONFIG_PATH);
+
+		expect(result.isOk()).toBe(true);
+		expect(result._unsafeUnwrap().web.allowDomains).toEqual(["docs.example.com", "example.org"]);
+	});
+
+	it("rejects invalid web allowlist entries", () => {
+		writeFileSync(
+			CONFIG_PATH,
+			`default_provider: ollama
+default_model: qwen3:8b
+providers:
+  ollama:
+    endpoint: http://localhost:11434
+web:
+  allow_domains: ["https://example.com/path"]
+`,
+		);
+
+		const result = loadConfig(CONFIG_PATH);
+
+		expect(result.isErr()).toBe(true);
+		if (result.isErr()) expect(result.error.message).toContain("web.allow_domains");
 	});
 
 	it("loads a configured first-token timeout", () => {

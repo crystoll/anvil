@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { copyFile, mkdir, opendir, readFile, realpath, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { fetchAndExtract } from "../web/web-fetch.js";
+import { fetchAndExtract, isAllowedWebUrl } from "../web/web-fetch.js";
 import { searchWeb } from "../web/web-search.js";
 import {
 	isGlobOutsideProject,
@@ -926,24 +926,35 @@ export const webSearch: Tool = {
 	},
 };
 
-/** Fetch a URL and extract readable content. */
-export const webFetch: Tool = {
-	name: "web_fetch",
-	description: "Fetch a URL and extract its readable text content (removes navigation, ads, etc).",
-	schema: objSchema(["url"], {
-		url: strProp("URL to fetch"),
-		max_length: { type: "number", description: "Max characters to return (default 8000)" },
-	}),
-	needsApproval: false,
-	timeout: 15_000,
-	execute: async (args, context) => {
-		const url = String(args.url ?? "");
-		const maxLength = Number(args.max_length ?? 8000);
-		const result = await fetchAndExtract(url, maxLength, context.signal);
-		if (result.isErr()) return `Error: ${result.error}`;
-		return result.value;
-	},
+/** Create a fetch tool that auto-approves only exact allowlisted hostnames. */
+export const createWebFetchTool = (allowDomains: readonly string[] = []): Tool => {
+	const allowedDomains = allowDomains.map((domain) =>
+		domain.trim().toLowerCase().replace(/\.$/, ""),
+	);
+	return {
+		name: "web_fetch",
+		description:
+			"Fetch a URL and extract its readable text content (removes navigation, ads, etc).",
+		schema: objSchema(["url"], {
+			url: strProp("URL to fetch"),
+			max_length: { type: "number", description: "Max characters to return (default 8000)" },
+		}),
+		needsApproval: false,
+		requiresApproval: async (args) => !isAllowedWebUrl(String(args.url ?? ""), allowedDomains),
+		timeout: 15_000,
+		execute: async (args, context) => {
+			const url = String(args.url ?? "");
+			const maxLength = Number(args.max_length ?? 8000);
+			const fetchDomains = isAllowedWebUrl(url, allowedDomains) ? allowedDomains : undefined;
+			const result = await fetchAndExtract(url, maxLength, context.signal, fetchDomains);
+			if (result.isErr()) return `Error: ${result.error}`;
+			return result.value;
+		},
+	};
 };
+
+/** Default web fetch tool, which requires approval for every destination. */
+export const webFetch: Tool = createWebFetchTool();
 
 /** All built-in tools. */
 export const builtinTools: Tool[] = [

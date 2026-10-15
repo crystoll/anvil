@@ -155,7 +155,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return { required: await tool.requiresApproval(args, context) };
 		} catch (error) {
 			const detail = error instanceof Error ? error.message : String(error);
-			return { error: `Error: Unable to validate tool path: ${detail}` };
+			return { error: `Error: Unable to determine tool approval requirements: ${detail}` };
 		}
 	};
 

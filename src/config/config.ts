@@ -15,11 +15,17 @@ export type ProviderEntry = {
 	contextSize?: number;
 };
 
+/** Network-fetch approval configuration. */
+export type WebConfig = {
+	allowDomains: string[];
+};
+
 /** Full Anvil config. */
 export type AnvilConfig = {
 	defaultProvider: string;
 	defaultModel: string;
 	providers: Record<string, ProviderEntry>;
+	web: WebConfig;
 	keepAlive: string | number;
 	firstTokenTimeout: number;
 	streamTimeout: number;
@@ -37,6 +43,7 @@ const DEFAULT_CONFIG: AnvilConfig = {
 	providers: {
 		ollama: { endpoint: "http://localhost:11434" },
 	},
+	web: { allowDomains: [] },
 	keepAlive: "30m",
 	firstTokenTimeout: DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS,
 	streamTimeout: DEFAULT_STREAM_TIMEOUT_SECONDS,
@@ -58,6 +65,9 @@ max_rounds: 25
 providers:
   ollama:
     endpoint: http://localhost:11434
+
+web:
+  allow_domains: []
 `;
 
 /** Load config from path, creating defaults if missing. */
@@ -107,11 +117,14 @@ const validateConfig = (raw: Record<string, unknown>): Result<AnvilConfig, Confi
 
 	const providers = parseProviders(raw.providers);
 	if (providers.isErr()) return err(providers.error);
+	const web = parseWebConfig(raw.web);
+	if (web.isErr()) return err(web.error);
 
 	return ok({
 		defaultProvider,
 		defaultModel,
 		providers: providers.value,
+		web: web.value,
 		keepAlive: toKeepAlive(raw.keep_alive),
 		firstTokenTimeout: toNumber(raw.first_token_timeout, DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS),
 		streamTimeout: toNumber(raw.stream_timeout, DEFAULT_STREAM_TIMEOUT_SECONDS),
@@ -121,6 +134,35 @@ const validateConfig = (raw: Record<string, unknown>): Result<AnvilConfig, Confi
 		showTokens: raw.show_tokens !== false,
 	});
 };
+
+const parseWebConfig = (raw: unknown): Result<WebConfig, ConfigError> => {
+	if (raw === undefined) return ok({ allowDomains: [] });
+	if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+		return err({ kind: "validation", message: "web must be a configuration object" });
+
+	const rawDomains = (raw as Record<string, unknown>).allow_domains;
+	if (rawDomains === undefined) return ok({ allowDomains: [] });
+	if (
+		!Array.isArray(rawDomains) ||
+		!rawDomains.every((domain): domain is string => typeof domain === "string")
+	)
+		return err({ kind: "validation", message: "web.allow_domains must be a list of hostnames" });
+
+	const domains = rawDomains.map((domain) => domain.trim().toLowerCase().replace(/\.$/, ""));
+	if (domains.some((domain) => !isHostname(domain)))
+		return err({ kind: "validation", message: "web.allow_domains must contain valid hostnames" });
+
+	return ok({ allowDomains: [...new Set(domains)] });
+};
+
+const isHostname = (hostname: string): boolean =>
+	hostname.length <= 253 &&
+	hostname
+		.split(".")
+		.every(
+			(label) =>
+				label.length > 0 && label.length <= 63 && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label),
+		);
 
 const parseProviders = (raw: unknown): Result<Record<string, ProviderEntry>, ConfigError> => {
 	if (typeof raw !== "object" || raw === null) {
