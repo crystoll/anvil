@@ -2,6 +2,16 @@
 
 All items are potential work — not confirmed. Prioritized by value and effort.
 
+## Priority 1 — Tooling & CI
+
+### Renovate
+
+Automated dependency update PRs via GitHub Actions.
+
+- **Approach**: Add `renovate.json` with: group minor/patch, require CI pass, auto-merge patch, manual merge minor/major.
+- **Value**: Catches security updates, prevents drift.
+- **Scope**: Config file only, no code changes.
+
 ## Deferred / Future Investigations
 
 ### Multi-pane layout
