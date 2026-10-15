@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Message } from "../provider/types.js";
@@ -138,6 +138,44 @@ describe("session persistence", () => {
 		const sessions = listSessions(TEST_DIR);
 		expect(sessions).toHaveLength(2);
 		expect((sessions[0]?.updatedAt ?? 0) >= (sessions[1]?.updatedAt ?? 0)).toBe(true);
+	});
+
+	it("rebuilds a corrupt metadata index without losing sessions", () => {
+		const id = saveSession(TEST_DIR, sampleMessages)._unsafeUnwrap();
+		const original = listSessions(TEST_DIR);
+		const indexPath = join(TEST_DIR, "sessions.index");
+		writeFileSync(indexPath, "{");
+
+		expect(listSessions(TEST_DIR)).toEqual(original);
+		expect(JSON.parse(readFileSync(indexPath, "utf-8"))).toMatchObject({
+			version: 1,
+			sessions: { [id]: { meta: { id } } },
+		});
+	});
+
+	it("keeps unreadable session files visible with their modification time", () => {
+		writeFileSync(join(TEST_DIR, "broken-session.json"), "{");
+
+		expect(listSessions(TEST_DIR)).toEqual([
+			{ id: "broken-session", updatedAt: expect.any(Number) },
+		]);
+		expect(loadSession(TEST_DIR, "broken-session").isErr()).toBe(true);
+	});
+
+	it("refreshes indexed metadata and removes deleted sessions", () => {
+		const firstId = saveSession(TEST_DIR, sampleMessages, "first-session", undefined, {
+			status: "interrupted",
+		})._unsafeUnwrap();
+		listSessions(TEST_DIR);
+		saveSession(TEST_DIR, sampleMessages, firstId, undefined, { status: "complete" });
+		const secondId = saveSession(TEST_DIR, sampleMessages, "second-session")._unsafeUnwrap();
+
+		expect(listSessions(TEST_DIR)).toContainEqual(
+			expect.objectContaining({ id: firstId, status: "complete" }),
+		);
+		rmSync(join(TEST_DIR, `${firstId}.json`));
+
+		expect(listSessions(TEST_DIR).map((session) => session.id)).toEqual([secondId]);
 	});
 
 	it("returns latest session id from list", async () => {

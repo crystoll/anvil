@@ -1,5 +1,13 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -144,6 +152,92 @@ afterEach(async () => {
 });
 
 describe("readline CLI", () => {
+	it("saves interrupted input and resumes it from another directory", async () => {
+		const mock = await startMockOllama({ stallAfter: 0 });
+		servers.push(mock);
+		const directory = mkdtempSync(join(tmpdir(), "anvil-cli-resume-"));
+		testDirectories.push(directory);
+		const homeDir = join(directory, "home");
+		const projectDir = join(directory, "project");
+		const resumeDir = join(directory, "resume");
+		mkdirSync(join(homeDir, ".anvil"), { recursive: true });
+		mkdirSync(projectDir, { recursive: true });
+		mkdirSync(resumeDir, { recursive: true });
+		writeFileSync(
+			join(homeDir, ".anvil", "config.yaml"),
+			`default_provider: ollama
+default_model: test-model
+providers:
+  ollama:
+    endpoint: ${mock.endpoint}
+connect_timeout: 2
+stream_timeout: 5
+max_rounds: 3
+show_tokens: false
+`,
+		);
+
+		const mainPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/main.js");
+		const env = { ...process.env, HOME: homeDir };
+		const interrupted = spawn(process.execPath, [mainPath], {
+			cwd: projectDir,
+			env,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		children.push(interrupted);
+		const interruptedExit = waitForExit(interrupted, 15_000);
+		interrupted.stdin.write("first request\n");
+		await waitForRequests(mock, 1);
+		interrupted.kill("SIGTERM");
+
+		expect(await interruptedExit).toBe(143);
+		await mock.clientDisconnected;
+		const historyDir = join(homeDir, ".anvil", "history");
+		const sessionFile = readdirSync(historyDir).find((file) => file.endsWith(".json"));
+		if (!sessionFile) throw new Error("Interrupted session was not saved");
+		const session = JSON.parse(readFileSync(join(historyDir, sessionFile), "utf8")) as {
+			id: string;
+			status: string;
+			messages: { role: string; content?: string }[];
+		};
+		expect(session.status).toBe("interrupted");
+		expect(session.messages).toContainEqual(
+			expect.objectContaining({ role: "user", content: "first request" }),
+		);
+
+		mock.setScript({
+			frames: [
+				{
+					message: { role: "assistant", content: "Resumed" },
+					done: true,
+					prompt_eval_count: 12,
+					eval_count: 1,
+				},
+			],
+		});
+		const resumed = spawn(process.execPath, [mainPath, "--resume", session.id], {
+			cwd: resumeDir,
+			env,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		children.push(resumed);
+		let errors = "";
+		resumed.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+			errors += chunk;
+		});
+		const resumedExit = waitForExit(resumed, 15_000);
+		resumed.stdin.end("continue\n/quit\n");
+
+		expect(await resumedExit, errors).toBe(0);
+		expect(mock.requests).toHaveLength(2);
+		expect(mock.requests[1]).toMatchObject({
+			messages: expect.arrayContaining([
+				expect.objectContaining({ role: "user", content: "first request" }),
+				expect.objectContaining({ role: "user", content: "continue" }),
+			]),
+		});
+	}, 30_000);
+
 	it("processes queued prompts and drains piped input through /quit at EOF", async () => {
 		const mock = await startMockOllama({
 			frames: [

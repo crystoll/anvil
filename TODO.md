@@ -151,11 +151,8 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
 
 **Suggested remaining-work order:**
 
-1. Do **M13.1–M13.4** as an early CI safety net (mostly **[S]**, with **M13.3 [XS]**): refresh pinned Actions after reviewing changelogs, add Node 22/24, raise the production audit gate, and run integration tests in CI.
-2. Fix **M9.4 [S]**: reproduce and prevent the first-Enter-after-launch issue.
-3. Finish **M12.5 [S]**: measure listing performance; add an index only if it crosses the documented thresholds.
-4. Do **M13.5 Renovate [M]** after CI is stable, so automatic updates are governed by the completed checks.
-5. Complete **M14 [L]** only after all scheduled M0–M13 work is done; audit documentation, add deterministic and real-model screenshots, perform the final repository and code/test review, validate, then delete this TODO file.
+1. Do **M13.5 Renovate [M]** now that CI is stable, so automatic updates are governed by the completed checks.
+2. Complete **M14 [L]** only after all scheduled M0–M13 work is done; audit documentation, add deterministic and real-model screenshots, perform the final repository and code/test review, validate, then delete this TODO file.
 
 - The longest dependency chain is M0 → M2 → M5 → M6 → M7 → M8 → M12. M1, M3 and M4 can run alongside it.
 - M10.1 (Ollama options) is a completed example of a small, independent improvement.
@@ -624,7 +621,11 @@ type SessionController = {
   - **Done:** the TUI picker lists session titles, IDs, status, model and project path; selecting a session uses the shared resume command, which repairs and saves interrupted tool history. `/resume <id>` remains available through the shared command registry in both UIs.
 - [x] **M12.4 [S] Startup notice** when the latest session for this project ended mid-turn: "Last session was interrupted — /resume to continue".
   - **Done:** the TUI and readline CLI warn for the latest project session marked interrupted/error or containing an unanswered request, including crash-truncated sessions; already-resumed sessions and unrelated projects do not trigger the notice.
-- [ ] **M12.5 [S] Measure `listSessions`,** which parses every file. Add an index only past 200 sessions or 200 ms; until then, YAGNI. If indexing is needed, size that follow-up after measurement.
+- [x] **M12.5 [S] Measure `listSessions`,** which parses every file. Add an index only past 200 sessions or 200 ms; until then, YAGNI. If indexing is needed, size that follow-up after measurement.
+  - **Done:** synthetic 12 KB sessions took 206 ms on the initial scan at 67 sessions and 573 ms at 200; warmed scans took 3–17 ms. The 200 ms threshold is crossed, so M12.6 is sized as [M].
+- [x] **M12.6 [M] Rebuildable session metadata index.** Keep session JSON as the source of truth while avoiding full-history parsing for each listing. Validate cached metadata against session file changes, rebuild missing/corrupt/stale entries, preserve legacy and unreadable-file behavior, and benchmark at 200 sessions.
+  - **Done:** a versioned `sessions.index` cache validates entries against session file size and nanosecond mtime; session JSON remains authoritative. Missing, corrupt, changed, added, and deleted files rebuild the cache, and unreadable JSON remains visible with its file mtime. At 200 synthetic sessions, indexed listings took 3.0–6.6 ms after the initial scan.
+  - **Validated:** the full gate passes; an integration test interrupts a stalled CLI request with SIGTERM, verifies the user message was saved, then resumes it from another project directory. Existing TUI tests cover idle Ctrl+C exit, and CLI integration covers `/quit`.
 
 **Validation stop:** the gate passes, plus S4 and S6, and resuming works from another directory.
 
