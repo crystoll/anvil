@@ -117,12 +117,17 @@ pnpm dev -- --model qwen3.6:27b    # Override model
 pnpm dev -- --skill code-review     # Start with a skill active
 pnpm dev -- --agent explorer        # Use a specific agent config
 pnpm dev -- --resume                # Resume last session
-pnpm dev -- -c "task description"   # Non-interactive: run task, auto-approve tools, exit
+pnpm dev -- -c "task description"   # Non-interactive: skip tools requiring approval, then exit
+pnpm dev -- -c "task description" --yes  # Non-interactive: approve all tool calls, then exit
 pnpm dev -- --debug                 # Show finish_reason in token display
 pnpm dev -- ~/code/project -c "run tests"  # One-shot in a specific directory
 ```
 
 If anvil crashes, it saves the conversation first and writes the details to `~/.anvil/logs/`. Pick up where you left off with `--resume`.
+
+In one-shot `-c` mode, tools that require approval are skipped by default. The tool result is
+returned to the model and the skipped call is reported on stderr. Pass `--yes` only when you
+intend to let the one-shot run execute approval-gated tools.
 
 ## Built-in Tools
 

@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { startMockOllama } from "./test-support/mock-ollama.js";
-import type { MockStreamServer } from "./test-support/mock-stream-server.js";
+import type { MockStreamServer, StreamFaultScript } from "./test-support/mock-stream-server.js";
 
 const testDirectories: string[] = [];
 const servers: MockStreamServer[] = [];
@@ -45,6 +45,94 @@ const waitForOutput = (getOutput: () => string, text: string, occurrences = 1): 
 		const checkInterval = setInterval(check, 10);
 		check();
 	});
+
+const waitForRequests = async (mock: MockStreamServer, count: number): Promise<void> => {
+	const deadline = Date.now() + 10_000;
+	while (mock.requests.length < count) {
+		if (Date.now() >= deadline)
+			throw new Error(`Mock server received fewer than ${count} requests`);
+		await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+	}
+};
+
+const runOneShot = async (script: StreamFaultScript, args: string[]) => {
+	const mock = await startMockOllama(script);
+	servers.push(mock);
+	const directory = mkdtempSync(join(tmpdir(), "anvil-cli-one-shot-"));
+	testDirectories.push(directory);
+	const homeDir = join(directory, "home");
+	const projectDir = join(directory, "project");
+	mkdirSync(join(homeDir, ".anvil"), { recursive: true });
+	mkdirSync(projectDir, { recursive: true });
+	writeFileSync(
+		join(homeDir, ".anvil", "config.yaml"),
+		`default_provider: ollama
+default_model: test-model
+providers:
+  ollama:
+    endpoint: ${mock.endpoint}
+connect_timeout: 2
+stream_timeout: 5
+max_rounds: 3
+show_tokens: false
+`,
+	);
+
+	const mainPath = resolve(dirname(fileURLToPath(import.meta.url)), "../dist/main.js");
+	const child = spawn(process.execPath, [mainPath, ...args], {
+		cwd: projectDir,
+		env: { ...process.env, HOME: homeDir },
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	children.push(child);
+	let output = "";
+	let errors = "";
+	child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+		output += chunk;
+	});
+	child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+		errors += chunk;
+	});
+	const exited = waitForExit(child, 15_000);
+	child.stdin.end();
+	await waitForRequests(mock, 1);
+	mock.setScript({
+		frames: [
+			{
+				message: { role: "assistant", content: "Finished" },
+				done: true,
+				prompt_eval_count: 12,
+				eval_count: 1,
+			},
+		],
+	});
+
+	return { code: await exited, errors, output, projectDir, requests: mock.requests };
+};
+
+const writeFileFrames = (): StreamFaultScript => ({
+	delayMs: 100,
+	frames: [
+		{
+			message: {
+				role: "assistant",
+				content: "",
+				tool_calls: [
+					{
+						id: "write-1",
+						function: {
+							name: "write_file",
+							arguments: { path: "created.txt", content: "created" },
+						},
+					},
+				],
+			},
+			done: true,
+			prompt_eval_count: 10,
+			eval_count: 2,
+		},
+	],
+});
 
 afterEach(async () => {
 	for (const child of children.splice(0)) {
@@ -218,5 +306,31 @@ show_tokens: false
 		expect(code, errors).toBe(0);
 		expect(mock.requests).toHaveLength(2);
 		expect(readFileSync(join(projectDir, "example.txt"), "utf8")).toBe("second");
+	}, 30_000);
+
+	it("skips approval-requiring tools in one-shot mode unless --yes is set", async () => {
+		const result = await runOneShot(writeFileFrames(), ["-c", "create the file"]);
+
+		expect(result.code, result.errors).toBe(0);
+		expect(existsSync(join(result.projectDir, "created.txt"))).toBe(false);
+		expect(result.errors).toContain("Skipped write_file");
+		expect(result.requests).toHaveLength(2);
+		expect(result.requests[1]).toMatchObject({
+			messages: expect.arrayContaining([
+				expect.objectContaining({
+					role: "tool",
+					content: expect.stringContaining("approval is required"),
+				}),
+			]),
+		});
+	}, 30_000);
+
+	it("runs approval-requiring tools in one-shot mode with --yes", async () => {
+		const result = await runOneShot(writeFileFrames(), ["-c", "create the file", "--yes"]);
+
+		expect(result.code, result.errors).toBe(0);
+		expect(readFileSync(join(result.projectDir, "created.txt"), "utf8")).toBe("created");
+		expect(result.errors).not.toContain("Skipped write_file");
+		expect(result.requests).toHaveLength(2);
 	}, 30_000);
 });

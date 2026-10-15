@@ -1,4 +1,4 @@
-import { stdin, stdout } from "node:process";
+import { stderr, stdin, stdout } from "node:process";
 import { emitKeypressEvents } from "node:readline";
 import { ok } from "neverthrow";
 import type { AgentEvent, PendingCall } from "../agent/loop.js";
@@ -254,6 +254,7 @@ const formatEditDiff = (
 };
 
 type ApprovalDecision = "once" | "always" | "reject" | "cancel";
+type ApprovalMode = "prompt" | "approve" | "skip";
 
 const parseApprovalDecision = (answer: string): ApprovalDecision | undefined => {
 	if (answer === "c" || answer === "cancel") return "cancel";
@@ -285,13 +286,21 @@ const promptForApproval = async (
 
 const resolveApprovals = async (
 	lines: ReturnType<typeof createReadlineInput>,
-	autoApprove: boolean,
+	mode: ApprovalMode,
 ): Promise<void> => {
 	while (controller.getState().phase === "awaiting_approval" && !exitRequested) {
 		const pending = controller.getState().pending;
 		if (!pending) return;
-		if (autoApprove) {
+		if (mode === "approve") {
 			await controller.approve("always");
+			continue;
+		}
+		if (mode === "skip") {
+			const reason =
+				`Skipped ${pending.call.tool.name}: approval is required in one-shot mode. ` +
+				"Rerun with --yes to allow tool execution.";
+			stderr.write(`${reason}\n`);
+			await controller.reject(reason);
 			continue;
 		}
 		stdout.write(formatPending(pending.call, pending.index, pending.total));
@@ -311,10 +320,10 @@ const resolveApprovals = async (
 const runSubmission = async (
 	input: string,
 	lines: ReturnType<typeof createReadlineInput>,
-	options: { autoApprove?: boolean } = {},
+	options: { approvalMode?: ApprovalMode } = {},
 ): Promise<void> => {
 	await controller.submit(input);
-	await resolveApprovals(lines, options.autoApprove ?? false);
+	await resolveApprovals(lines, options.approvalMode ?? "prompt");
 	flushUsage();
 };
 
@@ -376,7 +385,9 @@ const runInteractiveTurn = async (
 const runOneShot = async (command: string, lines: ReturnType<typeof createReadlineInput>) => {
 	startTurnSpinner();
 	try {
-		await runSubmission(command, lines, { autoApprove: true });
+		await runSubmission(command, lines, {
+			approvalMode: flags.yes ? "approve" : "skip",
+		});
 	} finally {
 		stopSpinner();
 		flushUsage();

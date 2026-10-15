@@ -50,6 +50,7 @@ export type Flags = {
 	agent: string | undefined;
 	command: string | undefined;
 	path: string | undefined;
+	yes: boolean;
 	resume: boolean;
 	debug: boolean;
 };
@@ -134,6 +135,7 @@ export const parseFlags = (argv: string[]): Flags => {
 		agent: flagVal("--agent"),
 		command: flagVal("-c"),
 		path: posIdx >= 0 ? args[posIdx] : undefined,
+		yes: args.includes("--yes"),
 		resume: args.includes("--resume"),
 		debug: args.includes("--debug"),
 	};

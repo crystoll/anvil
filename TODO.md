@@ -602,10 +602,10 @@ type SessionController = {
 - [x] **M11.3 No argument injection.**
   - **Change:** `git_diff` and `git_log` reject refs that start with `-` and separate valid refs from path arguments with `--`. The `run_cmd` tool and configured lifecycle hooks are intentional shell-command interfaces; other subprocess calls use executable/argv arrays.
   - **Validated:** option-like refs are rejected without side effects, and valid `HEAD` refs still work for both tools.
-- [ ] **M11.4 [S] One-shot `-c` stops auto-approving everything** (F14).
+- [x] **M11.4 [S] One-shot `-c` stops auto-approving everything** (F14).
   - Tools that aren't auto-approvable run only with `--yes`.
   - Without it, skipped calls get an explanatory tool result and are listed on stderr.
-  - This is a behavior change, so update the README.
+  - **Validated:** one-shot integration tests confirm approval-gated tools are skipped with a tool result and stderr notice, and execute with `--yes`. The README documents the new behavior.
 - [ ] **M11.5 [L] Backups and `/undo`.**
   - Move backups from `<project>/.anvil/file-history` to `~/.anvil/file-history/<project-hash>/`.
   - Cap them at 20 versions per file and 50 MB in total.
