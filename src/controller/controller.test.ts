@@ -10,6 +10,7 @@ import { startMockOllama } from "../test-support/mock-ollama.js";
 import type { MockStreamServer, StreamFaultScript } from "../test-support/mock-stream-server.js";
 import { createRegistry, type Tool } from "../tools/registry.js";
 import { type AppCommandContext, createAppCommandRegistry } from "./app-commands.js";
+import { type CommandRegistry, createCommandRegistry } from "./commands.js";
 import { createSessionController, type SessionController } from "./controller.js";
 
 const servers: MockStreamServer[] = [];
@@ -34,6 +35,7 @@ const createHarness = async (
 	script: StreamFaultScript,
 	tools: Tool[] = [],
 	shutdown: () => Promise<void> = async () => undefined,
+	commands?: CommandRegistry,
 ) => {
 	const historyDir = mkdtempSync(join(tmpdir(), "anvil-controller-test-"));
 	directories.push(historyDir);
@@ -59,6 +61,7 @@ const createHarness = async (
 		engine,
 		session,
 		shutdown,
+		...(commands ? { commands } : {}),
 	});
 	controllers.push(controller);
 	return { controller, engine, historyDir, mock, session };
@@ -107,6 +110,56 @@ describe("session controller", () => {
 		).toHaveLength(3);
 
 		await controller.shutdown();
+	});
+
+	it("continues a length-truncated turn through the shared command controller", async () => {
+		const commands = createCommandRegistry([
+			{
+				name: "continue",
+				description: "Continue the previous task",
+				execute: () => ({ kind: "continue" }),
+			},
+		]);
+		const { controller, engine, mock } = await createHarness(
+			{
+				frames: [
+					{ message: { role: "assistant", content: "First part" }, done: false },
+					{
+						message: { role: "assistant", content: "" },
+						done: true,
+						done_reason: "length",
+					},
+				],
+			},
+			[],
+			async () => undefined,
+			commands,
+		);
+
+		await controller.submit("explain the design");
+		mock.setScript({ frames: assistantFrames("Second part") });
+		await controller.submit("/continue");
+
+		expect(mock.requests).toHaveLength(2);
+		expect(mock.requests[1]).toMatchObject({
+			messages: expect.arrayContaining([
+				expect.objectContaining({
+					role: "user",
+					content: expect.stringContaining("Continue exactly where you left off"),
+				}),
+			]),
+		});
+		expect(engine.messages()).toContainEqual(
+			expect.objectContaining({
+				role: "user",
+				synthetic: true,
+				content: expect.stringContaining("Continue exactly where you left off"),
+			}),
+		);
+		expect(engine.messages()).toContainEqual(
+			expect.objectContaining({ role: "assistant", content: "First part" }),
+		);
+		expect(controller.getState().streamingText).toBe("Second part");
 	});
 
 	it("rejects overlapping submits, then accepts a new turn after cancellation", async () => {

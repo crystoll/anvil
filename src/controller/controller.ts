@@ -192,6 +192,13 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 			emit({ type: "quit" });
 			return;
 		}
+		if (result?.kind === "continue") {
+			await runAgent(options.agent.continue(), {
+				phase: "streaming",
+				streamingText: "",
+			});
+			return;
+		}
 		const message = result?.kind === "submit" ? result.input : input;
 		await runAgent(options.agent.send(options.expandInput?.(message) ?? message), {
 			phase: "streaming",

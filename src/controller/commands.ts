@@ -6,6 +6,7 @@ export type CommandResult =
 			usage?: { promptTokens: number; totalTokens: number };
 	  }
 	| { kind: "submit"; input: string }
+	| { kind: "continue" }
 	| { kind: "quit" };
 
 export type CommandDefinition = {

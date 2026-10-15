@@ -538,9 +538,10 @@ type SessionController = {
   - On connection refused, a 503, or a timeout while the model loads: retry 3 times (after 2 s, 5 s, 15 s) with a visible "retrying 2/3" notice.
   - Mid-stream failures keep the partial answer (M5) and suggest `/retry`.
   - **Done:** transient failures are retried only before response output begins; cancelling backoff stops immediately, and mid-stream errors retain partial content with a `/retry` hint.
-- [ ] **M10.5 `/retry` and `/continue`.**
+- [x] **M10.5 `/retry` and `/continue`.**
   - `/retry` drops a failed or interrupted partial and re-runs the turn.
   - `/continue` grants another `max_rounds` after "Round cap reached", or continues after `finishReason: "length"`.
+  - **Done:** `/continue` now resumes the agent loop after those two explicit stop conditions; output-limit continuation adds a synthetic instruction, while round-cap continuation keeps the existing task history.
 - [ ] **M10.6 Lenient tool arguments.** Use `jsonrepair` 3.15.0 (zero dependencies) inside `parseToolArgs`.
   - It repairs trailing commas, single quotes, unquoted keys, code fences and truncated JSON.
   - If the arguments can't be repaired, return a tool error that echoes the schema and an example, so the model can self-correct.

@@ -150,6 +150,8 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 	let tokenEstimateScale = 1;
 	let calibratedProvider: Provider | undefined;
 	let calibratedModel = "";
+	let lastFinishReason: string | undefined;
+	let roundCapReached = false;
 	const recentCalls: string[] = [];
 	let originalGoal = "";
 
@@ -258,7 +260,35 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			engine.addUser(userMessage);
 			originalGoal = userMessage;
 			rounds = 0;
+			lastFinishReason = undefined;
+			roundCapReached = false;
 			recentCalls.length = 0;
+			yield* runLoop(signal);
+		});
+
+	/** Continue only after a round cap or provider output-limit truncation. */
+	const continueRun = (): AsyncGenerator<AgentEvent> =>
+		startRun(async function* (signal) {
+			if (!roundCapReached && lastFinishReason !== "length") {
+				yield {
+					kind: "error",
+					message:
+						"Nothing to continue. Continue is available after a round cap or output-limit stop.",
+				};
+				return;
+			}
+
+			const capped = roundCapReached;
+			roundCapReached = false;
+			rounds = 0;
+			recentCalls.length = 0;
+			if (!capped) {
+				engine.addUser(
+					"Continue exactly where you left off. Do not repeat the completed portion.",
+					{ synthetic: true },
+				);
+			}
+			lastFinishReason = undefined;
 			yield* runLoop(signal);
 		});
 
@@ -688,6 +718,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			if (event.kind === "overflow") overflowed = true;
 			yield event;
 		}
+		lastFinishReason = signals.finishReason;
 		calibrateTokenEstimate(signals);
 		if (overflowed && !compacted.done && !signal.aborted) {
 			compacted.done = true;
@@ -738,6 +769,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			if (action === "stop") return;
 		}
 
+		roundCapReached = true;
 		yield { kind: "error", message: `Round cap reached (${config.maxRounds})` };
 		yield setState("idle");
 	}
@@ -782,6 +814,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 
 	return {
 		send,
+		continue: continueRun,
 		approve,
 		reject,
 		cancel,

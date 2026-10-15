@@ -382,11 +382,8 @@ export const createAppCommandRegistry = (context: AppCommandContext): CommandReg
 		},
 		{
 			name: "continue",
-			description: "Continue the previous task",
-			execute: () => ({
-				kind: "submit",
-				input: "Continue the previous task from where you left off. Do not repeat completed work.",
-			}),
+			description: "Continue after a round cap or output limit",
+			execute: () => ({ kind: "continue" }),
 		},
 		{
 			name: "new",

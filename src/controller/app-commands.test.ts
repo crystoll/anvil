@@ -134,26 +134,36 @@ describe("app command registry", () => {
 		expect(engine.model()).toBe("smaller-model");
 	});
 
-	it("retries the last request without retaining its failed partial answer", async () => {
-		const { context, engine } = createHarness();
-		engine.loadMessages([
-			{ role: "system", content: "system prompt" },
-			{ role: "user", content: "first request" },
-			{ role: "assistant", content: "first answer" },
-			{ role: "user", content: "retry me" },
-			{ role: "assistant", content: "partial answer", status: "interrupted" },
-		]);
+	it.each(["interrupted", "error"] as const)(
+		"retries the last request without retaining its %s partial answer",
+		async (status) => {
+			const { context, engine } = createHarness();
+			engine.loadMessages([
+				{ role: "system", content: "system prompt" },
+				{ role: "user", content: "first request" },
+				{ role: "assistant", content: "first answer" },
+				{ role: "user", content: "retry me" },
+				{ role: "assistant", content: "partial answer", status },
+			]);
+			const commands = createAppCommandRegistry(context);
+
+			await expect(commands.dispatch("/retry")).resolves.toEqual({
+				kind: "submit",
+				input: "retry me",
+			});
+			expect(engine.messages().map(({ role, content }) => [role, content])).toEqual([
+				["system", "system prompt"],
+				["user", "first request"],
+				["assistant", "first answer"],
+			]);
+		},
+	);
+
+	it("routes /continue to the agent continuation flow", async () => {
+		const { context } = createHarness();
 		const commands = createAppCommandRegistry(context);
 
-		await expect(commands.dispatch("/retry")).resolves.toEqual({
-			kind: "submit",
-			input: "retry me",
-		});
-		expect(engine.messages().map(({ role, content }) => [role, content])).toEqual([
-			["system", "system prompt"],
-			["user", "first request"],
-			["assistant", "first answer"],
-		]);
+		await expect(commands.dispatch("/continue")).resolves.toEqual({ kind: "continue" });
 	});
 
 	it("rewinds by user turn and changes active skill and agent", async () => {

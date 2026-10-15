@@ -584,6 +584,97 @@ describe("agent loop", () => {
 		expect(loop.rounds()).toBe(3);
 	});
 
+	it("continues for another round budget after reaching the round cap", async () => {
+		const requests: Message[][] = [];
+		const provider = mockProvider(
+			[
+				toolCallChunks("call_1", "list_dir", '{"path":"."}'),
+				[{ content: "Task completed", done: false }, { done: true }],
+			],
+			(messages) => requests.push(messages),
+		);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(listDirTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 1,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		const stopped = await collect(loop.send("inspect the project"));
+		const continued = await collect(loop.continue());
+
+		expect(
+			stopped.some((event) => event.kind === "error" && event.message.includes("Round cap")),
+		).toBe(true);
+		expect(
+			continued.some((event) => event.kind === "content" && event.text === "Task completed"),
+		).toBe(true);
+		expect(requests).toHaveLength(2);
+		expect(engine.messages().filter((message) => message.role === "user")).toHaveLength(1);
+		expect(loop.rounds()).toBe(1);
+	});
+
+	it("continues a response cut short by the provider output limit", async () => {
+		const requests: Message[][] = [];
+		const provider = mockProvider(
+			[
+				[{ content: "First part", finishReason: "length", done: true }],
+				[{ content: "second part", finishReason: "stop", done: true }],
+			],
+			(messages) => requests.push(messages),
+		);
+		const engine = createEngine(provider, "test");
+		const loop = createAgentLoop(engine, createRegistry(), {
+			maxRounds: 2,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(loop.send("explain the design"));
+		const continued = await collect(loop.continue());
+
+		expect(requests).toHaveLength(2);
+		expect(requests[1]).toContainEqual(
+			expect.objectContaining({
+				role: "user",
+				synthetic: true,
+				content: expect.stringContaining("Continue exactly where you left off"),
+			}),
+		);
+		expect(continued).toContainEqual({ kind: "content", text: "second part" });
+		expect(engine.messages()).toContainEqual(
+			expect.objectContaining({ role: "assistant", content: "First part" }),
+		);
+		expect(loop.rounds()).toBe(1);
+	});
+
+	it("does not continue a turn that finished normally", async () => {
+		let requestCount = 0;
+		const provider = mockProvider([[{ content: "Done", finishReason: "stop", done: true }]], () => {
+			requestCount++;
+		});
+		const engine = createEngine(provider, "test");
+		const loop = createAgentLoop(engine, createRegistry(), {
+			maxRounds: 2,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(loop.send("finish this"));
+		const continued = await collect(loop.continue());
+
+		expect(requestCount).toBe(1);
+		expect(continued).toContainEqual(
+			expect.objectContaining({
+				kind: "error",
+				message: expect.stringContaining("Nothing to continue"),
+			}),
+		);
+		expect(engine.messages().filter((message) => message.role === "user")).toHaveLength(1);
+	});
+
 	it("handles rejection and continues", async () => {
 		const provider = mockProvider([
 			toolCallChunks("call_1", "read_file", '{"path":"secret.env"}'),
