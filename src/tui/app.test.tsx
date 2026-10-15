@@ -1,5 +1,6 @@
 import { render } from "ink-testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentEvent } from "../agent/loop.js";
 import type {
 	ControllerEvent,
 	ControllerState,
@@ -49,6 +50,9 @@ const createController = (initialState: Partial<ControllerState> = {}) => {
 		},
 		emitNotice: (message: string) => {
 			for (const listener of listeners) listener({ type: "notice", message });
+		},
+		emitAgent: (event: AgentEvent) => {
+			for (const listener of listeners) listener({ type: "agent", event });
 		},
 	};
 };
@@ -285,5 +289,61 @@ describe("TUI App", () => {
 		const screen = mountApp(controller, { initialNotices: ["Ollama unavailable"] });
 
 		expect(screen.lastFrame()).toContain("Ollama unavailable");
+	});
+
+	it("shows elapsed waiting time until the first response token", async () => {
+		vi.useFakeTimers();
+		const { controller } = createController({ phase: "streaming" });
+		const screen = mountApp(controller);
+
+		expect(screen.lastFrame()).toContain("waiting for model (loading?) 0s");
+		await vi.advanceTimersByTimeAsync(2_000);
+		expect(screen.lastFrame()).toContain("waiting for model (loading?) 2s");
+		expect(screen.lastFrame()).toContain("waiting 2s");
+	});
+
+	it("summarizes reasoning and toggles its full text with /think", async () => {
+		const { controller, emitAgent } = createController({ phase: "streaming" });
+		const screen = mountApp(controller);
+		emitAgent({ kind: "reasoning", text: "Let me reason carefully." });
+
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("thinking… ~6 tokens"));
+		expect(screen.lastFrame()).toContain("thinking… ~6 tokens · 0s");
+		screen.stdin.write("/think");
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("/think"));
+		screen.stdin.write("\r");
+
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("Let me reason carefully."));
+		screen.stdin.write("/think");
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("❯ /think"));
+		screen.stdin.write("\r");
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("thinking… ~6 tokens"));
+		expect(controller.submit).not.toHaveBeenCalled();
+	});
+
+	it("keeps reasoning elapsed time continuous across chunks", async () => {
+		vi.useFakeTimers();
+		const { controller, emitAgent } = createController({ phase: "streaming" });
+		const screen = mountApp(controller);
+		emitAgent({ kind: "reasoning", text: "First " });
+		await vi.advanceTimersByTimeAsync(50);
+		await vi.advanceTimersByTimeAsync(2_000);
+		emitAgent({ kind: "reasoning", text: "thought." });
+		await vi.advanceTimersByTimeAsync(50);
+
+		expect(screen.lastFrame()).toContain("thinking… ~4 tokens · 2s");
+	});
+
+	it("shows output throughput in the status bar", async () => {
+		const { controller, emitAgent } = createController({ phase: "streaming" });
+		const screen = mountApp(controller);
+		emitAgent({
+			kind: "usage",
+			promptTokens: 10,
+			totalTokens: 20,
+			tokensPerSecond: 12.5,
+		});
+
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("12.5 tok/s"));
 	});
 });

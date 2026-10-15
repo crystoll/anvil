@@ -44,6 +44,7 @@ export type StreamChunk = {
 export type TokenUsage = {
 	promptTokens: number;
 	totalTokens: number;
+	tokensPerSecond?: number;
 };
 
 /** Result of a non-streaming completion. */

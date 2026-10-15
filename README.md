@@ -96,6 +96,7 @@ Here are the top results: ...
 | `/rewind N`         | Rewind conversation to turn N                |
 | `/plan <task>`      | Generate plan, execute step by step          |
 | `/transcript`       | Export session as markdown                   |
+| `/think`            | Toggle full reasoning text in the TUI        |
 
 ## Keyboard Shortcuts
 

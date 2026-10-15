@@ -115,6 +115,9 @@ function StatusBar({
 	contextSize,
 	activeSkill,
 	busy,
+	phase,
+	elapsed,
+	tokensPerSecond,
 }: {
 	provider: string;
 	model: string;
@@ -123,6 +126,9 @@ function StatusBar({
 	contextSize: number;
 	activeSkill: string | undefined;
 	busy: boolean;
+	phase: string;
+	elapsed: number;
+	tokensPerSecond: number | undefined;
 }) {
 	const pct = lastPrompt > 0 ? Math.round((lastPrompt / contextSize) * 100) : 0;
 	const label = contextLabel(pct);
@@ -138,6 +144,13 @@ function StatusBar({
 				{busy ? "~" : ""}
 				{tokens} tok
 			</Text>
+			{busy && <Text> │ </Text>}
+			{busy && (
+				<Text color="yellow">
+					{phase} {elapsed}s
+				</Text>
+			)}
+			{tokensPerSecond !== undefined && <Text> │ {tokensPerSecond.toFixed(1)} tok/s</Text>}
 			{busy && <Text> │ </Text>}
 			{busy && (
 				<Text color="yellow">
@@ -214,28 +227,56 @@ type AgentEventContext = {
 	setLastPrompt: Dispatch<SetStateAction<number>>;
 	setIsThinking: Dispatch<SetStateAction<boolean>>;
 	setElapsed: Dispatch<SetStateAction<number>>;
+	setHasReceivedFirstToken: Dispatch<SetStateAction<boolean>>;
+	setReasoningText: Dispatch<SetStateAction<string>>;
+	setTokensPerSecond: Dispatch<SetStateAction<number | undefined>>;
 	onPromptUsage: (tokens: number) => void;
 	thinkingStartedAt: MutableRefObject<number | undefined>;
+	pendingReasoningText: MutableRefObject<string>;
+	reasoningFlushTimer: MutableRefObject<ReturnType<typeof setTimeout> | undefined>;
 	partialDisplayed: MutableRefObject<boolean>;
 	finishReason: MutableRefObject<string | undefined>;
 };
 
+const flushReasoningText = (
+	context: Pick<
+		AgentEventContext,
+		"reasoningFlushTimer" | "pendingReasoningText" | "setReasoningText"
+	>,
+): void => {
+	if (context.reasoningFlushTimer.current !== undefined) {
+		clearTimeout(context.reasoningFlushTimer.current);
+		context.reasoningFlushTimer.current = undefined;
+	}
+	context.setReasoningText(context.pendingReasoningText.current);
+};
+
 const handleAgentEvent = (event: AgentEvent, context: AgentEventContext): void => {
 	if (event.kind === "content") {
+		context.setHasReceivedFirstToken(true);
+		flushReasoningText(context);
 		context.thinkingStartedAt.current = undefined;
 		context.setIsThinking(false);
 		context.partialDisplayed.current = false;
 		return;
 	}
 	if (event.kind === "reasoning") {
+		context.setHasReceivedFirstToken(true);
+		context.pendingReasoningText.current += event.text;
+		if (context.reasoningFlushTimer.current === undefined) {
+			context.reasoningFlushTimer.current = setTimeout(() => {
+				flushReasoningText(context);
+			}, STREAM_FLUSH_INTERVAL_MS);
+		}
 		context.thinkingStartedAt.current ??= Date.now();
 		context.setIsThinking(true);
-		context.setElapsed(0);
+		context.setElapsed(Math.floor((Date.now() - context.thinkingStartedAt.current) / 1000));
 		return;
 	}
 	if (event.kind === "usage") {
 		context.finishReason.current = event.finishReason;
 		context.setLastPrompt(event.promptTokens);
+		context.setTokensPerSecond(event.tokensPerSecond);
 		context.onPromptUsage(event.promptTokens);
 		return;
 	}
@@ -412,6 +453,39 @@ const handleTuiInput = (value: string, key: Key, context: KeyboardContext): void
 	handleHistoryInput(key, context);
 };
 
+const streamingText = (
+	state: ReturnType<SessionController["getState"]>,
+	hasReceivedFirstToken: boolean,
+	isThinking: boolean,
+	elapsed: number,
+): string => {
+	if (state.phase !== "streaming") return "";
+	if (state.streamingText) return `anvil: ${tailLines(state.streamingText)}`;
+	if (!hasReceivedFirstToken) return `anvil: waiting for model (loading?) ${elapsed}s`;
+	return isThinking ? "" : "anvil: [generating…]";
+};
+
+const reasoningTextForDisplay = (
+	isThinking: boolean,
+	showThinking: boolean,
+	text: string,
+	elapsed: number,
+): string => {
+	if (!isThinking) return "";
+	if (showThinking) return `anvil: ${text}`;
+	return `anvil: thinking… ~${Math.ceil(text.length / 4)} tokens · ${elapsed}s`;
+};
+
+const phaseLabel = (
+	state: ReturnType<SessionController["getState"]>,
+	hasReceivedFirstToken: boolean,
+	isThinking: boolean,
+): string => {
+	if (state.phase !== "streaming") return state.phase.replaceAll("_", " ");
+	if (!hasReceivedFirstToken) return "waiting";
+	return isThinking ? "thinking" : "generating";
+};
+
 type InputAreaProps = {
 	state: ReturnType<SessionController["getState"]>;
 	picker: string[] | null;
@@ -483,6 +557,11 @@ export function App({
 	const [lastPrompt, setLastPrompt] = useState(0);
 	const [isThinking, setIsThinking] = useState(false);
 	const [elapsed, setElapsed] = useState(0);
+	const [requestElapsed, setRequestElapsed] = useState(0);
+	const [hasReceivedFirstToken, setHasReceivedFirstToken] = useState(false);
+	const [reasoningText, setReasoningText] = useState("");
+	const [showThinking, setShowThinking] = useState(false);
+	const [tokensPerSecond, setTokensPerSecond] = useState<number | undefined>(undefined);
 	const [picker, setPicker] = useState<string[] | null>(null);
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [pickerLoading, setPickerLoading] = useState(false);
@@ -492,6 +571,9 @@ export function App({
 	const historyIndex = useRef(-1);
 	const lastCtrlC = useRef(0);
 	const thinkingStartedAt = useRef<number | undefined>(undefined);
+	const requestStartedAt = useRef<number | undefined>(undefined);
+	const pendingReasoningText = useRef("");
+	const reasoningFlushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const activeTurn = useRef(false);
 	const partialDisplayed = useRef(false);
 	const finishReason = useRef<string | undefined>(undefined);
@@ -511,6 +593,8 @@ export function App({
 		finishReason.current = undefined;
 		setIsThinking(false);
 		thinkingStartedAt.current = undefined;
+		requestStartedAt.current = undefined;
+		flushReasoningText({ reasoningFlushTimer, pendingReasoningText, setReasoningText });
 	}, [addMessage, controller]);
 
 	const finishTurn = useCallback(async (): Promise<void> => {
@@ -529,6 +613,17 @@ export function App({
 	const beginStreamSegment = (): void => {
 		partialDisplayed.current = false;
 		finishReason.current = undefined;
+		thinkingStartedAt.current = undefined;
+		setIsThinking(false);
+		setElapsed(0);
+		if (reasoningFlushTimer.current !== undefined) clearTimeout(reasoningFlushTimer.current);
+		reasoningFlushTimer.current = undefined;
+		pendingReasoningText.current = "";
+		setReasoningText("");
+		setHasReceivedFirstToken(false);
+		setTokensPerSecond(undefined);
+		setRequestElapsed(0);
+		requestStartedAt.current = Date.now();
 	};
 
 	useEffect(() => {
@@ -538,8 +633,13 @@ export function App({
 			setLastPrompt,
 			setIsThinking,
 			setElapsed,
+			setHasReceivedFirstToken,
+			setReasoningText,
+			setTokensPerSecond,
 			onPromptUsage,
 			thinkingStartedAt,
+			pendingReasoningText,
+			reasoningFlushTimer,
 			partialDisplayed,
 			finishReason,
 			onExit,
@@ -548,12 +648,27 @@ export function App({
 	}, [addMessage, controller, onExit, onPromptUsage]);
 
 	useEffect(() => {
+		if (state.phase === "streaming" && requestStartedAt.current === undefined)
+			requestStartedAt.current = Date.now();
+		if (state.phase === "idle") requestStartedAt.current = undefined;
+	}, [state.phase]);
+
+	useEffect(() => {
 		const interval = setInterval(() => {
 			if (thinkingStartedAt.current !== undefined)
 				setElapsed(Math.floor((Date.now() - thinkingStartedAt.current) / 1000));
+			if (requestStartedAt.current !== undefined)
+				setRequestElapsed(Math.floor((Date.now() - requestStartedAt.current) / 1000));
 		}, 1000);
 		return () => clearInterval(interval);
 	}, []);
+
+	useEffect(
+		() => () => {
+			if (reasoningFlushTimer.current !== undefined) clearTimeout(reasoningFlushTimer.current);
+		},
+		[],
+	);
 
 	const isBusy = submitting || state.phase !== "idle";
 
@@ -622,6 +737,12 @@ export function App({
 	};
 
 	const handleSubmit = (value: string): void => {
+		if (value.trim().toLowerCase() === "/think") {
+			setInput("");
+			setShowThinking((showing) => !showing);
+			addMessage(`[reasoning: ${showThinking ? "collapsed" : "full"}]`, true);
+			return;
+		}
 		if (value.trim() === "/model") {
 			setInput("");
 			void openModelPicker();
@@ -665,14 +786,11 @@ export function App({
 		}),
 	);
 
-	const streaming =
-		state.phase === "streaming"
-			? state.streamingText
-				? `anvil: ${tailLines(state.streamingText)}`
-				: isThinking
-					? ""
-					: "anvil: [generating…]"
-			: "";
+	const streaming = streamingText(state, hasReceivedFirstToken, isThinking, requestElapsed);
+	const reasoning = streaming
+		? ""
+		: reasoningTextForDisplay(isThinking, showThinking, reasoningText, elapsed);
+	const phase = phaseLabel(state, hasReceivedFirstToken, isThinking);
 
 	return (
 		<Box flexDirection="column" height="100%">
@@ -685,7 +803,7 @@ export function App({
 			</Static>
 			<Box paddingX={1} flexDirection="column">
 				{streaming && <Text color="gray">{streaming}</Text>}
-				{isThinking && !streaming && <Text color="gray">anvil: [thinking… {elapsed}s]</Text>}
+				{reasoning && <Text color="gray">{reasoning}</Text>}
 			</Box>
 			<StatusBar
 				provider={providerName()}
@@ -695,6 +813,9 @@ export function App({
 				contextSize={contextSize}
 				activeSkill={activeSkillName()}
 				busy={isBusy}
+				phase={phase}
+				elapsed={requestElapsed}
+				tokensPerSecond={tokensPerSecond}
 			/>
 			<InputArea
 				state={state}

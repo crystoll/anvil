@@ -515,10 +515,11 @@ type SessionController = {
   - **Done:** coalesce controller state updates at 50 ms while streaming and render the latest ten lines; committed messages remain in `<Static>`.
 
   This fixes the per-token re-render flicker.
-- [ ] **M9.3 [M] Show progress so slow models don't look stuck.**
+- [x] **M9.3 [M] Show progress so slow models don't look stuck.**
   - Show reasoning as a collapsed line, "thinking… N tokens · M s"; `/think` toggles the full text. Today the TUI shows only `[thinking… Ns]`.
   - The status bar shows the phase, elapsed time, and tokens/s from Ollama's `eval_count` and `eval_duration`.
   - While waiting for the first token, show "waiting for model (loading?) 42 s".
+  - **Done:** reasoning is buffered at the TUI render cadence, displayed with an estimated token count and elapsed time, and can be expanded with `/think`. The status bar reports phase, request elapsed time, and Ollama's measured output rate; first-token waits show an explicit loading hint.
 - [ ] **M9.4 [S] Don't drop the first Enter.** In 2 of 11 automated pty runs during M0, the first Enter after launch arrived while the terminal was still in cooked mode. ink received `text\n` as typed input, so nothing was sent until the next Enter, and that message had a stray newline. The pre-M0 build does the same; the root cause is unknown.
   - **Test first** (M8.4 harness): typing `hello\n` into the prompt submits `hello`.
   - In the input's `onChange`, treat a trailing `\r` or `\n` as submit and strip it. Trim submitted values.

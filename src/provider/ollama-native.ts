@@ -113,7 +113,23 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 		if (data.prompt_eval_count == null && data.eval_count == null) return undefined;
 		const prompt = (data.prompt_eval_count as number) ?? 0;
 		const eval_ = (data.eval_count as number) ?? 0;
-		return { promptTokens: prompt, totalTokens: prompt + eval_ };
+		const usage: NonNullable<StreamChunk["usage"]> = {
+			promptTokens: prompt,
+			totalTokens: prompt + eval_,
+		};
+		const evalDuration = data.eval_duration;
+		if (
+			typeof evalDuration === "number" &&
+			Number.isFinite(evalDuration) &&
+			evalDuration > 0 &&
+			typeof eval_ === "number" &&
+			Number.isFinite(eval_) &&
+			eval_ > 0
+		) {
+			const tokensPerSecond = (eval_ / evalDuration) * 1_000_000_000;
+			if (Number.isFinite(tokensPerSecond)) usage.tokensPerSecond = tokensPerSecond;
+		}
+		return usage;
 	};
 
 	const buildChunks = (data: Record<string, unknown>): StreamChunk[] => {

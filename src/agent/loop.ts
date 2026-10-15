@@ -27,7 +27,13 @@ export type AgentEvent =
 	| { kind: "reasoning"; text: string }
 	| { kind: "pending"; call: PendingCall; index: number; total: number }
 	| { kind: "tool_result"; name: string; result: string }
-	| { kind: "usage"; promptTokens: number; totalTokens: number; finishReason?: string }
+	| {
+			kind: "usage";
+			promptTokens: number;
+			totalTokens: number;
+			tokensPerSecond?: number;
+			finishReason?: string;
+	  }
 	| { kind: "done"; message: string }
 	| { kind: "stuck"; message: string }
 	| { kind: "error"; message: string; status?: "error" | "interrupted" }
@@ -877,6 +883,9 @@ const mapStreamEvent = (event: EngineEvent, lastFinishReason?: string): AgentEve
 			kind: "usage",
 			promptTokens: event.chunk.usage.promptTokens,
 			totalTokens: event.chunk.usage.totalTokens,
+			...(event.chunk.usage.tokensPerSecond !== undefined
+				? { tokensPerSecond: event.chunk.usage.tokensPerSecond }
+				: {}),
 		};
 		if (lastFinishReason) ev.finishReason = lastFinishReason;
 		return ev;

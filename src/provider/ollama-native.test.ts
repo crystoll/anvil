@@ -65,6 +65,54 @@ describe("ollama-native provider", () => {
 			expect(done?.usage?.totalTokens).toBe(26);
 		});
 
+		it("reports output tokens per second from Ollama completion metrics", async () => {
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, () => {
+					const body = ndjson([
+						{
+							model: "m",
+							message: { role: "assistant", content: "" },
+							done: true,
+							prompt_eval_count: 10,
+							eval_count: 20,
+							eval_duration: 2_000_000_000,
+						},
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const result = await provider.streamChat("m", [{ role: "user", content: "hi" }], [], {});
+			const chunks = await collect(result._unsafeUnwrap());
+
+			expect(chunks.find((chunk) => chunk.done)?.usage?.tokensPerSecond).toBe(10);
+		});
+
+		it("omits output throughput when Ollama reports an invalid evaluation duration", async () => {
+			server.use(
+				http.post(`${BASE_URL}/api/chat`, () => {
+					const body = ndjson([
+						{
+							model: "m",
+							message: { role: "assistant", content: "" },
+							done: true,
+							prompt_eval_count: 10,
+							eval_count: 20,
+							eval_duration: 0,
+						},
+					]);
+					return new HttpResponse(body, { headers: { "Content-Type": "application/x-ndjson" } });
+				}),
+			);
+
+			const provider = createOllamaProvider("ollama", config);
+			const result = await provider.streamChat("m", [{ role: "user", content: "hi" }], [], {});
+			const chunks = await collect(result._unsafeUnwrap());
+
+			expect(chunks.find((chunk) => chunk.done)?.usage?.tokensPerSecond).toBeUndefined();
+		});
+
 		it("streams thinking as reasoning field", async () => {
 			server.use(
 				http.post(`${BASE_URL}/api/chat`, () => {

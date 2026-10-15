@@ -171,6 +171,26 @@ describe("agent loop", () => {
 		expect(loop.state()).toBe("idle");
 	});
 
+	it("forwards provider-reported output throughput with usage events", async () => {
+		const provider = mockProvider([
+			[{ done: true, usage: { promptTokens: 10, totalTokens: 20, tokensPerSecond: 12.5 } }],
+		]);
+		const loop = createAgentLoop(createEngine(provider, "test"), createRegistry(), {
+			maxRounds: 5,
+			projectRoot: "/tmp",
+			systemPrompt: "You are helpful",
+		});
+
+		const events = await collect(loop.send("hi"));
+
+		expect(events).toContainEqual({
+			kind: "usage",
+			promptTokens: 10,
+			totalTokens: 20,
+			tokensPerSecond: 12.5,
+		});
+	});
+
 	it("reports errors for partial streamed answers", async () => {
 		const requests: Message[][] = [];
 		const provider = mockProvider(
