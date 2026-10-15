@@ -84,7 +84,8 @@ Here are the top results: ...
 | ------------------- | -------------------------------------------- |
 | `/quit`, `/exit`    | Exit                                         |
 | `/new`              | Start fresh session                          |
-| `/history`          | Browse and load past sessions                |
+| `/history`          | Browse sessions (TUI picker; CLI list)       |
+| `/resume <id>`      | Resume a saved session by ID                 |
 | `/usage`            | Show session token usage                     |
 | `/context`          | Show context usage, limits, and thresholds   |
 | `/compact`          | Manually compact context (summarize history) |
@@ -100,13 +101,14 @@ Here are the top results: ...
 
 ## Keyboard Shortcuts
 
-| Key                         | Context                   | Action                  |
-| --------------------------- | ------------------------- | ----------------------- |
-| `Esc`                       | Agent running or approval | Cancel the current turn |
-| `Ctrl+C`                    | Agent running or approval | Cancel the current turn |
-| `Ctrl+C` twice within 1.5 s | TUI idle                  | Exit                    |
-| `Ctrl+C`                    | Readline CLI idle         | Exit                    |
-| `Ctrl+C` again within 0.5 s | Readline CLI after cancel | Force exit              |
+| Key                         | Context                   | Action                    |
+| --------------------------- | ------------------------- | ------------------------- |
+| `Esc`                       | Agent running or approval | Cancel the current turn   |
+| `↑` / `↓`, `Enter`, `Esc`   | Session picker            | Select, resume, or cancel |
+| `Ctrl+C`                    | Agent running or approval | Cancel the current turn   |
+| `Ctrl+C` twice within 1.5 s | TUI idle                  | Exit                      |
+| `Ctrl+C`                    | Readline CLI idle         | Exit                      |
+| `Ctrl+C` again within 0.5 s | Readline CLI after cancel | Force exit                |
 
 ## CLI Flags
 

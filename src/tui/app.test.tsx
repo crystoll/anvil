@@ -6,6 +6,7 @@ import type {
 	ControllerState,
 	SessionController,
 } from "../controller/controller.js";
+import type { SessionMeta } from "../session/session.js";
 import type { Tool } from "../tools/registry.js";
 import { App } from "./app.js";
 
@@ -16,6 +17,12 @@ const editTool: Tool = {
 	needsApproval: true,
 	timeout: 1_000,
 	execute: async () => "",
+};
+
+type RenderOptions = {
+	onExit?: () => void;
+	initialNotices?: string[];
+	listSessions?: () => SessionMeta[];
 };
 
 const createController = (initialState: Partial<ControllerState> = {}) => {
@@ -57,10 +64,7 @@ const createController = (initialState: Partial<ControllerState> = {}) => {
 	};
 };
 
-const renderApp = (
-	controller: SessionController,
-	options: { onExit?: () => void; initialNotices?: string[] } = {},
-) =>
+const renderApp = (controller: SessionController, options: RenderOptions = {}) =>
 	render(
 		<App
 			controller={controller}
@@ -68,9 +72,10 @@ const renderApp = (
 			activeSkillName={() => undefined}
 			contextSize={8_192}
 			initialNotices={options.initialNotices ?? []}
-			commandNames={["help", "model", "quit"]}
+			commandNames={["help", "history", "model", "quit", "resume"]}
 			skillNames={[]}
 			listModels={async () => []}
+			listSessions={options.listSessions ?? (() => [])}
 			onTurnComplete={async () => undefined}
 			onPromptUsage={() => undefined}
 			onExit={options.onExit ?? (() => undefined)}
@@ -79,10 +84,7 @@ const renderApp = (
 
 const screens: Array<ReturnType<typeof renderApp>> = [];
 
-const mountApp = (
-	controller: SessionController,
-	options: { onExit?: () => void; initialNotices?: string[] } = {},
-) => {
+const mountApp = (controller: SessionController, options: RenderOptions = {}) => {
 	const screen = renderApp(controller, options);
 	screens.push(screen);
 	return screen;
@@ -205,6 +207,67 @@ describe("TUI App", () => {
 		screen.stdin.write("\r");
 
 		await vi.waitFor(() => expect(controller.submit).toHaveBeenLastCalledWith("second prompt"));
+	});
+
+	it("browses saved sessions and resumes the selected session", async () => {
+		const { controller } = createController();
+		const sessions: SessionMeta[] = [
+			{ id: "first-session", updatedAt: 1, title: "First conversation" },
+			{ id: "second-session", updatedAt: 2, title: "Second conversation" },
+		];
+		const screen = mountApp(controller, { listSessions: () => sessions });
+
+		screen.stdin.write("/history\r");
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("First conversation"));
+		expect(screen.lastFrame()).toContain("Second conversation");
+
+		screen.stdin.write("\u001b[B");
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("❯ Second conversation"));
+		screen.stdin.write("\r");
+
+		await vi.waitFor(() =>
+			expect(controller.submit).toHaveBeenCalledWith("/resume second-session"),
+		);
+	});
+
+	it("reports when there are no saved sessions to browse", async () => {
+		const { controller } = createController();
+		const screen = mountApp(controller, { listSessions: () => [] });
+
+		screen.stdin.write("/history\r");
+
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("[no saved sessions]"));
+		expect(controller.submit).not.toHaveBeenCalled();
+	});
+
+	it("reports errors while listing saved sessions", async () => {
+		const { controller } = createController();
+		const screen = mountApp(controller, {
+			listSessions: () => {
+				throw new Error("history unavailable");
+			},
+		});
+
+		screen.stdin.write("/history\r");
+
+		await vi.waitFor(() =>
+			expect(screen.lastFrame()).toContain("[failed to list sessions: history unavailable]"),
+		);
+		expect(controller.submit).not.toHaveBeenCalled();
+	});
+
+	it("closes the session picker on Escape without resuming", async () => {
+		const { controller } = createController();
+		const screen = mountApp(controller, {
+			listSessions: () => [{ id: "saved-session", updatedAt: 1, title: "Saved conversation" }],
+		});
+
+		screen.stdin.write("/history\r");
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("Saved conversation"));
+		screen.stdin.write("\u001b");
+
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("❯"));
+		expect(controller.submit).not.toHaveBeenCalled();
 	});
 
 	it("renders approval queue position and edit previews", () => {

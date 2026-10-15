@@ -5,6 +5,7 @@ import { errAsync, okAsync } from "neverthrow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEngine } from "../engine/engine.js";
 import type { Provider } from "../provider/types.js";
+import { loadSession, saveSession } from "../session/session.js";
 import { createSessionWriter } from "../session/writer.js";
 import { createFileHistory } from "../tools/file-history.js";
 import { createRegistry } from "../tools/registry.js";
@@ -168,6 +169,35 @@ describe("app command registry", () => {
 		const commands = createAppCommandRegistry(context);
 
 		await expect(commands.dispatch("/continue")).resolves.toEqual({ kind: "continue" });
+	});
+
+	it("resumes a saved session and persists repaired tool history", async () => {
+		const { context, engine, session } = createHarness();
+		const sessionId = saveSession(context.historyDir, [
+			{ role: "system", content: "system prompt" },
+			{ role: "user", content: "read a file" },
+			{
+				role: "assistant",
+				content: "",
+				toolCalls: [{ id: "call-1", name: "read_file", arguments: '{"path":"notes.md"}' }],
+			},
+		])._unsafeUnwrap();
+		const commands = createAppCommandRegistry(context);
+
+		await expect(commands.dispatch(`/resume ${sessionId.slice(0, 5)}`)).resolves.toMatchObject({
+			kind: "handled",
+			message: expect.stringContaining(`Resumed session ${sessionId}`),
+		});
+
+		expect(session.id()).toBe(sessionId);
+		expect(engine.messages()).toContainEqual({
+			role: "tool",
+			toolCallId: "call-1",
+			content: "[not executed: session was interrupted]",
+		});
+		expect(loadSession(context.historyDir, sessionId)._unsafeUnwrap().messages).toEqual(
+			engine.messages(),
+		);
 	});
 
 	it("previews a session file change and restores it only after confirmation", async () => {

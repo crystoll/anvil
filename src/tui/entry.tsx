@@ -5,6 +5,7 @@ import {
 	registerUiCommands,
 } from "../controller/app-commands.js";
 import { createSessionController } from "../controller/controller.js";
+import { listSessions } from "../session/index.js";
 import { bootstrap, expandFileRefs, makeProvider, parseFlags } from "../shared/bootstrap.js";
 import { guardProcess } from "../shared/crash-guard.js";
 import { createGracefulExit } from "../shared/graceful-exit.js";
@@ -77,6 +78,7 @@ const app = render(
 		commandNames={[...commands.list().map(({ name }) => name), "exit"]}
 		skillNames={ctx.availableSkills.map((skill) => skill.name)}
 		listModels={listModels}
+		listSessions={() => listSessions(ctx.historyDir)}
 		onTurnComplete={ctx.fireStopHooks}
 		onPromptUsage={(tokens) => {
 			lastPromptTokens = tokens;

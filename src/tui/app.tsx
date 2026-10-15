@@ -17,6 +17,7 @@ import type {
 	PendingApproval,
 	SessionController,
 } from "../controller/controller.js";
+import type { SessionMeta } from "../session/session.js";
 
 type Message = { id: number; text: string; dim?: boolean };
 
@@ -32,6 +33,7 @@ export type TuiAppProps = {
 	commandNames: string[];
 	skillNames: string[];
 	listModels: () => Promise<string[]>;
+	listSessions: () => SessionMeta[];
 	onTurnComplete: () => Promise<void>;
 	onPromptUsage: (tokens: number) => void;
 	onExit: () => void;
@@ -386,23 +388,35 @@ const runControllerAction = async (
 type KeyboardContext = {
 	state: ReturnType<SessionController["getState"]>;
 	picker: string[] | null;
+	historyPicker: SessionMeta[] | null;
 	pickerIndex: number;
 	history: MutableRefObject<string[]>;
 	historyIndex: MutableRefObject<number>;
 	setPicker: Dispatch<SetStateAction<string[] | null>>;
+	setHistoryPicker: Dispatch<SetStateAction<SessionMeta[] | null>>;
 	setPickerIndex: Dispatch<SetStateAction<number>>;
 	setInput: Dispatch<SetStateAction<string>>;
 	onCtrlC: () => void;
 	onApproval: (decision: ApprovalDecision) => void;
 	onModelSelect: (model: string) => void;
+	onHistorySelect: (session: SessionMeta) => void;
 };
 
 const handlePickerInput = (key: Key, context: KeyboardContext): void => {
-	if (key.escape) context.setPicker(null);
-	else if (key.upArrow) context.setPickerIndex((index) => Math.max(0, index - 1));
+	if (key.escape) {
+		context.setPicker(null);
+		context.setHistoryPicker(null);
+	} else if (key.upArrow) context.setPickerIndex((index) => Math.max(0, index - 1));
 	else if (key.downArrow)
-		context.setPickerIndex((index) => Math.min((context.picker?.length ?? 1) - 1, index + 1));
+		context.setPickerIndex((index) =>
+			Math.min((context.historyPicker ?? context.picker ?? []).length - 1, index + 1),
+		);
 	else if (key.return) {
+		const session = context.historyPicker?.[context.pickerIndex];
+		if (session) {
+			context.onHistorySelect(session);
+			return;
+		}
 		const model = context.picker?.[context.pickerIndex];
 		if (model) context.onModelSelect(model);
 	}
@@ -438,7 +452,7 @@ const handleTuiInput = (value: string, key: Key, context: KeyboardContext): void
 		context.onCtrlC();
 		return;
 	}
-	if (context.picker) {
+	if (context.picker || context.historyPicker) {
 		handlePickerInput(key, context);
 		return;
 	}
@@ -486,9 +500,28 @@ const phaseLabel = (
 	return isThinking ? "thinking" : "generating";
 };
 
+const historyPickerRow = (session: SessionMeta, index: number, selectedIndex: number) => {
+	const details = [
+		session.title ? session.id : undefined,
+		session.status,
+		session.model,
+		session.cwd ? truncate(session.cwd, 40) : undefined,
+	]
+		.filter(Boolean)
+		.join(" · ");
+	return (
+		<Text key={session.id} {...(index === selectedIndex ? { color: "cyan" } : {})}>
+			{index === selectedIndex ? "❯ " : "  "}
+			{session.title ?? session.id}
+			{details ? <Text dimColor>{` · ${details}`}</Text> : null}
+		</Text>
+	);
+};
+
 type InputAreaProps = {
 	state: ReturnType<SessionController["getState"]>;
 	picker: string[] | null;
+	historyPicker: SessionMeta[] | null;
 	pickerIndex: number;
 	pickerLoading: boolean;
 	activeModel: string;
@@ -516,6 +549,7 @@ function InputArea({
 	picker,
 	pickerIndex,
 	pickerLoading,
+	historyPicker,
 	activeModel,
 	input,
 	setInput,
@@ -523,7 +557,12 @@ function InputArea({
 }: InputAreaProps) {
 	return (
 		<Box paddingX={1}>
-			{picker ? (
+			{historyPicker ? (
+				<Box flexDirection="column">
+					<Text dimColor>↑↓ select, Enter resume, Esc cancel</Text>
+					{historyPicker.map((session, index) => historyPickerRow(session, index, pickerIndex))}
+				</Box>
+			) : picker ? (
 				<Box flexDirection="column">
 					<Text dimColor>↑↓ select, Enter confirm, Esc cancel</Text>
 					{picker.map((model, index) => (
@@ -563,6 +602,7 @@ export function App({
 	commandNames,
 	skillNames,
 	listModels,
+	listSessions,
 	onTurnComplete,
 	onPromptUsage,
 	onExit,
@@ -581,6 +621,7 @@ export function App({
 	const [showThinking, setShowThinking] = useState(false);
 	const [tokensPerSecond, setTokensPerSecond] = useState<number | undefined>(undefined);
 	const [picker, setPicker] = useState<string[] | null>(null);
+	const [historyPicker, setHistoryPicker] = useState<SessionMeta[] | null>(null);
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [pickerLoading, setPickerLoading] = useState(false);
 	const [submitting, setSubmitting] = useState(false);
@@ -726,6 +767,7 @@ export function App({
 	};
 
 	const openModelPicker = async (): Promise<void> => {
+		setHistoryPicker(null);
 		setPickerLoading(true);
 		try {
 			const models = await listModels();
@@ -754,6 +796,39 @@ export function App({
 		});
 	};
 
+	const openHistoryPicker = (): void => {
+		setPicker(null);
+		setInput("");
+		if (isBusy) {
+			addMessage("[finish or cancel the current turn before browsing sessions]", true);
+			return;
+		}
+		try {
+			const sessions = listSessions();
+			if (sessions.length === 0) {
+				addMessage("[no saved sessions]", true);
+				return;
+			}
+			setPickerIndex(0);
+			setHistoryPicker(sessions);
+		} catch (error) {
+			addMessage(
+				`[failed to list sessions: ${error instanceof Error ? error.message : String(error)}]`,
+				true,
+			);
+		}
+	};
+
+	const selectHistorySession = async (session: SessionMeta): Promise<void> => {
+		setHistoryPicker(null);
+		await runControllerAction(() => controller.submit(`/resume ${session.id}`), {
+			setSubmitting,
+			addMessage,
+			finishStreamSegment,
+			finishTurn,
+		});
+	};
+
 	const handleSubmit = (value: string): void => {
 		if (value.trim().toLowerCase() === "/think") {
 			setInput("");
@@ -766,12 +841,17 @@ export function App({
 			void openModelPicker();
 			return;
 		}
+		if (value.trim().toLowerCase() === "/history") {
+			openHistoryPicker();
+			return;
+		}
 		void submit(value);
 	};
 
 	const handleCtrlC = (): void => {
-		if (picker) {
+		if (picker || historyPicker) {
 			setPicker(null);
+			setHistoryPicker(null);
 			return;
 		}
 		if (state.phase !== "idle" || submitting) {
@@ -792,15 +872,18 @@ export function App({
 		handleTuiInput(value, key, {
 			state,
 			picker,
+			historyPicker,
 			pickerIndex,
 			history,
 			historyIndex,
 			setPicker,
+			setHistoryPicker,
 			setPickerIndex,
 			setInput,
 			onCtrlC: handleCtrlC,
 			onApproval: (decision) => void approve(decision),
 			onModelSelect: (model) => void selectModel(model),
+			onHistorySelect: (session) => void selectHistorySession(session),
 		}),
 	);
 
@@ -840,6 +923,7 @@ export function App({
 				picker={picker}
 				pickerIndex={pickerIndex}
 				pickerLoading={pickerLoading}
+				historyPicker={historyPicker}
 				activeModel={`${providerName()}/${state.model}`}
 				input={input}
 				setInput={setInput}
