@@ -23,7 +23,7 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
-      - run: pnpm audit --audit-level=critical --prod
+      - run: pnpm audit --audit-level=high --prod
       - run: pnpm lint
       - run: pnpm check
       - run: pnpm build

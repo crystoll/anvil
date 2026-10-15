@@ -631,7 +631,8 @@ type SessionController = {
 
 - [x] **M13.1 [S] Bump the actions,** keeping SHA pins with version comments: `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0 and `pnpm/action-setup` v6.1.0. Check each changelog for breaking inputs.
   - **Done:** pinned all three actions to their release commit SHAs after reviewing changelogs and action inputs. Checkout's new fork restriction does not affect this workflow's `push`/`pull_request` triggers; setup-node's removed dummy auth token is irrelevant because no registry is configured; pnpm/action-setup v6.1.0 supports the package's pnpm 12 version.
-- [ ] **M13.2 [S] Node matrix `[22.x, 24.x]`,** with pnpm taken from `packageManager`.
+- [x] **M13.2 [S] Node matrix `[22.x, 24.x]`,** with pnpm taken from `packageManager`.
+  - **Done:** CI now runs the check job on both Node 22.x and 24.x; pnpm continues to be resolved from `packageManager`. GitHub CI #95 passed on both versions.
 - [ ] **M13.3 [XS] Raise the audit gate** to `--audit-level=high --prod`. The production tree is small after M1.
 - [ ] **M13.4 [S] Run `pnpm test:integration` in CI.** It uses mock servers only, so no model is needed.
 - [ ] **M13.5 [M] Renovate** (P1 in `docs/ideas.md`):
