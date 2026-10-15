@@ -129,32 +129,40 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
 
 ## Milestones
 
-| Milestone                                | Est.  | Depends on        | Priority |
-| ---------------------------------------- | ----- | ----------------- | -------- |
-| M0 Unblock CI, hygiene, safe minors      | 0.5 d | none              | P0       |
-| M1 MCP client v2 migration               | 1 d   | M0                | P0       |
-| M2 Test tooling majors (Vitest 5, MSW 3) | 0.5 d | M0                | P1       |
-| M3 Stop the hangs and crashes            | 1.5 d | M0 (M2 preferred) | P0       |
-| M4 Never lose a session                  | 1 d   | M3                | P0       |
-| M5 Honest streams                        | 1.5 d | M2                | P0       |
-| M6 Agent loop integrity                  | 2 d   | M5                | P0       |
-| M7 Cancellation all the way down         | 1.5 d | M6                | P1       |
-| M8 Shared session controller, thin UIs   | 4 d   | M4, M6, M7        | P1       |
-| M9 ink 8 and rendering                   | 1 d   | M8                | P2       |
-| M10 Small-model ergonomics               | 3.5 d | M5, M6            | P1       |
-| M11 Safety hardening                     | 1.5 d | M7                | P1       |
-| M12 Persistence UX                       | 1.5 d | M4, M8            | P2       |
-| M13 CI and maintenance                   | 0.5 d | M1, M2            | P2       |
+| Milestone                                | Depends on        | Priority |
+| ---------------------------------------- | ----------------- | -------- |
+| M0 Unblock CI, hygiene, safe minors      | none              | P0       |
+| M1 MCP client v2 migration               | M0                | P0       |
+| M2 Test tooling majors (Vitest 5, MSW 3) | M0                | P1       |
+| M3 Stop the hangs and crashes            | M0 (M2 preferred) | P0       |
+| M4 Never lose a session                  | M3                | P0       |
+| M5 Honest streams                        | M2                | P0       |
+| M6 Agent loop integrity                  | M5                | P0       |
+| M7 Cancellation all the way down         | M6                | P1       |
+| M8 Shared session controller, thin UIs   | M4, M6, M7        | P1       |
+| M9 ink 8 and rendering                   | M8                | P2       |
+| M10 Small-model ergonomics               | M5, M6            | P1       |
+| M11 Safety hardening                     | M7                | P1       |
+| M12 Persistence UX                       | M4, M8            | P2       |
+| M13 CI and maintenance                   | M1, M2            | P2       |
 
-The total is about 21.5 focused days.
+**Relative sizing:** XS is a tiny, localized change; S is one narrow behavior with focused tests; M is comparable to completed **M10.3 real token accounting**, our medium-size benchmark; L spans several interacting paths or user-facing behavior. These sizes describe relative scope and risk, not time commitments. The completed work (M0–M8, M10, and M11.1–M11.3) took less than two days.
 
-- Suggested order for one person: M0, M2, M3, M4, M1, M5, M6, M7, M8, then M10, M11, M9 and M12. This puts the hang, crash and session-loss fixes first. M13 fits anywhere after M1 and M2.
-- The longest dependency chain is M0 → M2 → M5 → M6 → M7 → M8 → M12 (11.5 d). M1, M3 and M4 can run alongside it.
-- M10.1 (Ollama options, about 3 h) can be pulled forward at any time.
+**Suggested remaining-work order:**
+
+1. Finish **M11.4 [S]**, then **M11.5 [L]**, to complete the safety work. Validate one-shot approval behavior and backup creation, pruning, and undo.
+2. Do **M13.1–M13.4** as an early CI safety net (mostly **[S]**, with **M13.3 [XS]**): refresh pinned Actions after reviewing changelogs, add Node 22/24, raise the production audit gate, and run integration tests in CI.
+3. Implement **M12.1 [M]** and **M12.2 [M]**: add backward-compatible session metadata, then project-aware and ID-based resume.
+4. Complete **M9**: upgrade Ink (**M9.1 [S]**), improve streaming (**M9.2 [L]**) and slow-model progress (**M9.3 [M]**), and fix first-Enter handling (**M9.4 [S]**). Finish this TUI foundation before adding the history picker.
+5. Finish **M12.3 [L]**, **M12.4 [S]**, and **M12.5 [S]**: add history browsing and interrupted-session notice, then measure listing performance; add an index only if it crosses the documented thresholds.
+6. Do **M13.5 Renovate [M]** after CI is stable, so automatic updates are governed by the completed checks.
+
+- The longest dependency chain is M0 → M2 → M5 → M6 → M7 → M8 → M12. M1, M3 and M4 can run alongside it.
+- M10.1 (Ollama options) is a completed example of a small, independent improvement.
 
 ---
 
-## M0 — Unblock CI, hygiene, safe minors (0.5 d)
+## M0 — Unblock CI, hygiene, safe minors
 
 - [x] **M0.1 Clear the critical advisory now.** Add the override `proxy-addr: '>=2.0.8'` to `pnpm-workspace.yaml`.
   - Express 5.2.1 accepts `^2.0.7`, and 2.0.8 was published on 2026-09-15.
@@ -182,7 +190,7 @@ The total is about 21.5 focused days.
 1. The full gate passes, including `pnpm audit --audit-level=critical --prod` exiting 0.
 2. Push and see CI go green.
 
-## M1 — MCP client v2 migration (1 d)
+## M1 — MCP client v2 migration
 
 **Why:** this clears the critical advisory and most of the highs.
 
@@ -219,7 +227,7 @@ The total is about 21.5 focused days.
    - An Obsidian tool call works.
    - A broken server entry shows a notice without slowing startup.
 
-## M2 — Test tooling majors (0.5 d)
+## M2 — Test tooling majors
 
 Do this before writing the many new tests in M3–M8.
 
@@ -242,7 +250,7 @@ Do this before writing the many new tests in M3–M8.
 
 **Validation stop:** the gate passes, and the coverage baseline is recorded.
 
-## M3 — Stop the hangs and crashes (1.5 d)
+## M3 — Stop the hangs and crashes
 
 - [x] **M3.1 LSP fails soft** (F4).
   - **Test first,** using a fake LSP fixture (Content-Length-framed stdio, `src/test-support/fake-lsp-server.mjs`):
@@ -301,7 +309,7 @@ Do this before writing the many new tests in M3–M8.
 
 **Validation stop:** the gate passes, plus S2, S3 and S6.
 
-## M4 — Never lose a session (1 d)
+## M4 — Never lose a session
 
 - [x] **M4.1 Atomic saves.**
   - **Test first:** a failed write returns `err` and leaves the previous file intact. No temp file is left behind, even when the rename fails, and listing skips temp files left by a crashed save.
@@ -328,7 +336,7 @@ Do this before writing the many new tests in M3–M8.
 
 **Validation stop:** the gate passes, plus S4 and S6. For S4, use `kill <pid>` mid-stream: the user message must persist and the file must be valid JSON.
 
-## M5 — Honest streams (1.5 d)
+## M5 — Honest streams
 
 **Rule:** every stream ends with exactly one terminal chunk. It is either `done` with a `finishReason` (`stop`, `length` or `tool_calls`) or `done` with an `error`. Add `{ kind: "cancelled" }` to `ProviderError`.
 
@@ -361,7 +369,7 @@ Do this before writing the many new tests in M3–M8.
 
 **Validation stop:** the gate passes, including the first `pnpm test:integration` run, plus S1. Partial answers must be labeled, and the next message must work. The TUI Escape cancellation smoke was confirmed manually on 2026-10-14.
 
-## M6 — Agent loop integrity (2 d)
+## M6 — Agent loop integrity
 
 - [x] **M6.1 Turn-scoped cancellation** (F1, F12).
   - Replace the shared `cancelled` boolean with one `AbortController` per `send`, `approve` or `reject` run, and pass its signal to `engine.stream` (`StreamOptions.signal` already exists).
@@ -402,7 +410,7 @@ Do this before writing the many new tests in M3–M8.
 
 **Validation stop:** the gate passes, plus S1, S5 and S2. Run S2 against LiteLLM too: no HTTP 400. Repeat S5 after `/model <other-provider>/<model>`.
 
-## M7 — Cancellation all the way down (1.5 d)
+## M7 — Cancellation all the way down
 
 - [x] **M7.1 Tool context.** Thread `execute(args, { signal, projectRoot })` through the registry and `executeTool`. An aborted tool returns `"[cancelled by user]"`.
 - [x] **M7.2 `run_cmd`** (F7, F19).
@@ -429,7 +437,7 @@ Do this before writing the many new tests in M3–M8.
 
 **Validation stop:** the gate passes, plus S2 and S1 during a slow `run_cmd` such as `sleep 60`.
 
-## M8 — Shared session controller, thin TUI and CLI (4 d)
+## M8 — Shared session controller, thin TUI and CLI
 
 The target API lives in `src/controller/`. It is headless and is the only owner of turn orchestration:
 
@@ -491,33 +499,33 @@ type SessionController = {
 
 **Manual validation:** User confirmed S1–S6 pass in both UIs on 2026-10-14.
 
-## M9 — ink 8 and rendering (1 d)
+## M9 — ink 8 and rendering
 
-- [ ] **M9.1 Upgrade `ink` from 7.1.1 to 8.0.0.** `ink-text-input` 6 and `ink-spinner` 5 stay, since their peer ranges are satisfied (verified). None of the breaking changes touch today's code; keep it that way in M8:
+- [ ] **M9.1 [S] Upgrade `ink` from 7.1.1 to 8.0.0.** `ink-text-input` 6 and `ink-spinner` 5 stay, since their peer ranges are satisfied (verified). None of the breaking changes touch today's code; keep it that way in M8:
   - React 19.3+ is required (done in M0.4).
   - stdin, stdout and stderr are typed as generic streams, without `columns`. Nothing uses `useStdout` or `useStdin`; the status bar reads `process.stdout`.
   - `useInput` drops unrecognized control sequences.
   - `Box` `minWidth` and `maxWidth` accept numbers only. Neither is used.
 
   ink 8 also fixes several `<Static>` and scrollback bugs, which helps M9.2. Then run the M8.4 tests.
-- [ ] **M9.2 Streaming render.**
+- [ ] **M9.2 [L] Streaming render.**
   - Buffer tokens in a ref and flush at no more than 20 fps.
   - Keep committed messages in `<Static>`.
   - Show only the tail lines while streaming.
 
   This fixes the per-token re-render flicker.
-- [ ] **M9.3 Show progress so slow models don't look stuck.**
+- [ ] **M9.3 [M] Show progress so slow models don't look stuck.**
   - Show reasoning as a collapsed line, "thinking… N tokens · M s"; `/think` toggles the full text. Today the TUI shows only `[thinking… Ns]`.
   - The status bar shows the phase, elapsed time, and tokens/s from Ollama's `eval_count` and `eval_duration`.
   - While waiting for the first token, show "waiting for model (loading?) 42 s".
-- [ ] **M9.4 Don't drop the first Enter.** In 2 of 11 automated pty runs during M0, the first Enter after launch arrived while the terminal was still in cooked mode. ink received `text\n` as typed input, so nothing was sent until the next Enter, and that message had a stray newline. The pre-M0 build does the same; the root cause is unknown.
+- [ ] **M9.4 [S] Don't drop the first Enter.** In 2 of 11 automated pty runs during M0, the first Enter after launch arrived while the terminal was still in cooked mode. ink received `text\n` as typed input, so nothing was sent until the next Enter, and that message had a stray newline. The pre-M0 build does the same; the root cause is unknown.
   - **Test first** (M8.4 harness): typing `hello\n` into the prompt submits `hello`.
   - In the input's `onChange`, treat a trailing `\r` or `\n` as submit and strip it. Trim submitted values.
   - Recheck in a real terminal after M9.1.
 
 **Validation stop:** the gate passes, plus S1 and S6, and a long streaming answer shows no flicker or scrollback corruption. The first message after launch is sent on the first Enter.
 
-## M10 — Small-model ergonomics (3.5 d; ship each item on its own, in this order)
+## M10 — Small-model ergonomics (ship each item on its own, in this order)
 
 - [x] **M10.1 Consistent Ollama options** (F11). Every request (`streamChat`, `completeChat`, compaction) sends the same `options.num_ctx`, plus:
   - `options.temperature` and `options.num_predict` from `maxTokens`.
@@ -528,7 +536,7 @@ type SessionController = {
 - [x] **M10.2 One source of timeout defaults.**
   - Split `first_token_timeout` (model load plus prompt eval; 300 s by default for local models) from `stream_timeout` (stall between chunks; 120 s); keep `connect_timeout` separate.
   - **Done:** shared constants now supply config and provider defaults; streaming applies the first-token timeout before its first response chunk and the stream timeout thereafter. Non-streaming completions receive a bounded budget for all three phases.
-- [x] **M10.3 Real token accounting.**
+- [x] **M10.3 Real token accounting (medium-size benchmark).**
   - Calibrate the chars/4 estimate with `prompt_eval_count` and `eval_count`, or OpenAI's `usage`.
   - Compact proactively at about 80 % of `num_ctx`.
   - Treat `prompt_eval_count` at 95 % of `num_ctx` or more as an overflow: Ollama silently drops the oldest tokens, including the system prompt.
@@ -583,7 +591,7 @@ type SessionController = {
 2. S5 passes, with `ollama ps` showing a single load across compaction.
 3. A small model such as `qwen3-agentic` completes a multi-file edit task.
 
-## M11 — Safety hardening (1.5 d)
+## M11 — Safety hardening
 
 - [x] **M11.1 Path confinement.**
   - File and LSP paths resolve canonical targets, including `~`, parent traversal, and symlinks. Read-only tools auto-approve only inside the project; outside targets require approval. Glob results outside the project are omitted.
@@ -594,11 +602,11 @@ type SessionController = {
 - [x] **M11.3 No argument injection.**
   - **Change:** `git_diff` and `git_log` reject refs that start with `-` and separate valid refs from path arguments with `--`. The `run_cmd` tool and configured lifecycle hooks are intentional shell-command interfaces; other subprocess calls use executable/argv arrays.
   - **Validated:** option-like refs are rejected without side effects, and valid `HEAD` refs still work for both tools.
-- [ ] **M11.4 One-shot `-c` stops auto-approving everything** (F14).
+- [ ] **M11.4 [S] One-shot `-c` stops auto-approving everything** (F14).
   - Tools that aren't auto-approvable run only with `--yes`.
   - Without it, skipped calls get an explanatory tool result and are listed on stderr.
   - This is a behavior change, so update the README.
-- [ ] **M11.5 Backups and `/undo`.**
+- [ ] **M11.5 [L] Backups and `/undo`.**
   - Move backups from `<project>/.anvil/file-history` to `~/.anvil/file-history/<project-hash>/`.
   - Cap them at 20 versions per file and 50 MB in total.
   - `/undo` restores the last write or edit from this session, after confirmation.
@@ -606,25 +614,25 @@ type SessionController = {
 
 **Validation stop:** the gate passes, plus S2 and S3, and an `-c` run without `--yes` shows the `run_cmd` call as skipped.
 
-## M12 — Persistence UX (1.5 d)
+## M12 — Persistence UX
 
-- [ ] **M12.1 Session metadata.** Add `cwd`, `provider`, `model`, `agent`, `skill`, a `title` (the first user message, up to 60 characters) and a `status` (`complete`, `interrupted` or `error`). The loader stays backward compatible.
-- [ ] **M12.2 Resume per project.** `--resume` picks the latest session for this project root, falling back to the global latest with a notice. `--resume <id>` picks a specific session.
-- [ ] **M12.3 Browse and resume past sessions.**
+- [ ] **M12.1 [M] Session metadata.** Add `cwd`, `provider`, `model`, `agent`, `skill`, a `title` (the first user message, up to 60 characters) and a `status` (`complete`, `interrupted` or `error`). The loader stays backward compatible.
+- [ ] **M12.2 [M] Resume per project.** `--resume` picks the latest session for this project root, falling back to the global latest with a notice. `--resume <id>` picks a specific session.
+- [ ] **M12.3 [L] Browse and resume past sessions.**
   - In the TUI, `/history` opens an arrow-key picker that loads the chosen session, repairing it on load (M4.4).
   - `/resume <id>` works in both UIs.
-- [ ] **M12.4 Startup notice** when the latest session for this project ended mid-turn: "Last session was interrupted — /resume to continue".
-- [ ] **M12.5 Measure `listSessions`,** which parses every file. Add an index only past 200 sessions or 200 ms; until then, YAGNI.
+- [ ] **M12.4 [S] Startup notice** when the latest session for this project ended mid-turn: "Last session was interrupted — /resume to continue".
+- [ ] **M12.5 [S] Measure `listSessions`,** which parses every file. Add an index only past 200 sessions or 200 ms; until then, YAGNI. If indexing is needed, size that follow-up after measurement.
 
 **Validation stop:** the gate passes, plus S4 and S6, and resuming works from another directory.
 
-## M13 — CI and maintenance (0.5 d)
+## M13 — CI and maintenance
 
-- [ ] **M13.1 Bump the actions,** keeping SHA pins with version comments: `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0 and `pnpm/action-setup` v6.1.0. Check each changelog for breaking inputs.
-- [ ] **M13.2 Node matrix `[22.x, 24.x]`,** with pnpm taken from `packageManager`.
-- [ ] **M13.3 Raise the audit gate** to `--audit-level=high --prod`. The production tree is small after M1.
-- [ ] **M13.4 Run `pnpm test:integration` in CI.** It uses mock servers only, so no model is needed.
-- [ ] **M13.5 Renovate** (P1 in `docs/ideas.md`):
+- [ ] **M13.1 [S] Bump the actions,** keeping SHA pins with version comments: `actions/checkout` v7.0.1, `actions/setup-node` v7.1.0 and `pnpm/action-setup` v6.1.0. Check each changelog for breaking inputs.
+- [ ] **M13.2 [S] Node matrix `[22.x, 24.x]`,** with pnpm taken from `packageManager`.
+- [ ] **M13.3 [XS] Raise the audit gate** to `--audit-level=high --prod`. The production tree is small after M1.
+- [ ] **M13.4 [S] Run `pnpm test:integration` in CI.** It uses mock servers only, so no model is needed.
+- [ ] **M13.5 [M] Renovate** (P1 in `docs/ideas.md`):
   - Group minor and patch updates.
   - One PR per major.
   - `minimumReleaseAge: "3 days"`.
