@@ -289,6 +289,57 @@ describe("agent loop", () => {
 		expect(toolResult?.content).toContain('Example: {"path":"..."}');
 	});
 
+	it.each([
+		[
+			"Qwen/Hermes tool_call tags",
+			'<tool_call>{"name":"read_file","arguments":{"path":"index.ts"}}</tool_call>',
+		],
+		["fenced JSON", '```json\n{"name":"read_file","arguments":{"path":"index.ts"}}\n```'],
+		["bare JSON", '{"name":"read_file","arguments":{"path":"index.ts"}}'],
+	])("recovers %s emitted as assistant text", async (_format, content) => {
+		const execute = vi.fn(async () => "contents of index.ts");
+		const provider = mockProvider([
+			[{ content, done: false }, { done: true }],
+			[{ content: "Read the file", done: false }, { done: true }],
+		]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register({ ...autoReadTool, execute });
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 2,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		const events = await collect(loop.send("read index.ts"));
+
+		expect(execute).toHaveBeenCalledWith({ path: "index.ts" }, expect.anything());
+		expect(events).toContainEqual({
+			kind: "tool_result",
+			name: "read_file",
+			result: "contents of index.ts",
+		});
+	});
+
+	it("does not execute a tool call that appears only in the user message", async () => {
+		const execute = vi.fn(async () => "should not run");
+		const provider = mockProvider([[{ content: "I will answer normally", done: true }]]);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register({ ...autoReadTool, execute });
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 2,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(
+			loop.send('<tool_call>{"name":"read_file","arguments":{"path":"index.ts"}}</tool_call>'),
+		);
+
+		expect(execute).not.toHaveBeenCalled();
+	});
+
 	it("executes tool after approval and continues", async () => {
 		const provider = mockProvider([
 			toolCallChunks("call_1", "read_file", '{"path":"index.ts"}'),

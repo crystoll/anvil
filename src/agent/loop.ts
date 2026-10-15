@@ -609,23 +609,38 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		return true;
 	};
 
-	/** Attempt to recover a tool call from content (LiteLLM streaming quirk). */
+	const extractToolCallText = (content: string): string => {
+		const trimmed = content.trim();
+		const tagged = trimmed.match(/^<tool_call>\s*([\s\S]*?)\s*<\/tool_call>$/i);
+		if (tagged?.[1] !== undefined) return tagged[1].trim();
+		const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+		return fenced?.[1]?.trim() ?? trimmed;
+	};
+
+	const parseAssistantToolCall = (
+		content: string,
+	): { name: string; arguments: string } | undefined => {
+		const candidate = extractToolCallText(content);
+		if (!candidate.startsWith("{") || !candidate.endsWith("}")) return undefined;
+		const parsed = parseToolArgs(candidate);
+		if (parsed.isErr()) return undefined;
+
+		const name = parsed.value.name;
+		if (typeof name !== "string" || !name.trim()) return undefined;
+		const args = parsed.value.arguments ?? parsed.value.parameters ?? {};
+		const serializedArgs = typeof args === "string" ? args : JSON.stringify(args);
+		return serializedArgs === undefined
+			? undefined
+			: { name: name.trim(), arguments: serializedArgs };
+	};
+
+	/** Recover structured tool calls that some local models emit as assistant text. */
 	const tryRecoverToolCall = (): boolean => {
 		const msgs = engine.messages();
 		const last = msgs[msgs.length - 1];
 		if (last?.role !== "assistant" || last.toolCalls?.length || !last.content) return false;
-		try {
-			const parsed = JSON.parse(last.content.trim());
-			if (typeof parsed.name !== "string") return false;
-			const args = parsed.arguments ?? parsed.parameters ?? {};
-			return engine.rewriteLastAsToolCall({
-				id: `recovered-${Date.now()}`,
-				name: parsed.name,
-				arguments: JSON.stringify(args),
-			});
-		} catch {
-			return false;
-		}
+		const call = parseAssistantToolCall(last.content);
+		return call ? engine.rewriteLastAsToolCall({ id: `recovered-${Date.now()}`, ...call }) : false;
 	};
 
 	const checkIdle = (nudged: boolean): "nudge" | "idle" | undefined => {

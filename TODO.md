@@ -548,7 +548,8 @@ type SessionController = {
   - This also makes the "lenient parsing" claim in `docs/architecture.md` true.
   - **Test first:** a table of malformed inputs.
   - **Done:** common malformed JSON is repaired before tool execution; unrecoverable or non-object arguments return the tool schema and a required-fields example to the model.
-- [ ] **M10.7 Recover tool calls written as text.** Handle `<tool_call>{…}</tool_call>` (Qwen/Hermes), fenced JSON and bare `{"name", "arguments"}` objects, in assistant messages only. **Test first:** one fixture per format.
+- [x] **M10.7 Recover tool calls written as text.** Handle `<tool_call>{…}</tool_call>` (Qwen/Hermes), fenced JSON and bare `{"name", "arguments"}` objects, in assistant messages only. **Test first:** one fixture per format.
+  - **Done:** the agent recognizes complete tagged, fenced and bare JSON calls in assistant messages, including repaired JSON syntax; user messages are never interpreted as tool calls.
 - [ ] **M10.8 More tolerant `edit_file`.**
   - Normalize CRLF.
   - Match in three passes: exact, then line-trimmed, then whitespace-normalized.
