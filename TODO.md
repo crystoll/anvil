@@ -591,9 +591,9 @@ type SessionController = {
 - [x] **M11.2 `web_fetch` needs approval** unless the exact hostname is listed in `web.allow_domains`.
   - Subdomains are separate entries; redirects from allowlisted hosts are followed only to other listed hosts.
   - **Validated:** empty and configured allowlists, unlisted/subdomain/unsupported URL approval, and redirect enforcement.
-- [ ] **M11.3 No argument injection.**
-  - **Change:** `git_diff` rejects refs that start with `-` and uses a `--` separator. Every tool passes argv arrays to `execFile` or `spawn`, never interpolating into a shell string.
-  - **Test first:** `--output=/tmp/x` is rejected.
+- [x] **M11.3 No argument injection.**
+  - **Change:** `git_diff` and `git_log` reject refs that start with `-` and separate valid refs from path arguments with `--`. The `run_cmd` tool and configured lifecycle hooks are intentional shell-command interfaces; other subprocess calls use executable/argv arrays.
+  - **Validated:** option-like refs are rejected without side effects, and valid `HEAD` refs still work for both tools.
 - [ ] **M11.4 One-shot `-c` stops auto-approving everything** (F14).
   - Tools that aren't auto-approvable run only with `--yes`.
   - Without it, skipped calls get an explanatory tool result and are listed on stderr.

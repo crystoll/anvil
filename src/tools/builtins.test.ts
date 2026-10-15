@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+	existsSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -16,6 +17,7 @@ import {
 	createWebFetchTool,
 	editFileTool,
 	gitDiff,
+	gitLog,
 	glob,
 	listDir,
 	readFileTool,
@@ -375,5 +377,69 @@ describe("bounded reads", () => {
 
 		expect(result.length).toBeLessThanOrEqual(20_000);
 		expect(result).toContain("diff truncated");
+	});
+});
+
+describe("git ref safety", () => {
+	it("rejects option-like git_diff refs before they reach git", async () => {
+		const outputPath = join(ROOT, "injected.diff");
+		execFileSync("git", ["init", "--quiet"], { cwd: ROOT });
+		writeFileSync(join(ROOT, "tracked.txt"), "before");
+		execFileSync("git", ["add", "tracked.txt"], { cwd: ROOT });
+		writeFileSync(join(ROOT, "tracked.txt"), "after");
+
+		const result = await gitDiff.execute({ ref: `--output=${outputPath}` }, context);
+
+		expect(result).toContain("Error:");
+		expect(existsSync(outputPath)).toBe(false);
+	});
+
+	it("rejects option-like git_log refs", async () => {
+		const result = await gitLog.execute({ ref: "--all" }, context);
+
+		expect(result).toContain("Error:");
+	});
+
+	it("supports valid git refs with option separators", async () => {
+		execFileSync("git", ["init", "--quiet"], { cwd: ROOT });
+		execFileSync(
+			"git",
+			[
+				"-c",
+				"user.name=Test",
+				"-c",
+				"user.email=test@example.com",
+				"commit",
+				"--allow-empty",
+				"--quiet",
+				"-m",
+				"initial",
+			],
+			{ cwd: ROOT },
+		);
+
+		const log = await gitLog.execute({ ref: "HEAD" }, context);
+		expect(log).toContain("initial");
+
+		writeFileSync(join(ROOT, "tracked.txt"), "before");
+		execFileSync("git", ["add", "tracked.txt"], { cwd: ROOT });
+		execFileSync(
+			"git",
+			[
+				"-c",
+				"user.name=Test",
+				"-c",
+				"user.email=test@example.com",
+				"commit",
+				"--quiet",
+				"-m",
+				"file",
+			],
+			{ cwd: ROOT },
+		);
+		writeFileSync(join(ROOT, "tracked.txt"), "after");
+
+		const diff = await gitDiff.execute({ ref: "HEAD" }, context);
+		expect(diff).toContain("+after");
 	});
 });

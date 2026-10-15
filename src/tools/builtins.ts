@@ -870,8 +870,11 @@ export const gitDiff: Tool = {
 	timeout: 10_000,
 	execute: async (args, context) => {
 		const cmd = ["diff"];
+		const ref = args.ref ? String(args.ref) : "";
+		if (ref.startsWith("-")) return "Error: git_diff ref must not start with '-'";
 		if (args.staged) cmd.push("--cached");
-		if (args.ref) cmd.push(String(args.ref));
+		if (ref) cmd.push(ref);
+		cmd.push("--");
 		const output = await gitExec(cmd, context.projectRoot);
 		if (output.length <= MAX_GIT_DIFF_OUTPUT_LENGTH) return output;
 		const truncationNote = `\n… git diff truncated at ${MAX_GIT_DIFF_OUTPUT_LENGTH} characters`;
@@ -892,7 +895,9 @@ export const gitLog: Tool = {
 	execute: async (args, context) => {
 		const count = Math.min(50, Math.max(1, Number(args.count) || 10));
 		const cmd = ["log", "--oneline", `-${count}`];
-		if (args.ref) cmd.push(String(args.ref));
+		const ref = args.ref ? String(args.ref) : "";
+		if (ref.startsWith("-")) return "Error: git_log ref must not start with '-'";
+		if (ref) cmd.push(ref, "--");
 		return gitExec(cmd, context.projectRoot);
 	},
 };
