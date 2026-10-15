@@ -568,13 +568,14 @@ type SessionController = {
   - Return `file:line: text`, capped at 100 lines.
   - Report real errors instead of "No matches".
   - **Done:** search uses fixed-string matching by default, supports regex opt-in, falls back across available search commands, excludes generated/dependency directories, caps output at 100 matches, and reports command failures.
-- [ ] **M10.11 Bounded reads.**
+- [x] **M10.11 Bounded reads.**
   - `read_file`:
     - gets `offset` and `limit`.
     - is capped at 2,000 lines or 100 KB, with a "truncated, continue with offset=…" note.
     - refuses binary files (NUL bytes).
-  - `list_dir` and `glob` get caps and truncation notes.
-  - `git_diff` output gets a cap.
+  - `list_dir` and `glob` get caps and truncation notes (100 results).
+  - `git_diff` output gets a cap (20,000 characters).
+  - **Done:** file reads honor pagination and are capped by lines and UTF-8 bytes, binary files are rejected, directory/glob results report truncation after 100, and git diffs are capped at 20,000 characters.
 
 **Validation stop:**
 

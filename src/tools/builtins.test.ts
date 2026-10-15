@@ -1,8 +1,17 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { editFileTool, search, writeFileTool } from "./builtins.js";
+import {
+	editFileTool,
+	gitDiff,
+	glob,
+	listDir,
+	readFileTool,
+	search,
+	writeFileTool,
+} from "./builtins.js";
 
 const ROOT = join(tmpdir(), "anvil-builtins-test");
 const context = { projectRoot: ROOT, signal: new AbortController().signal };
@@ -194,5 +203,101 @@ describe("search", () => {
 
 	it("rejects an empty query", async () => {
 		await expect(search.execute({ query: "" }, context)).rejects.toThrow(/must not be empty/);
+	});
+});
+
+describe("bounded reads", () => {
+	it("reads the requested offset and limit and points to the next page", async () => {
+		writeFileSync(join(ROOT, "pages.txt"), "alpha\nbeta\ngamma\ndelta");
+
+		const result = await readFileTool.execute({ path: "pages.txt", offset: 2, limit: 2 }, context);
+
+		expect(result).toContain("2: beta");
+		expect(result).toContain("3: gamma");
+		expect(result).not.toContain("4: delta");
+		expect(result).toContain("continue with offset=4");
+	});
+
+	it("reports when an offset is beyond the end of a file", async () => {
+		writeFileSync(join(ROOT, "short.txt"), "one\ntwo");
+
+		const result = await readFileTool.execute({ path: "short.txt", offset: 10 }, context);
+
+		expect(result).toContain("No lines at offset 10");
+	});
+
+	it("caps read_file output at 2,000 lines", async () => {
+		writeFileSync(
+			join(ROOT, "many-lines.txt"),
+			Array.from({ length: 2005 }, (_, index) => `line-${index + 1}`).join("\n"),
+		);
+
+		const result = await readFileTool.execute({ path: "many-lines.txt", limit: 2000 }, context);
+
+		expect(result).toContain("2000: line-2000");
+		expect(result).not.toContain("2001: line-2001");
+		expect(result).toContain("continue with offset=2001");
+	});
+
+	it("caps read_file output at 100 KB", async () => {
+		writeFileSync(
+			join(ROOT, "many-bytes.txt"),
+			Array.from({ length: 1500 }, () => "x".repeat(100)).join("\n"),
+		);
+
+		const result = await readFileTool.execute({ path: "many-bytes.txt", limit: 2000 }, context);
+
+		expect(Buffer.byteLength(result, "utf8")).toBeLessThanOrEqual(100 * 1024);
+		expect(result).toContain("continue with offset=");
+	});
+
+	it("clips a single line that exceeds the read_file byte cap", async () => {
+		writeFileSync(join(ROOT, "long-line.txt"), "x".repeat(120 * 1024));
+
+		const result = await readFileTool.execute({ path: "long-line.txt" }, context);
+
+		expect(Buffer.byteLength(result, "utf8")).toBeLessThanOrEqual(100 * 1024);
+		expect(result).toContain("[line clipped]");
+	});
+
+	it("refuses files containing NUL bytes", async () => {
+		writeFileSync(join(ROOT, "binary.dat"), Buffer.from([0x61, 0x00, 0x62]));
+
+		await expect(readFileTool.execute({ path: "binary.dat" }, context)).rejects.toThrow(
+			/binary file/,
+		);
+	});
+
+	it("caps directory listings and reports truncation", async () => {
+		for (let index = 0; index < 101; index += 1) {
+			writeFileSync(join(ROOT, `entry-${index}.txt`), "");
+		}
+
+		const result = await listDir.execute({ path: "." }, context);
+
+		expect(result.split("\n").filter((line) => line.startsWith("📄 "))).toHaveLength(100);
+		expect(result).toContain("truncated after 100 entries");
+	});
+
+	it("caps glob results and reports truncation", async () => {
+		for (let index = 0; index < 101; index += 1) {
+			writeFileSync(join(ROOT, `match-${index}.txt`), "");
+		}
+
+		const result = await glob.execute({ pattern: "*.txt" }, context);
+
+		expect(result.split("\n").filter((line) => line.endsWith(".txt"))).toHaveLength(100);
+		expect(result).toContain("truncated after 100 results");
+	});
+
+	it("caps git diff output at 20,000 characters", async () => {
+		execFileSync("git", ["init", "--quiet"], { cwd: ROOT });
+		writeFileSync(join(ROOT, "large.txt"), "x".repeat(30_000));
+		execFileSync("git", ["add", "large.txt"], { cwd: ROOT });
+
+		const result = await gitDiff.execute({ staged: true }, context);
+
+		expect(result.length).toBeLessThanOrEqual(20_000);
+		expect(result).toContain("diff truncated");
 	});
 });

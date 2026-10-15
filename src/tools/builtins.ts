@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, opendir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -19,6 +19,10 @@ const MAX_RUN_CMD_OUTPUT_LENGTH = MAX_RUN_CMD_HEAD_LENGTH + MAX_RUN_CMD_TAIL_LEN
 const SEARCH_TIMEOUT_MS = 15_000;
 const MAX_SEARCH_RESULTS = 100;
 const MAX_SEARCH_ERROR_LENGTH = 4000;
+const MAX_READ_FILE_LINES = 2000;
+const MAX_READ_FILE_OUTPUT_BYTES = 100 * 1024;
+const MAX_DIRECTORY_RESULTS = 100;
+const MAX_GIT_DIFF_OUTPUT_LENGTH = 20_000;
 
 /** Save a backup of a file before overwriting it. */
 export const backupFile = async (fullPath: string, projectRoot: string): Promise<void> => {
@@ -290,34 +294,102 @@ const commandOutcome = (command: string, outcome: CommandOutcome): string => {
 	return `$ ${command}\n${commandStatus(outcome)}\n${output ? `Output:\n${output}` : ""}`;
 };
 
+const truncateUtf8 = (text: string, maxBytes: number): string => {
+	let low = 0;
+	let high = text.length;
+	while (low < high) {
+		const middle = Math.ceil((low + high) / 2);
+		if (Buffer.byteLength(text.slice(0, middle), "utf8") <= maxBytes) low = middle;
+		else high = middle - 1;
+	}
+	const end =
+		low > 0 && text.charCodeAt(low - 1) >= 0xd800 && text.charCodeAt(low - 1) <= 0xdbff
+			? low - 1
+			: low;
+	return text.slice(0, end);
+};
+
+const formatReadFile = (path: string, content: Buffer, offset: number, limit: number): string => {
+	const lines = content.toString("utf8").split("\n");
+	const totalLines = lines.length;
+	const pageLines = lines.slice(offset - 1, offset - 1 + Math.min(limit, MAX_READ_FILE_LINES));
+	const fileHeader = `File: ${path} (${totalLines} lines)\n`;
+	const fileHeaderBytes = Buffer.byteLength(fileHeader, "utf8");
+	const outputLines: string[] = [];
+	let outputLineBytes = 0;
+	let clippedLine = false;
+
+	for (const [index, line] of pageLines.entries()) {
+		const lineNumber = offset + index;
+		const formattedLine = `${lineNumber}: ${line}`;
+		const separatorBytes = outputLines.length > 0 ? 1 : 0;
+		const formattedLineBytes = Buffer.byteLength(formattedLine, "utf8");
+		if (
+			fileHeaderBytes + outputLineBytes + separatorBytes + formattedLineBytes + 160 <=
+			MAX_READ_FILE_OUTPUT_BYTES
+		) {
+			outputLines.push(formattedLine);
+			outputLineBytes += separatorBytes + formattedLineBytes;
+			continue;
+		}
+
+		const prefix = `${lineNumber}: `;
+		const suffix = "… [line clipped]";
+		const availableBytes =
+			MAX_READ_FILE_OUTPUT_BYTES -
+			fileHeaderBytes -
+			outputLineBytes -
+			separatorBytes -
+			160 -
+			Buffer.byteLength(prefix + suffix, "utf8");
+		if (availableBytes >= 0) {
+			outputLines.push(`${prefix}${truncateUtf8(line, availableBytes)}${suffix}`);
+			clippedLine = true;
+		}
+		break;
+	}
+
+	const nextOffset = offset + outputLines.length;
+	const hasMoreLines = offset - 1 + outputLines.length < totalLines;
+	const isTruncated = hasMoreLines || clippedLine;
+	const showing =
+		offset > 1 || isTruncated
+			? outputLines.length > 0
+				? `Showing lines ${offset}-${nextOffset - 1} of ${totalLines}\n`
+				: `No lines at offset ${offset} (file has ${totalLines} lines)\n`
+			: "";
+	const output = outputLines.length > 0 ? outputLines.join("\n") : "";
+	const note = isTruncated ? `\n\nTruncated; continue with offset=${nextOffset}` : "";
+
+	return `${fileHeader}${showing}\n${output}${note}`;
+};
+
 /** Read a file with pagination. */
 export const readFileTool: Tool = {
 	name: "read_file",
-	description: "Read a file's contents (paginated with offset/limit for large files)",
+	description: "Read a text file with pagination; output is limited to 2,000 lines or 100 KB",
 	schema: objSchema(["path"], {
 		path: strProp("Project-relative file path"),
 		offset: intProp("1-based start line (default 1)"),
-		limit: intProp("Max lines to return (default 200)"),
+		limit: intProp("Max lines to return (default 200; maximum 2,000)"),
 	}),
 	needsApproval: false,
 	timeout: 5000,
 	execute: async (args, context) => {
 		const path = String(args.path ?? "");
-		const offset = Math.max(1, Number(args.offset) || 1);
-		const limit = Math.min(500, Math.max(1, Number(args.limit) || 200));
+		const requestedOffset = Number(args.offset);
+		const requestedLimit = Number(args.limit);
+		const offset =
+			Number.isSafeInteger(requestedOffset) && requestedOffset > 0 ? requestedOffset : 1;
+		const limit =
+			Number.isSafeInteger(requestedLimit) && requestedLimit > 0
+				? Math.min(requestedLimit, MAX_READ_FILE_LINES)
+				: 200;
 		const fullPath = resolve(context.projectRoot, expandTilde(path));
 
-		const content = await readFile(fullPath, "utf-8");
-		const lines = content.split("\n");
-		const slice = lines.slice(offset - 1, offset - 1 + limit);
-		const totalLines = lines.length;
-
-		let result = `File: ${path} (${totalLines} lines)\n`;
-		if (offset > 1 || offset - 1 + limit < totalLines) {
-			result += `Showing lines ${offset}-${Math.min(offset - 1 + limit, totalLines)} of ${totalLines}\n`;
-		}
-		result += `\n${slice.map((l, i) => `${offset + i}: ${l}`).join("\n")}`;
-		return result;
+		const content = await readFile(fullPath);
+		if (content.includes(0)) throw new Error(`Refusing to read binary file: ${path}`);
+		return formatReadFile(path, content, offset, limit);
 	},
 };
 
@@ -382,7 +454,7 @@ export const editFileTool: Tool = {
 /** List directory contents. */
 export const listDir: Tool = {
 	name: "list_dir",
-	description: "List files and subdirectories in a project folder",
+	description: "List up to 100 files and subdirectories in a project folder",
 	schema: objSchema(["path"], {
 		path: strProp("Project-relative directory path (use '.' for root)"),
 	}),
@@ -391,15 +463,29 @@ export const listDir: Tool = {
 	execute: async (args, context) => {
 		const path = String(args.path ?? ".");
 		const fullPath = resolve(context.projectRoot, path);
-		const entries = await readdir(fullPath, { withFileTypes: true });
-		return entries.map((e) => `${e.isDirectory() ? "📁" : "📄"} ${e.name}`).join("\n");
+		const directory = await opendir(fullPath);
+		const entries: string[] = [];
+		let truncated = false;
+		for await (const entry of directory) {
+			if (entries.length >= MAX_DIRECTORY_RESULTS) {
+				truncated = true;
+				break;
+			}
+			entries.push(`${entry.isDirectory() ? "📁" : "📄"} ${entry.name}`);
+		}
+		return [
+			entries.join("\n"),
+			truncated ? `Directory listing truncated after ${MAX_DIRECTORY_RESULTS} entries` : "",
+		]
+			.filter(Boolean)
+			.join("\n");
 	},
 };
 
 /** Glob search for files. */
 export const glob: Tool = {
 	name: "glob",
-	description: "Find files matching a glob pattern",
+	description: "Find up to 100 files matching a glob pattern",
 	schema: objSchema(["pattern"], { pattern: strProp("Glob pattern (e.g. '**/*.ts')") }),
 	needsApproval: false,
 	timeout: 10_000,
@@ -408,14 +494,24 @@ export const glob: Tool = {
 		const { glob: fsGlob } = await import("node:fs/promises");
 		const excluded = new Set(["node_modules", ".git", "dist", "build", ".anvil"]);
 		const files: string[] = [];
+		let truncated = false;
 		for await (const f of fsGlob(pattern, {
 			cwd: context.projectRoot,
 			exclude: (p) => excluded.has(p),
 		})) {
+			if (files.length >= MAX_DIRECTORY_RESULTS) {
+				truncated = true;
+				break;
+			}
 			files.push(f);
-			if (files.length >= 100) break;
 		}
-		return files.length > 0 ? files.join("\n") : "No files found";
+		if (files.length === 0) return "No files found";
+		return [
+			files.join("\n"),
+			truncated ? `Glob results truncated after ${MAX_DIRECTORY_RESULTS} results` : "",
+		]
+			.filter(Boolean)
+			.join("\n");
 	},
 };
 
@@ -732,7 +828,8 @@ export const gitStatus: Tool = {
 /** Git diff. */
 export const gitDiff: Tool = {
 	name: "git_diff",
-	description: "Show git diff of working changes or between refs",
+	description:
+		"Show git diff of working changes or between refs (output capped at 20,000 characters)",
 	schema: objSchema([], {
 		ref: strProp("Optional ref/range (e.g. 'HEAD~3', 'main..feature')"),
 		staged: { type: "boolean", description: "Show staged changes (default: false)" },
@@ -743,7 +840,10 @@ export const gitDiff: Tool = {
 		const cmd = ["diff"];
 		if (args.staged) cmd.push("--cached");
 		if (args.ref) cmd.push(String(args.ref));
-		return gitExec(cmd, context.projectRoot);
+		const output = await gitExec(cmd, context.projectRoot);
+		if (output.length <= MAX_GIT_DIFF_OUTPUT_LENGTH) return output;
+		const truncationNote = `\n… git diff truncated at ${MAX_GIT_DIFF_OUTPUT_LENGTH} characters`;
+		return `${output.slice(0, MAX_GIT_DIFF_OUTPUT_LENGTH - truncationNote.length)}${truncationNote}`;
 	},
 };
 
