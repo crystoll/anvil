@@ -50,8 +50,36 @@ describe("parseToolArgs", () => {
 	});
 
 	it("returns err for invalid JSON", () => {
-		const result = parseToolArgs("{broken");
+		const result = parseToolArgs("not valid JSON");
 		expect(result.isErr()).toBe(true);
+	});
+
+	it.each([
+		["trailing commas and single quotes", "{'path': 'src/index.ts',}"],
+		["unquoted keys", '{path: "src/index.ts"}'],
+		["JSON code fences", '```json\n{"path":"src/index.ts"}\n```'],
+		["truncated strings and objects", '{"path":"src/index.ts'],
+	])("repairs %s", (_description, raw) => {
+		const result = parseToolArgs(raw);
+
+		expect(result.isOk()).toBe(true);
+		expect(result._unsafeUnwrap()).toEqual({ path: "src/index.ts" });
+	});
+
+	it("includes the expected schema and example when arguments cannot be repaired", () => {
+		const schema = {
+			type: "object",
+			properties: { path: { type: "string" } },
+			required: ["path"],
+		};
+
+		const result = parseToolArgs("not valid JSON", schema);
+
+		expect(result.isErr()).toBe(true);
+		if (result.isErr()) {
+			expect(result.error.message).toContain(JSON.stringify(schema));
+			expect(result.error.message).toContain('Example: {"path":"..."}');
+		}
 	});
 
 	it("returns err for non-object JSON", () => {

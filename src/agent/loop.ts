@@ -433,7 +433,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return { action: "error_fed_back" };
 		}
 
-		const argsResult = parseToolArgs(call.arguments);
+		const argsResult = parseToolArgs(call.arguments, tool.schema);
 		if (argsResult.isErr()) {
 			engine.addToolResult(call.id, `Error: ${argsResult.error.message}`);
 			return { action: "error_fed_back" };

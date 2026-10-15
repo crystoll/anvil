@@ -264,6 +264,31 @@ describe("agent loop", () => {
 		expect(events.some((e) => e.kind === "pending")).toBe(true);
 	});
 
+	it("feeds the tool schema and an example back when arguments cannot be repaired", async () => {
+		const requests: Message[][] = [];
+		const provider = mockProvider(
+			[
+				toolCallChunks("call_1", "read_file", "not valid JSON"),
+				[{ content: "I understand the required format", done: false }, { done: true }],
+			],
+			(messages) => requests.push(messages),
+		);
+		const engine = createEngine(provider, "test");
+		const registry = createRegistry();
+		registry.register(autoReadTool);
+		const loop = createAgentLoop(engine, registry, {
+			maxRounds: 2,
+			projectRoot: "/tmp",
+			systemPrompt: "test",
+		});
+
+		await collect(loop.send("read a file"));
+
+		const toolResult = requests[1]?.find((message) => message.role === "tool");
+		expect(toolResult?.content).toContain(JSON.stringify(autoReadTool.schema));
+		expect(toolResult?.content).toContain('Example: {"path":"..."}');
+	});
+
 	it("executes tool after approval and continues", async () => {
 		const provider = mockProvider([
 			toolCallChunks("call_1", "read_file", '{"path":"index.ts"}'),

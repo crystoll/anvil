@@ -166,7 +166,7 @@ Robustness:
 
 - Stream timeout — abort if no chunk arrives within configured seconds
 - Connection timeout — accounts for model cold-loading
-- Partial tool call recovery — lenient JSON parsing for incomplete output
+- Partial tool call recovery — repair common malformed JSON from local models, with schema-guided feedback when repair fails
 - Empty response detection — retry once before reporting failure
 - Graceful degradation — never hang, every await has a timeout
 

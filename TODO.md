@@ -542,11 +542,12 @@ type SessionController = {
   - `/retry` drops a failed or interrupted partial and re-runs the turn.
   - `/continue` grants another `max_rounds` after "Round cap reached", or continues after `finishReason: "length"`.
   - **Done:** `/continue` now resumes the agent loop after those two explicit stop conditions; output-limit continuation adds a synthetic instruction, while round-cap continuation keeps the existing task history.
-- [ ] **M10.6 Lenient tool arguments.** Use `jsonrepair` 3.15.0 (zero dependencies) inside `parseToolArgs`.
+- [x] **M10.6 Lenient tool arguments.** Use `jsonrepair` 3.15.0 (zero dependencies) inside `parseToolArgs`.
   - It repairs trailing commas, single quotes, unquoted keys, code fences and truncated JSON.
   - If the arguments can't be repaired, return a tool error that echoes the schema and an example, so the model can self-correct.
   - This also makes the "lenient parsing" claim in `docs/architecture.md` true.
   - **Test first:** a table of malformed inputs.
+  - **Done:** common malformed JSON is repaired before tool execution; unrecoverable or non-object arguments return the tool schema and a required-fields example to the model.
 - [ ] **M10.7 Recover tool calls written as text.** Handle `<tool_call>{…}</tool_call>` (Qwen/Hermes), fenced JSON and bare `{"name", "arguments"}` objects, in assistant messages only. **Test first:** one fixture per format.
 - [ ] **M10.8 More tolerant `edit_file`.**
   - Normalize CRLF.

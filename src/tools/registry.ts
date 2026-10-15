@@ -1,3 +1,4 @@
+import { jsonrepair } from "jsonrepair";
 import type { Result } from "neverthrow";
 import { err, ok } from "neverthrow";
 import type { ToolSchema } from "../provider/types.js";
@@ -89,19 +90,61 @@ export const createRegistry = (): Registry => {
 	};
 };
 
-/** Safely parse JSON tool arguments. */
-export const parseToolArgs = (raw: string): Result<Record<string, unknown>, ToolError> => {
+const isObject = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+const exampleValue = (schema: unknown): unknown => {
+	if (!isObject(schema)) return "...";
+	if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+	if (schema.type === "object") return {};
+	if (schema.type === "array") return [];
+	if (schema.type === "boolean") return true;
+	if (schema.type === "number" || schema.type === "integer") return 0;
+	return "...";
+};
+
+const exampleArguments = (schema: Record<string, unknown>): Record<string, unknown> => {
+	const properties = isObject(schema.properties) ? schema.properties : {};
+	const required = Array.isArray(schema.required)
+		? schema.required.filter((name): name is string => typeof name === "string")
+		: [];
+	return Object.fromEntries(required.map((name) => [name, exampleValue(properties[name])]));
+};
+
+const invalidArguments = (
+	message: string,
+	schema: Record<string, unknown>,
+	cause?: unknown,
+): ToolError => ({
+	kind: "execution",
+	message: [
+		message,
+		`Expected schema: ${JSON.stringify(schema)}`,
+		`Example: ${JSON.stringify(exampleArguments(schema))}`,
+	].join("\n"),
+	...(cause !== undefined ? { cause } : {}),
+});
+
+const parseJson = (raw: string): unknown => {
 	try {
-		const parsed = JSON.parse(raw || "{}");
-		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-			return err({ kind: "execution", message: "Tool arguments must be a JSON object" });
-		}
-		return ok(parsed as Record<string, unknown>);
-	} catch (e) {
-		return err({
-			kind: "execution",
-			message: `Invalid JSON arguments: ${e instanceof Error ? e.message : String(e)}`,
-			cause: e,
-		});
+		return JSON.parse(raw || "{}");
+	} catch {
+		return JSON.parse(jsonrepair(raw));
+	}
+};
+
+/** Parse tool arguments, repairing common malformed JSON from local models. */
+export const parseToolArgs = (
+	raw: string,
+	schema: Record<string, unknown> = { type: "object" },
+): Result<Record<string, unknown>, ToolError> => {
+	try {
+		const parsed = parseJson(raw);
+		return isObject(parsed)
+			? ok(parsed)
+			: err(invalidArguments("Tool arguments must be a JSON object", schema));
+	} catch (cause) {
+		const detail = cause instanceof Error ? cause.message : String(cause);
+		return err(invalidArguments(`Invalid JSON arguments: ${detail}`, schema, cause));
 	}
 };
