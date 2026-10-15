@@ -106,9 +106,9 @@ describe("session controller", () => {
 		expect(controller.getState().sessionId).toBeDefined();
 		const sessionId = controller.getState().sessionId;
 		if (!sessionId) throw new Error("session should be saved after the turn");
-		expect(
-			JSON.parse(readFileSync(join(historyDir, `${sessionId}.json`), "utf-8")).messages,
-		).toHaveLength(3);
+		const savedSession = JSON.parse(readFileSync(join(historyDir, `${sessionId}.json`), "utf-8"));
+		expect(savedSession.messages).toHaveLength(3);
+		expect(savedSession.status).toBe("complete");
 
 		await controller.shutdown();
 	});
@@ -164,7 +164,7 @@ describe("session controller", () => {
 	});
 
 	it("rejects overlapping submits, then accepts a new turn after cancellation", async () => {
-		const { controller, engine, mock } = await createHarness({
+		const { controller, engine, historyDir, mock } = await createHarness({
 			frames: [{ message: { role: "assistant", content: "partial" }, done: false }],
 			stallAfter: 1,
 		});
@@ -184,6 +184,11 @@ describe("session controller", () => {
 		expect(controller.getState()).toMatchObject({ phase: "idle", pending: undefined });
 		await pendingTurn;
 		await mock.clientDisconnected;
+		const sessionId = controller.getState().sessionId;
+		if (!sessionId) throw new Error("cancelled session should be saved");
+		expect(JSON.parse(readFileSync(join(historyDir, `${sessionId}.json`), "utf-8")).status).toBe(
+			"interrupted",
+		);
 
 		mock.setScript({ frames: assistantFrames("follow-up works") });
 		await controller.submit("follow-up");

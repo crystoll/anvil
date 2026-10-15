@@ -48,6 +48,34 @@ describe("session writer", () => {
 		expect(savedSession(id).tokenUsage).toEqual({ promptTokens: 120, totalTokens: 150 });
 	});
 
+	it("refreshes metadata and persists status for each save", () => {
+		const metadata = {
+			cwd: "/work/project",
+			provider: "ollama",
+			model: "old-model",
+			agent: "default",
+			skill: "review",
+		};
+		const writer = createSessionWriter(TEST_DIR, () => [system, question], undefined, {
+			getMetadata: () => metadata,
+		});
+		writer.setStatus("interrupted");
+		const id = writer.save()._unsafeUnwrap();
+		metadata.model = "new-model";
+		writer.setStatus("complete");
+		writer.save();
+
+		expect(savedSession(id)).toMatchObject({
+			cwd: "/work/project",
+			provider: "ollama",
+			model: "new-model",
+			agent: "default",
+			skill: "review",
+			title: "Hello",
+			status: "complete",
+		});
+	});
+
 	it("starts a new session without the old one's token usage", () => {
 		const writer = createSessionWriter(TEST_DIR, () => [system, question]);
 		const firstId = writer.save({ promptTokens: 120, totalTokens: 150 })._unsafeUnwrap();

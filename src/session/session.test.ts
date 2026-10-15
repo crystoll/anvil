@@ -42,6 +42,81 @@ describe("session persistence", () => {
 		expect(loadSession(TEST_DIR, id)._unsafeUnwrap().messages).toEqual(messages);
 	});
 
+	it("persists session metadata and derives a bounded title from the first user message", () => {
+		const id = saveSession(
+			TEST_DIR,
+			[
+				{ role: "user", content: "A".repeat(70) },
+				{ role: "assistant", content: "Answer" },
+				{ role: "user", content: "A later request" },
+			],
+			undefined,
+			undefined,
+			{
+				cwd: "/work/project",
+				provider: "ollama",
+				model: "qwen",
+				agent: "default",
+				skill: "review",
+				status: "interrupted",
+			},
+		)._unsafeUnwrap();
+		const loaded = loadSession(TEST_DIR, id)._unsafeUnwrap();
+
+		expect(loaded).toMatchObject({
+			cwd: "/work/project",
+			provider: "ollama",
+			model: "qwen",
+			agent: "default",
+			skill: "review",
+			title: "A".repeat(60),
+			status: "interrupted",
+		});
+		expect(listSessions(TEST_DIR)[0]).toMatchObject({
+			cwd: "/work/project",
+			title: "A".repeat(60),
+			status: "interrupted",
+		});
+	});
+
+	it("loads legacy sessions without metadata", () => {
+		const legacySession = {
+			id: "legacy01",
+			createdAt: 1,
+			updatedAt: 2,
+			messages: sampleMessages,
+		};
+		writeFileSync(join(TEST_DIR, "legacy01.json"), JSON.stringify(legacySession));
+
+		expect(loadSession(TEST_DIR, "legacy01")._unsafeUnwrap()).toEqual(legacySession);
+		expect(listSessions(TEST_DIR)).toContainEqual({ id: "legacy01", updatedAt: 2 });
+	});
+
+	it("updates metadata while keeping the original title and clearing stale fields", () => {
+		const id = saveSession(TEST_DIR, sampleMessages, undefined, undefined, {
+			cwd: "/work/old",
+			provider: "old-provider",
+			model: "old-model",
+			skill: "review",
+		})._unsafeUnwrap();
+		saveSession(TEST_DIR, sampleMessages, id, undefined, {
+			cwd: "/work/new",
+			provider: "new-provider",
+			model: "new-model",
+			status: "complete",
+		});
+
+		const loaded = loadSession(TEST_DIR, id)._unsafeUnwrap();
+		expect(loaded).toMatchObject({
+			cwd: "/work/new",
+			provider: "new-provider",
+			model: "new-model",
+			title: "Hello",
+			status: "complete",
+		});
+		expect(loaded.skill).toBeUndefined();
+	});
+
 	it("overwrites when saving with existing id", () => {
 		const id = saveSession(TEST_DIR, sampleMessages)._unsafeUnwrap();
 		const updated: Message[] = [...sampleMessages, { role: "user", content: "More" }];

@@ -37,6 +37,7 @@ import {
 	listSessions,
 	loadSession,
 	type SessionWriter,
+	type SessionWriterOptions,
 } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
 import { createFileHistory, type FileHistory } from "../tools/file-history.js";
@@ -352,9 +353,10 @@ export const openSession = (
 	flags: Pick<Flags, "command" | "resume">,
 	historyDir: string,
 	engine: ReturnType<typeof createEngine>,
+	options: SessionWriterOptions = {},
 ): SessionWriter => {
 	const resumedId = flags.resume ? tryResumeSession(historyDir, engine) : undefined;
-	const session = createSessionWriter(historyDir, engine.messages, resumedId);
+	const session = createSessionWriter(historyDir, engine.messages, resumedId, options);
 	// A failed save is reported by the save the UI makes at the end of the turn.
 	if (!flags.command) engine.onCommit(() => session.save());
 	return session;
@@ -450,7 +452,15 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	// Agent loop
 	const agentHooks = activeAgent?.hooks ?? {};
 	const hookCtx = { session_id: Date.now().toString(), cwd: projectRoot };
-	const session = openSession(flags, p.historyDir, engine);
+	const session = openSession(flags, p.historyDir, engine, {
+		getMetadata: () => ({
+			cwd: projectRoot,
+			provider: engine.getProvider().name,
+			model: engine.model(),
+			...(activeAgent ? { agent: activeAgent.name } : {}),
+			...(activeSkill ? { skill: activeSkill.name } : {}),
+		}),
+	});
 	const agent = createAgentLoop(engine, registry, {
 		maxRounds: config.maxRounds,
 		projectRoot,

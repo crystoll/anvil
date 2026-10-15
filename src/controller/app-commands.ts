@@ -204,7 +204,8 @@ const selectModel = async (
 	}
 	context.activeProviderName = providerName;
 	context.engine.setModel(model);
-	return handled(`Switched to: ${providerName}/${model}`);
+	const saveMessage = saveCommandChanges(context);
+	return handled(`Switched to: ${providerName}/${model}${saveMessage ? `\n${saveMessage}` : ""}`);
 };
 
 const modelCommand = async (
@@ -227,7 +228,8 @@ const skillCommand = (context: AppCommandContext, argument: string): CommandResu
 	if (!skill) return handled(`Skill "${name}" not found`);
 	context.setActiveSkill(skill);
 	context.activeSkill = skill;
-	return handled(`Activated: ${skill.name}`);
+	const saveMessage = saveCommandChanges(context);
+	return handled(`Activated: ${skill.name}${saveMessage ? `\n${saveMessage}` : ""}`);
 };
 
 const agentCommand = (context: AppCommandContext, argument: string): CommandResult => {
@@ -247,7 +249,8 @@ const agentCommand = (context: AppCommandContext, argument: string): CommandResu
 	if (!agent) return handled(`Agent "${name}" not found`);
 	context.setActiveAgent(agent);
 	context.activeAgent = agent;
-	return handled(`Activated agent: ${agent.name}`);
+	const saveMessage = saveCommandChanges(context);
+	return handled(`Activated agent: ${agent.name}${saveMessage ? `\n${saveMessage}` : ""}`);
 };
 
 const compactCommand = async (context: AppCommandContext): Promise<CommandResult> => {

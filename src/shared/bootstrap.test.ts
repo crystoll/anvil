@@ -208,6 +208,32 @@ describe("openSession", () => {
 		expect(latestSaved()).toEqual([question, { role: "assistant", content: "Done" }]);
 	});
 
+	it("saves the current project and model metadata with the conversation", () => {
+		const engine = newEngine();
+		const session = openSession(interactive, historyDir, engine, {
+			getMetadata: () => ({
+				cwd: "/work/project",
+				provider: "ollama",
+				model: "qwen",
+				agent: "default",
+				skill: "review",
+			}),
+		});
+
+		engine.addUser("Fix the bug");
+
+		const id = session.id();
+		if (!id) throw new Error("session should be saved");
+		expect(loadSession(historyDir, id)._unsafeUnwrap()).toMatchObject({
+			cwd: "/work/project",
+			provider: "ollama",
+			model: "qwen",
+			agent: "default",
+			skill: "review",
+			title: "Fix the bug",
+		});
+	});
+
 	it("never saves a one-shot run", () => {
 		const engine = newEngine();
 

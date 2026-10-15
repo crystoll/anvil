@@ -13,21 +13,40 @@ import { join } from "node:path";
 import { err, ok, Result } from "neverthrow";
 import type { Message } from "../provider/types.js";
 
+export type SessionStatus = "complete" | "interrupted" | "error";
+
+export type SessionMetadata = {
+	cwd?: string;
+	provider?: string;
+	model?: string;
+	agent?: string;
+	skill?: string;
+	title?: string;
+	status?: SessionStatus;
+};
+
 export type Session = {
 	id: string;
 	createdAt: number;
 	updatedAt: number;
 	messages: Message[];
 	tokenUsage?: { promptTokens: number; totalTokens: number };
-};
+} & SessionMetadata;
 
-export type SessionMeta = {
-	id: string;
-	updatedAt: number;
-};
+export type SessionMeta = Pick<Session, "id" | "updatedAt"> & SessionMetadata;
 
 const toError = (cause: unknown): Error =>
 	cause instanceof Error ? cause : new Error(String(cause));
+
+const definedMetadata = (metadata: SessionMetadata): SessionMetadata => ({
+	...(metadata.cwd ? { cwd: metadata.cwd } : {}),
+	...(metadata.provider ? { provider: metadata.provider } : {}),
+	...(metadata.model ? { model: metadata.model } : {}),
+	...(metadata.agent ? { agent: metadata.agent } : {}),
+	...(metadata.skill ? { skill: metadata.skill } : {}),
+	...(metadata.title ? { title: metadata.title } : {}),
+	...(metadata.status ? { status: metadata.status } : {}),
+});
 
 const makeDirectory = Result.fromThrowable(
 	(dir: string) => mkdirSync(dir, { recursive: true }),
@@ -65,18 +84,26 @@ export const saveSession = (
 	messages: Message[],
 	id?: string,
 	tokenUsage?: { promptTokens: number; totalTokens: number },
+	metadata?: SessionMetadata,
 ): Result<string, string> => {
 	const sessionId = id ?? randomUUID().slice(0, 8);
 	const filePath = join(dir, `${sessionId}.json`);
 
 	const existing = existsSync(filePath) ? readSessionFile(filePath) : undefined;
 	const now = Date.now();
+	const firstUserMessage = messages.find((message) => message.role === "user")?.content;
+	const titleSource = existing?.title ?? metadata?.title ?? firstUserMessage;
+	const title = titleSource?.replace(/\s+/g, " ").trim().slice(0, 60);
+	const savedMetadata = metadata ?? existing;
 
 	const session: Session = {
 		id: sessionId,
 		createdAt: existing?.createdAt ?? now,
 		updatedAt: now,
 		messages,
+		...definedMetadata(savedMetadata ?? {}),
+		...(title ? { title } : {}),
+		status: metadata?.status ?? existing?.status ?? "complete",
 	};
 	if (tokenUsage) session.tokenUsage = tokenUsage;
 
@@ -115,7 +142,12 @@ const readSessionFile = (path: string): Session | undefined => {
 
 const metaFromFile = (path: string): SessionMeta | undefined => {
 	const session = readSessionFile(path);
-	if (session) return { id: session.id, updatedAt: session.updatedAt };
+	if (session)
+		return {
+			id: session.id,
+			updatedAt: session.updatedAt,
+			...definedMetadata(session),
+		};
 	// Fallback to file mtime if JSON is unreadable
 	try {
 		const stat = statSync(path);

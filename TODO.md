@@ -615,7 +615,7 @@ type SessionController = {
 
 ## M12 — Persistence UX
 
-- [ ] **M12.1 [M] Session metadata.** Add `cwd`, `provider`, `model`, `agent`, `skill`, a `title` (the first user message, up to 60 characters) and a `status` (`complete`, `interrupted` or `error`). The loader stays backward compatible.
+- [x] **M12.1 [M] Session metadata.** Add `cwd`, `provider`, `model`, `agent`, `skill`, a `title` (the first user message, up to 60 characters) and a `status` (`complete`, `interrupted` or `error`). The loader stays backward compatible.
 - [ ] **M12.2 [M] Resume per project.** `--resume` picks the latest session for this project root, falling back to the global latest with a notice. `--resume <id>` picks a specific session.
 - [ ] **M12.3 [L] Browse and resume past sessions.**
   - In the TUI, `/history` opens an arrow-key picker that loads the chosen session, repairing it on load (M4.4).

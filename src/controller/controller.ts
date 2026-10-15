@@ -1,6 +1,7 @@
 import type { AgentEvent, createAgentLoop, PendingCall } from "../agent/loop.js";
 import type { Engine } from "../engine/engine.js";
 import type { TokenUsage } from "../provider/types.js";
+import type { SessionStatus } from "../session/session.js";
 import type { SessionWriter } from "../session/writer.js";
 import { type CommandRegistry, type CommandResult, createCommandRegistry } from "./commands.js";
 
@@ -60,6 +61,19 @@ const phaseForAgentEvent = (event: AgentEvent): ControllerPhase | undefined => {
 	return undefined;
 };
 
+const sessionStatusForEvent = (event: AgentEvent): SessionStatus | undefined => {
+	switch (event.kind) {
+		case "done":
+			return "complete";
+		case "stuck":
+			return "error";
+		case "error":
+			return event.status === "interrupted" ? "interrupted" : "error";
+		default:
+			return undefined;
+	}
+};
+
 /** Own turn orchestration and expose a UI-independent event and command surface. */
 export const createSessionController = (options: SessionControllerOptions): SessionController => {
 	const listeners = new Set<(event: ControllerEvent) => void>();
@@ -69,6 +83,8 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 	let agentActive = false;
 	let shuttingDown = false;
 	let shutdownPromise: Promise<void> | undefined;
+	let turnStatus: SessionStatus | undefined;
+	let turnInterrupted = false;
 	let operationsFinished = Promise.resolve();
 	let finishOperations = (): void => undefined;
 	let state: ControllerState = {
@@ -122,6 +138,8 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 	};
 
 	const applyAgentEvent = (event: AgentEvent): void => {
+		const status = sessionStatusForEvent(event);
+		if (status) turnStatus = status;
 		const phase = phaseForAgentEvent(event);
 		const update: Partial<ControllerState> = {};
 		if (phase) update.phase = phase;
@@ -157,6 +175,9 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 	): Promise<void> => {
 		beginOperation();
 		agentActive = true;
+		turnStatus = undefined;
+		turnInterrupted = false;
+		options.session.setStatus("interrupted");
 		try {
 			if (initialState) updateState(initialState);
 			await consumeAgentEvents(events);
@@ -164,6 +185,11 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 			agentActive = false;
 			try {
 				if (state.phase !== "awaiting_approval") updateState({ phase: "idle", pending: undefined });
+				const status =
+					state.phase === "awaiting_approval" || turnInterrupted
+						? "interrupted"
+						: (turnStatus ?? "complete");
+				options.session.setStatus(status);
 				saveSession();
 			} finally {
 				endOperation();
@@ -257,6 +283,8 @@ export const createSessionController = (options: SessionControllerOptions): Sess
 
 	const cancel = async (): Promise<void> => {
 		if (state.phase === "idle" && !agentActive) return;
+		turnInterrupted = true;
+		options.session.setStatus("interrupted");
 		const completion = operationsFinished;
 		updateState({ phase: "cancelling", pending: undefined });
 		await options.agent.cancel();
