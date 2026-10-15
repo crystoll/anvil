@@ -86,6 +86,7 @@ const mountApp = (
 
 afterEach(() => {
 	for (const screen of screens.splice(0)) screen.unmount();
+	vi.useRealTimers();
 	vi.restoreAllMocks();
 });
 
@@ -225,6 +226,57 @@ describe("TUI App", () => {
 		await vi.waitFor(() => expect(screen.lastFrame()).toContain("anvil: partial response"));
 		emitNotice("Session saved");
 		await vi.waitFor(() => expect(screen.lastFrame()).toContain("Session saved"));
+	});
+
+	it("limits live output to the most recent ten lines", async () => {
+		const { controller, updateState } = createController();
+		const screen = mountApp(controller, { initialNotices: ["committed notice"] });
+
+		updateState({
+			phase: "streaming",
+			streamingText: [
+				"oldest-line",
+				"also-old-line",
+				"line-3",
+				"line-4",
+				"line-5",
+				"line-6",
+				"line-7",
+				"line-8",
+				"line-9",
+				"line-10",
+				"line-11",
+				"latest-line",
+			].join("\n"),
+		});
+
+		await vi.waitFor(() => expect(screen.lastFrame()).toContain("latest-line"));
+		expect(screen.lastFrame()).not.toContain("oldest-line");
+		expect(screen.lastFrame()).not.toContain("also-old-line");
+		expect(screen.lastFrame()).toContain("committed notice");
+	});
+
+	it("coalesces streaming state updates to at most 20 frames per second", async () => {
+		vi.useFakeTimers();
+		const { controller, updateState } = createController();
+		const screen = mountApp(controller);
+
+		updateState({ phase: "streaming", streamingText: "" });
+		updateState({ streamingText: "first chunk" });
+		expect(screen.lastFrame()).not.toContain("first chunk");
+
+		await vi.advanceTimersByTimeAsync(49);
+		updateState({ streamingText: "latest chunk" });
+		expect(screen.lastFrame()).not.toContain("latest chunk");
+		await vi.advanceTimersByTimeAsync(1);
+		expect(screen.lastFrame()).toContain("latest chunk");
+
+		updateState({ streamingText: "next frame" });
+		expect(screen.lastFrame()).not.toContain("next frame");
+		await vi.advanceTimersByTimeAsync(49);
+		expect(screen.lastFrame()).not.toContain("next frame");
+		await vi.advanceTimersByTimeAsync(1);
+		expect(screen.lastFrame()).toContain("next frame");
 	});
 
 	it("renders startup notices", () => {

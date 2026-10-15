@@ -153,7 +153,7 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
 1. Finish **M11.4 [S]**, then **M11.5 [L]**, to complete the safety work. Validate one-shot approval behavior and backup creation, pruning, and undo.
 2. Do **M13.1–M13.4** as an early CI safety net (mostly **[S]**, with **M13.3 [XS]**): refresh pinned Actions after reviewing changelogs, add Node 22/24, raise the production audit gate, and run integration tests in CI.
 3. Implement **M12.1 [M]** and **M12.2 [M]**: add backward-compatible session metadata, then project-aware and ID-based resume.
-4. Complete **M9.2–M9.4**: improve streaming (**M9.2 [L]**) and slow-model progress (**M9.3 [M]**), and fix first-Enter handling (**M9.4 [S]**). Ink v8 (**M9.1 [S]**) is complete; finish this TUI foundation before adding the history picker.
+4. Complete **M9.3–M9.4**: add slow-model progress (**M9.3 [M]**) and fix first-Enter handling (**M9.4 [S]**). Ink v8 (**M9.1 [S]**) and buffered streaming (**M9.2 [L]**) are complete; finish this TUI foundation before adding the history picker.
 5. Finish **M12.3 [L]**, **M12.4 [S]**, and **M12.5 [S]**: add history browsing and interrupted-session notice, then measure listing performance; add an index only if it crosses the documented thresholds.
 6. Do **M13.5 Renovate [M]** after CI is stable, so automatic updates are governed by the completed checks.
 
@@ -508,10 +508,11 @@ type SessionController = {
   - `Box` `minWidth` and `maxWidth` accept numbers only. Neither is used.
 
   ink 8 also fixes several `<Static>` and scrollback bugs, which helps M9.2. Then run the M8.4 tests.
-- [ ] **M9.2 [L] Streaming render.**
+- [x] **M9.2 [L] Streaming render.**
   - Buffer tokens in a ref and flush at no more than 20 fps.
   - Keep committed messages in `<Static>`.
   - Show only the tail lines while streaming.
+  - **Done:** coalesce controller state updates at 50 ms while streaming and render the latest ten lines; committed messages remain in `<Static>`.
 
   This fixes the per-token re-render flicker.
 - [ ] **M9.3 [M] Show progress so slow models don't look stuck.**

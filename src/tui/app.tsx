@@ -20,6 +20,9 @@ import type {
 
 type Message = { id: number; text: string; dim?: boolean };
 
+const STREAM_FLUSH_INTERVAL_MS = 50;
+const STREAM_TAIL_LINES = 10;
+
 export type TuiAppProps = {
 	controller: SessionController;
 	providerName: () => string;
@@ -39,6 +42,8 @@ const truncate = (text: string, max = 80): string => {
 	return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
 };
 
+const tailLines = (text: string): string => text.split("\n").slice(-STREAM_TAIL_LINES).join("\n");
+
 const summarizeArgs = (args: Record<string, unknown>): string => {
 	const primary = [args.command, args.path, args.query, args.url].find(
 		(value): value is string => typeof value === "string",
@@ -50,13 +55,41 @@ const summarizeArgs = (args: Record<string, unknown>): string => {
 
 const useControllerState = (controller: SessionController) => {
 	const snapshot = useRef(controller.getState());
+	const pendingState = useRef(snapshot.current);
+	const flushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 	const subscribe = useCallback(
-		(onStoreChange: () => void) =>
-			controller.subscribe((event) => {
+		(onStoreChange: () => void) => {
+			const unsubscribe = controller.subscribe((event) => {
 				if (event.type !== "state") return;
+
+				pendingState.current = event.state;
+				if (snapshot.current.phase === "streaming" && event.state.phase === "streaming") {
+					if (flushTimer.current === undefined) {
+						flushTimer.current = setTimeout(() => {
+							snapshot.current = pendingState.current;
+							flushTimer.current = undefined;
+							onStoreChange();
+						}, STREAM_FLUSH_INTERVAL_MS);
+					}
+					return;
+				}
+
+				if (flushTimer.current !== undefined) {
+					clearTimeout(flushTimer.current);
+					flushTimer.current = undefined;
+				}
 				snapshot.current = event.state;
 				onStoreChange();
-			}),
+			});
+
+			return () => {
+				unsubscribe();
+				if (flushTimer.current !== undefined) {
+					clearTimeout(flushTimer.current);
+					flushTimer.current = undefined;
+				}
+			};
+		},
 		[controller],
 	);
 	const getSnapshot = useCallback(() => snapshot.current, []);
@@ -635,7 +668,7 @@ export function App({
 	const streaming =
 		state.phase === "streaming"
 			? state.streamingText
-				? `anvil: ${state.streamingText}`
+				? `anvil: ${tailLines(state.streamingText)}`
 				: isThinking
 					? ""
 					: "anvil: [generating…]"
