@@ -153,7 +153,7 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
 1. Finish **M11.4 [S]**, then **M11.5 [L]**, to complete the safety work. Validate one-shot approval behavior and backup creation, pruning, and undo.
 2. Do **M13.1–M13.4** as an early CI safety net (mostly **[S]**, with **M13.3 [XS]**): refresh pinned Actions after reviewing changelogs, add Node 22/24, raise the production audit gate, and run integration tests in CI.
 3. Implement **M12.1 [M]** and **M12.2 [M]**: add backward-compatible session metadata, then project-aware and ID-based resume.
-4. Complete **M9**: upgrade Ink (**M9.1 [S]**), improve streaming (**M9.2 [L]**) and slow-model progress (**M9.3 [M]**), and fix first-Enter handling (**M9.4 [S]**). Finish this TUI foundation before adding the history picker.
+4. Complete **M9.2–M9.4**: improve streaming (**M9.2 [L]**) and slow-model progress (**M9.3 [M]**), and fix first-Enter handling (**M9.4 [S]**). Ink v8 (**M9.1 [S]**) is complete; finish this TUI foundation before adding the history picker.
 5. Finish **M12.3 [L]**, **M12.4 [S]**, and **M12.5 [S]**: add history browsing and interrupted-session notice, then measure listing performance; add an index only if it crosses the documented thresholds.
 6. Do **M13.5 Renovate [M]** after CI is stable, so automatic updates are governed by the completed checks.
 
@@ -501,7 +501,7 @@ type SessionController = {
 
 ## M9 — ink 8 and rendering
 
-- [ ] **M9.1 [S] Upgrade `ink` from 7.1.1 to 8.0.0.** `ink-text-input` 6 and `ink-spinner` 5 stay, since their peer ranges are satisfied (verified). None of the breaking changes touch today's code; keep it that way in M8:
+- [x] **M9.1 [S] Upgrade `ink` from 7.1.1 to 8.0.0.** `ink-text-input` 6 and `ink-spinner` 5 stay, since their peer ranges are satisfied (verified). None of the breaking changes touch today's code; keep it that way in M8:
   - React 19.3+ is required (done in M0.4).
   - stdin, stdout and stderr are typed as generic streams, without `columns`. Nothing uses `useStdout` or `useStdin`; the status bar reads `process.stdout`.
   - `useInput` drops unrecognized control sequences.
