@@ -15,6 +15,7 @@ import {
 	resolveProviderModel,
 } from "../shared/bootstrap.js";
 import type { Skill } from "../skills/index.js";
+import type { FileHistory } from "../tools/file-history.js";
 import type { Registry } from "../tools/registry.js";
 import { type CommandRegistry, type CommandResult, createCommandRegistry } from "./commands.js";
 
@@ -54,7 +55,9 @@ export type AppCommandContext = {
 	activeSkill: Skill | undefined;
 	availableAgents: AgentDef[];
 	activeAgent: AgentDef | undefined;
+	projectRoot: string;
 	historyDir: string;
+	fileHistory: FileHistory;
 	session: Pick<SessionWriter, "id" | "save" | "startNew" | "resume">;
 	setActiveSkill: (skill: Skill | undefined) => void;
 	setActiveAgent: (agent: AgentDef) => void;
@@ -64,6 +67,9 @@ const handled = (
 	message: string,
 	options: { resetUsage?: boolean; usage?: { promptTokens: number; totalTokens: number } } = {},
 ): CommandResult => ({ kind: "handled", message, ...options });
+
+const errorText = (error: unknown): string =>
+	error instanceof Error ? error.message : String(error);
 
 const saveCommandChanges = (
 	context: AppCommandContext,
@@ -326,6 +332,36 @@ const retryCommand = (context: AppCommandContext): CommandResult => {
 	return { kind: "submit", input: lastUser.content };
 };
 
+const undoCommand = async (
+	context: AppCommandContext,
+	argument: string,
+): Promise<CommandResult> => {
+	const sessionId = context.session.id();
+	if (!sessionId) return handled("No saved session is available to undo.");
+	const action = argument.trim().toLowerCase();
+	if (action === "cancel") {
+		await context.fileHistory.cancelUndo(context.projectRoot, sessionId);
+		return handled("Undo cancelled.");
+	}
+	if (action && action !== "confirm") return handled("Usage: /undo [confirm|cancel]");
+
+	try {
+		if (action === "confirm") {
+			const outcome = await context.fileHistory.confirmUndo(context.projectRoot, sessionId);
+			return handled(`Undid file change: ${outcome.action} ${outcome.targetPath}`);
+		}
+		const preview = await context.fileHistory.previewUndo(context.projectRoot, sessionId);
+		if (!preview) return handled("No file changes to undo from this session.");
+		const verb = preview.action === "delete" ? "delete" : "restore";
+		return handled(
+			`Undo preview: will ${verb} ${preview.targetPath}. Run /undo confirm to proceed, or /undo cancel.`,
+		);
+	} catch (error) {
+		const operation = action === "confirm" ? "Undo failed" : "Undo preview failed";
+		return handled(`${operation}: ${errorText(error)}`);
+	}
+};
+
 /** Create the shared, headless command registry for both interactive interfaces. */
 export const createAppCommandRegistry = (context: AppCommandContext): CommandRegistry =>
 	createCommandRegistry([
@@ -364,6 +400,11 @@ export const createAppCommandRegistry = (context: AppCommandContext): CommandReg
 			name: "rewind",
 			description: "Keep the first N user turns",
 			execute: (argument) => rewindCommand(context, argument),
+		},
+		{
+			name: "undo",
+			description: "Preview or undo the latest file change from this session",
+			execute: (argument) => undoCommand(context, argument),
 		},
 		{
 			name: "history",

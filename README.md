@@ -151,6 +151,12 @@ Read-only file tools are auto-approved only when the canonical target stays insi
 project. Any path that resolves outside the project—including `~`, absolute paths, parent
 traversal, and symlink targets—requires approval; glob results outside the project are omitted.
 
+Before `write_file` or `edit_file` changes a file, Anvil stores its previous contents under
+`~/.anvil/file-history/`, grouped by hashed project and file paths. It keeps up to 20 versions
+per file and 50 MB of backups per project. At an interactive prompt, use `/undo` to preview the
+latest file change in the current session, `/undo confirm` to restore it (or remove a newly created
+file), and `/undo cancel` to dismiss the preview.
+
 ## Configuration
 
 Global config at `~/.anvil/config.yaml`, created on first run. Change `default_model` to switch models, add providers for remote gateways. See [docs/multi-provider.md](docs/multi-provider.md) for multi-provider setup.

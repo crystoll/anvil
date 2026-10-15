@@ -39,6 +39,7 @@ import {
 	type SessionWriter,
 } from "../session/index.js";
 import { discoverSkills, type Skill } from "../skills/index.js";
+import { createFileHistory, type FileHistory } from "../tools/file-history.js";
 import { builtinTools, createRegistry, createWebFetchTool } from "../tools/index.js";
 import { settleWithin } from "./settle-within.js";
 
@@ -78,6 +79,7 @@ export type AppContext = {
 	lspManager: LspManager | undefined;
 	session: SessionWriter;
 	historyDir: string;
+	fileHistory: FileHistory;
 	buildPrompt: () => string;
 	fireStopHooks: () => Promise<void>;
 	setActiveSkill: (s: Skill | undefined) => void;
@@ -92,6 +94,7 @@ const home = homedir();
 export const paths = (projectRoot: string) => ({
 	configPath: join(home, ".anvil", "config.yaml"),
 	historyDir: join(home, ".anvil", "history"),
+	fileHistoryDir: join(home, ".anvil", "file-history"),
 	promptPath: join(projectRoot, ".anvil", "prompt.md"),
 	mcpPaths: [
 		join(projectRoot, ".anvil", "mcp.json"),
@@ -376,6 +379,7 @@ export const shutdownServices = (
 export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	const projectRoot = flags.path ? resolve(flags.path) : process.cwd();
 	const p = paths(projectRoot);
+	const fileHistory = createFileHistory(p.fileHistoryDir);
 	const { config, defaultEntry } = loadConfigOrExit(p.configPath);
 	const providerSettings = {
 		firstTokenTimeout: config.firstTokenTimeout,
@@ -446,9 +450,12 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	// Agent loop
 	const agentHooks = activeAgent?.hooks ?? {};
 	const hookCtx = { session_id: Date.now().toString(), cwd: projectRoot };
+	const session = openSession(flags, p.historyDir, engine);
 	const agent = createAgentLoop(engine, registry, {
 		maxRounds: config.maxRounds,
 		projectRoot,
+		fileHistory,
+		getSessionId: () => session.id(),
 		systemPrompt: buildPrompt(),
 		getSystemPrompt: buildPrompt,
 		debug: flags.debug,
@@ -477,8 +484,6 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	});
 	runHooks(agentHooks.sessionStart ?? [], { ...hookCtx, hook_event_name: "sessionStart" });
 
-	const session = openSession(flags, p.historyDir, engine);
-
 	return {
 		config,
 		projectRoot,
@@ -497,6 +502,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		lspManager,
 		session,
 		historyDir: p.historyDir,
+		fileHistory,
 		buildPrompt,
 		fireStopHooks: async () => {
 			await runHooks(agentHooks.stop ?? [], { ...hookCtx, hook_event_name: "stop" });

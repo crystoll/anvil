@@ -2,6 +2,7 @@ import { okAsync, ResultAsync } from "neverthrow";
 import type { Engine, EngineEvent } from "../engine/engine.js";
 import { estimateMessagesTokens } from "../engine/history.js";
 import type { Message, Provider, ToolCall } from "../provider/types.js";
+import type { FileHistory } from "../tools/file-history.js";
 import type { Registry, Tool, ToolExecutionContext } from "../tools/registry.js";
 import { parseToolArgs } from "../tools/registry.js";
 import { compactHistory } from "./compact.js";
@@ -40,6 +41,8 @@ export type AgentEvent =
 export type AgentConfig = {
 	maxRounds: number;
 	projectRoot: string;
+	fileHistory?: FileHistory;
+	getSessionId?: () => string | undefined;
 	systemPrompt: string;
 	getSystemPrompt?: () => string;
 	debug?: boolean;
@@ -255,10 +258,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		args: Record<string, unknown>,
 		signal: AbortSignal,
 	): Promise<ToolRun> => {
-		const result = await executeTool(tool, args, {
-			signal,
-			projectRoot: config.projectRoot,
-		});
+		const result = await executeTool(tool, args, toolContext(signal));
 		const run = await transformResult(tool.name, args, result, signal).match<ToolRun>(
 			(transformed) => ({ result: transformed, warnings: [] }),
 			(message) => ({
@@ -268,6 +268,16 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 		);
 		config.onAfterToolUse?.(tool.name, args, run.result);
 		return run;
+	};
+
+	const toolContext = (signal: AbortSignal): ToolExecutionContext => {
+		const sessionId = config.getSessionId?.();
+		return {
+			signal,
+			projectRoot: config.projectRoot,
+			...(config.fileHistory ? { fileHistory: config.fileHistory } : {}),
+			...(sessionId ? { sessionId } : {}),
+		};
 	};
 
 	/** Start a new agent turn with a user message. */
@@ -456,10 +466,7 @@ export const createAgentLoop = (engine: Engine, registry: Registry, config: Agen
 			return { action: "error_fed_back" };
 		}
 
-		const approval = await getApprovalRequirement(tool, argsResult.value, {
-			signal,
-			projectRoot: config.projectRoot,
-		});
+		const approval = await getApprovalRequirement(tool, argsResult.value, toolContext(signal));
 		if ("error" in approval) {
 			engine.addToolResult(call.id, approval.error);
 			return { action: "error_fed_back" };

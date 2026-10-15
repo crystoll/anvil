@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { errAsync, okAsync } from "neverthrow";
@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createEngine } from "../engine/engine.js";
 import type { Provider } from "../provider/types.js";
 import { createSessionWriter } from "../session/writer.js";
+import { createFileHistory } from "../tools/file-history.js";
 import { createRegistry } from "../tools/registry.js";
 import {
 	type AppCommandContext,
@@ -48,7 +49,9 @@ const createHarness = () => {
 		activeSkill: activeSkill.current,
 		availableAgents: [{ name: "reviewer", tools: [], prompt: "agent prompt" }],
 		activeAgent: activeAgent.current,
+		projectRoot: historyDir,
 		historyDir,
+		fileHistory: createFileHistory(join(historyDir, "file-history")),
 		session,
 		setActiveSkill: (skill) => {
 			activeSkill.current = skill;
@@ -80,6 +83,7 @@ describe("app command registry", () => {
 			"plan",
 			"compact",
 			"rewind",
+			"undo",
 			"history",
 			"resume",
 			"retry",
@@ -164,6 +168,38 @@ describe("app command registry", () => {
 		const commands = createAppCommandRegistry(context);
 
 		await expect(commands.dispatch("/continue")).resolves.toEqual({ kind: "continue" });
+	});
+
+	it("previews a session file change and restores it only after confirmation", async () => {
+		const { context, engine, session } = createHarness();
+		engine.loadMessages([
+			{ role: "system", content: "system prompt" },
+			{ role: "user", content: "change a file" },
+		]);
+		session.save();
+		const sessionId = session.id();
+		expect(sessionId).toBeDefined();
+		const targetPath = join(context.projectRoot, "changed.txt");
+		writeFileSync(targetPath, "before");
+		const change = await context.fileHistory.beginChange(
+			context.projectRoot,
+			targetPath,
+			sessionId,
+		);
+		writeFileSync(targetPath, "after");
+		await context.fileHistory.completeChange(change);
+		const commands = createAppCommandRegistry(context);
+
+		await expect(commands.dispatch("/undo")).resolves.toMatchObject({
+			kind: "handled",
+			message: expect.stringContaining("Run /undo confirm"),
+		});
+		expect(readFileSync(targetPath, "utf8")).toBe("after");
+		await expect(commands.dispatch("/undo confirm")).resolves.toMatchObject({
+			kind: "handled",
+			message: expect.stringContaining("restored"),
+		});
+		expect(readFileSync(targetPath, "utf8")).toBe("before");
 	});
 
 	it("rewinds by user turn and changes active skill and agent", async () => {

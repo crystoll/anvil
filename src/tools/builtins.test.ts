@@ -24,37 +24,62 @@ import {
 	search,
 	writeFileTool,
 } from "./builtins.js";
+import { createFileHistory } from "./file-history.js";
 
 const ROOT = join(tmpdir(), "anvil-builtins-test");
-const context = { projectRoot: ROOT, signal: new AbortController().signal };
+const HISTORY_ROOT = join(ROOT, "global-history");
+const context = {
+	projectRoot: ROOT,
+	signal: new AbortController().signal,
+	sessionId: "builtins-test-session",
+	fileHistory: createFileHistory(HISTORY_ROOT),
+};
+const historyDirectoryFor = (projectRoot: string, targetPath: string): string =>
+	join(
+		HISTORY_ROOT,
+		createHash("sha256").update(realpathSync(projectRoot)).digest("hex"),
+		createHash("sha256").update(realpathSync(targetPath)).digest("hex"),
+	);
 
 beforeEach(() => mkdirSync(ROOT, { recursive: true }));
 afterEach(() => rmSync(ROOT, { recursive: true, force: true }));
 
 describe("file history", () => {
 	it("write_file backs up existing file", async () => {
-		writeFileSync(join(ROOT, "hello.txt"), "original");
+		const targetPath = join(ROOT, "hello.txt");
+		writeFileSync(targetPath, "original");
 		await writeFileTool.execute({ path: "hello.txt", content: "new" }, context);
 
-		const histDir = join(ROOT, ".anvil/file-history/hello.txt");
-		const backups = readdirSync(histDir);
+		const historyDirectory = historyDirectoryFor(ROOT, targetPath);
+		const files = readdirSync(historyDirectory);
+		const backups = files.filter((name) => name.endsWith(".bak"));
 		expect(backups.length).toBe(1);
-		expect(readFileSync(join(histDir, backups[0] as string), "utf-8")).toBe("original");
+		expect(readFileSync(join(historyDirectory, backups[0] as string), "utf-8")).toBe("original");
+		const record = files.find((name) => name.endsWith(".json"));
+		expect(
+			JSON.parse(readFileSync(join(historyDirectory, record as string), "utf-8")),
+		).toMatchObject({
+			sessionId: "builtins-test-session",
+			status: "complete",
+		});
 	});
 
-	it("write_file does not backup when file is new", async () => {
+	it("write_file records a new file without creating a content backup", async () => {
 		await writeFileTool.execute({ path: "brand-new.txt", content: "content" }, context);
 
-		const histDir = join(ROOT, ".anvil/file-history/brand-new.txt");
-		expect(() => readdirSync(histDir)).toThrow();
+		const targetPath = join(ROOT, "brand-new.txt");
+		const files = readdirSync(historyDirectoryFor(ROOT, targetPath));
+		expect(files.filter((name) => name.endsWith(".bak"))).toHaveLength(0);
+		expect(files.filter((name) => name.endsWith(".json"))).toHaveLength(1);
 	});
 
 	it("edit_file backs up before editing", async () => {
-		writeFileSync(join(ROOT, "edit-me.txt"), "foo bar baz");
+		const targetPath = join(ROOT, "edit-me.txt");
+		writeFileSync(targetPath, "foo bar baz");
 		await editFileTool.execute({ path: "edit-me.txt", search: "bar", replace: "qux" }, context);
 
-		const histDir = join(ROOT, ".anvil/file-history/edit-me.txt");
-		const backups = readdirSync(histDir);
+		const histDir = historyDirectoryFor(ROOT, targetPath);
+		const backups = readdirSync(histDir).filter((name) => name.endsWith(".bak"));
 		expect(backups.length).toBe(1);
 		expect(readFileSync(join(histDir, backups[0] as string), "utf-8")).toBe("foo bar baz");
 		expect(readFileSync(join(ROOT, "edit-me.txt"), "utf-8")).toBe("foo qux baz");
@@ -71,12 +96,8 @@ describe("file history", () => {
 			{ ...context, projectRoot },
 		);
 
-		const historyDir = join(
-			projectRoot,
-			".anvil/file-history/_external",
-			createHash("sha256").update(realpathSync(externalPath)).digest("hex"),
-		);
-		const backups = readdirSync(historyDir);
+		const historyDir = historyDirectoryFor(projectRoot, externalPath);
+		const backups = readdirSync(historyDir).filter((name) => name.endsWith(".bak"));
 		expect(readFileSync(join(historyDir, backups[0] as string), "utf-8")).toBe("original");
 		expect(readFileSync(externalPath, "utf-8")).toBe("updated");
 	});

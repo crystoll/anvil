@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { backupFile } from "../tools/builtins.js";
+import { defaultFileHistory, writeWithFileHistory } from "../tools/file-history.js";
 import { isPathOutsideProject, resolveRealPath } from "../tools/path-policy.js";
 import type { Tool } from "../tools/registry.js";
 import type { TextEdit } from "./client.js";
@@ -174,7 +174,8 @@ export const createLspRenameTool = (manager: LspManager): Tool => ({
 	requiresApproval: async (args, context) =>
 		isPathOutsideProject(String(args.path ?? ""), context.projectRoot, true),
 	timeout: 15000,
-	execute: async (args, { projectRoot }) => {
+	execute: async (args, context) => {
+		const { projectRoot } = context;
 		const path = String(args.path ?? "");
 		const fullPath = await resolveRealPath(path, projectRoot, true);
 		const edits = await manager.rename(
@@ -193,9 +194,14 @@ export const createLspRenameTool = (manager: LspManager): Tool => ({
 			if (await isPathOutsideProject(filePath, projectRoot))
 				throw new Error(`Refusing to rename files outside the project: ${filePath}`);
 			const absPath = await resolveRealPath(filePath, projectRoot);
-			await backupFile(absPath, projectRoot);
 			const content = applyEdits(readFileSync(absPath, "utf-8"), fileEdits);
-			writeFileSync(absPath, content, "utf-8");
+			await writeWithFileHistory(
+				context.fileHistory ?? defaultFileHistory,
+				projectRoot,
+				context.sessionId,
+				absPath,
+				async () => writeFileSync(absPath, content, "utf-8"),
+			);
 			results.push(`  ${filePath} (${fileEdits.length} edit${fileEdits.length === 1 ? "" : "s"})`);
 		}
 

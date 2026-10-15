@@ -1,11 +1,10 @@
 import { execFile, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { copyFile, mkdir, opendir, readFile, realpath, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { mkdir, opendir, readFile, realpath, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fetchAndExtract, isAllowedWebUrl } from "../web/web-fetch.js";
 import { searchWeb } from "../web/web-search.js";
+import { defaultFileHistory, writeWithFileHistory } from "./file-history.js";
 import {
 	isGlobOutsideProject,
 	isPathOutsideProject,
@@ -14,7 +13,6 @@ import {
 } from "./path-policy.js";
 import type { Tool } from "./registry.js";
 
-const HISTORY_DIR = ".anvil/file-history";
 const RUN_CMD_TIMEOUT_MS = 300_000;
 const PROCESS_KILL_GRACE_MS = 2000;
 const MAX_RUN_CMD_HEAD_LENGTH = 2000;
@@ -27,21 +25,6 @@ const MAX_READ_FILE_LINES = 2000;
 const MAX_READ_FILE_OUTPUT_BYTES = 100 * 1024;
 const MAX_DIRECTORY_RESULTS = 100;
 const MAX_GIT_DIFF_OUTPUT_LENGTH = 20_000;
-
-/** Save a backup of a file before overwriting it. */
-export const backupFile = async (fullPath: string, projectRoot: string): Promise<void> => {
-	if (!existsSync(fullPath)) return;
-	const root = await realpath(projectRoot);
-	const rel = relative(root, fullPath);
-	const isExternal = rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel);
-	const historyPath = isExternal
-		? join("_external", createHash("sha256").update(fullPath).digest("hex"))
-		: rel;
-	const ts = new Date().toISOString().replace(/[:.]/g, "-");
-	const dest = join(root, HISTORY_DIR, historyPath, ts);
-	await mkdir(join(dest, ".."), { recursive: true });
-	await copyFile(fullPath, dest);
-};
 
 const objSchema = (required: string[], properties: Record<string, unknown>) => ({
 	type: "object",
@@ -421,9 +404,16 @@ export const writeFileTool: Tool = {
 		const content = String(args.content ?? "");
 		const fullPath = await resolveRealPath(path, context.projectRoot, true);
 
-		await backupFile(fullPath, context.projectRoot);
-		await mkdir(join(fullPath, ".."), { recursive: true });
-		await writeFile(fullPath, content, "utf-8");
+		await writeWithFileHistory(
+			context.fileHistory ?? defaultFileHistory,
+			context.projectRoot,
+			context.sessionId,
+			fullPath,
+			async () => {
+				await mkdir(join(fullPath, ".."), { recursive: true });
+				await writeFile(fullPath, content, "utf-8");
+			},
+		);
 		return `Wrote ${content.split("\n").length} lines to ${path}`;
 	},
 };
@@ -459,9 +449,14 @@ export const editFileTool: Tool = {
 				`Search has ${matches.length} matches on lines ${matches.map(({ line }) => line).join(", ")}. Set replace_all: true to replace all matches.`,
 			);
 		const selected = replaceAll ? matches : matches.slice(0, 1);
-		await backupFile(fullPath, context.projectRoot);
 		const updated = replaceMatches(content, selected, replace);
-		await writeFile(fullPath, updated, "utf-8");
+		await writeWithFileHistory(
+			context.fileHistory ?? defaultFileHistory,
+			context.projectRoot,
+			context.sessionId,
+			fullPath,
+			() => writeFile(fullPath, updated, "utf-8"),
+		);
 		return `Edited ${path}: replaced ${selected.length} match${selected.length === 1 ? "" : "es"}`;
 	},
 };

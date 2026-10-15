@@ -2,12 +2,18 @@ import { jsonrepair } from "jsonrepair";
 import type { Result } from "neverthrow";
 import { err, ok } from "neverthrow";
 import type { ToolSchema } from "../provider/types.js";
+import type { FileHistory } from "./file-history.js";
 
 /** Error from tool execution. */
 export type ToolError = { kind: "execution"; message: string; cause?: unknown };
 
-/** Context shared with a tool for project access and turn cancellation. */
-export type ToolExecutionContext = { signal: AbortSignal; projectRoot: string };
+/** Context shared with a tool for project access, undo history, and turn cancellation. */
+export type ToolExecutionContext = {
+	signal: AbortSignal;
+	projectRoot: string;
+	sessionId?: string;
+	fileHistory?: FileHistory;
+};
 
 /** A tool the agent can invoke. */
 export type Tool = {

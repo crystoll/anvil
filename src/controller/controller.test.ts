@@ -8,6 +8,7 @@ import { createOllamaProvider } from "../provider/ollama-native.js";
 import { createSessionWriter } from "../session/writer.js";
 import { startMockOllama } from "../test-support/mock-ollama.js";
 import type { MockStreamServer, StreamFaultScript } from "../test-support/mock-stream-server.js";
+import { createFileHistory } from "../tools/file-history.js";
 import { createRegistry, type Tool } from "../tools/registry.js";
 import { type AppCommandContext, createAppCommandRegistry } from "./app-commands.js";
 import { type CommandRegistry, createCommandRegistry } from "./commands.js";
@@ -269,7 +270,9 @@ describe("session controller", () => {
 			activeSkill: undefined,
 			availableAgents: [agentDefinition],
 			activeAgent: undefined,
+			projectRoot: historyDir,
 			historyDir,
+			fileHistory: createFileHistory(join(historyDir, "file-history")),
 			session,
 			setActiveSkill: () => undefined,
 			setActiveAgent: () => undefined,

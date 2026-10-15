@@ -606,11 +606,10 @@ type SessionController = {
   - Tools that aren't auto-approvable run only with `--yes`.
   - Without it, skipped calls get an explanatory tool result and are listed on stderr.
   - **Validated:** one-shot integration tests confirm approval-gated tools are skipped with a tool result and stderr notice, and execute with `--yes`. The README documents the new behavior.
-- [ ] **M11.5 [L] Backups and `/undo`.**
-  - Move backups from `<project>/.anvil/file-history` to `~/.anvil/file-history/<project-hash>/`.
-  - Cap them at 20 versions per file and 50 MB in total.
-  - `/undo` restores the last write or edit from this session, after confirmation.
-  - **Test first:** create, prune and undo.
+- [x] **M11.5 [L] Backups and `/undo`.**
+  - Store hashed project/file backups under `~/.anvil/file-history/`, retaining 20 versions per file and at most 50 MB per project.
+  - Persist session-scoped change records for `write_file`, `edit_file`, and LSP rename; recover interrupted writes and preview `/undo` before `/undo confirm` restores or removes the latest session change. `/undo cancel` dismisses the preview.
+  - **Validated:** storage location and limits, retention, interrupted-write recovery, session isolation, preview/confirm behavior, stale-file protection, and both shared command and tool paths. README documents the workflow.
 
 **Validation stop:** the gate passes, plus S2 and S3, and an `-c` run without `--yes` shows the `run_cmd` call as skipped.
 
