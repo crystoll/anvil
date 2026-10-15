@@ -249,6 +249,75 @@ describe("openSession", () => {
 		expect(listSessions(historyDir)).toEqual([]);
 	});
 
+	it("notifies when the latest session for this project was interrupted", () => {
+		saveSession(historyDir, [question], "interrupted1", undefined, {
+			cwd: "/work/project",
+			status: "interrupted",
+		});
+
+		const session = openSession(interactive, historyDir, newEngine(), {}, "/work/project");
+
+		expect(session.resumeNotice).toBe("Last session was interrupted — /resume to continue");
+	});
+
+	it("detects an unanswered request saved before a process interruption", () => {
+		saveSession(historyDir, [question], "crashed001", undefined, {
+			cwd: "/work/project",
+		});
+
+		const session = openSession(interactive, historyDir, newEngine(), {}, "/work/project");
+
+		expect(session.resumeNotice).toBe("Last session was interrupted — /resume to continue");
+	});
+
+	it("does not notify for another project or an answered latest session", () => {
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(new Date(1000));
+			saveSession(historyDir, [question], "oldproject1", undefined, {
+				cwd: "/work/project",
+				status: "interrupted",
+			});
+			vi.setSystemTime(new Date(1500));
+			saveSession(historyDir, [question], "other0001", undefined, {
+				cwd: "/work/elsewhere",
+				status: "interrupted",
+			});
+			vi.setSystemTime(new Date(2000));
+			saveSession(
+				historyDir,
+				[question, { role: "assistant", content: "Done" }],
+				"project01",
+				undefined,
+				{ cwd: "/work/project" },
+			);
+
+			const session = openSession(interactive, historyDir, newEngine(), {}, "/work/project");
+
+			expect(session.resumeNotice).toBeUndefined();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not show an interruption notice after resuming the interrupted session", () => {
+		saveSession(historyDir, [question], "interrupted1", undefined, {
+			cwd: "/work/project",
+			status: "interrupted",
+		});
+
+		const session = openSession(
+			{ command: undefined, resume: true },
+			historyDir,
+			newEngine(),
+			{},
+			"/work/project",
+		);
+
+		expect(session.id()).toBe("interrupted1");
+		expect(session.resumeNotice).toBeUndefined();
+	});
+
 	it("continues the latest session with --resume", () => {
 		const id = saveSession(historyDir, [question])._unsafeUnwrap();
 		const engine = newEngine();

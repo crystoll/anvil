@@ -129,6 +129,8 @@ pnpm dev -- ~/code/project -c "run tests"  # One-shot in a specific directory
 
 If anvil crashes, it saves the conversation first and writes the details to `~/.anvil/logs/`. Pick up where you left off with `--resume`; it prefers the latest session for the current project and reports when it falls back to another project. Use `--resume <id>` to select a specific session by ID or unique prefix.
 
+On startup, Anvil warns when the latest session for the current project was interrupted, ended with an error, or contains an unanswered request: `Last session was interrupted — /resume to continue`.
+
 In one-shot `-c` mode, tools that require approval are skipped by default. The tool result is
 returned to the model and the skipped call is reported on stderr. Pass `--yes` only when you
 intend to let the one-shot run execute approval-gated tools.

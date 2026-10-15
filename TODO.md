@@ -153,7 +153,7 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
 
 1. Do **M13.1–M13.4** as an early CI safety net (mostly **[S]**, with **M13.3 [XS]**): refresh pinned Actions after reviewing changelogs, add Node 22/24, raise the production audit gate, and run integration tests in CI.
 2. Fix **M9.4 [S]**: reproduce and prevent the first-Enter-after-launch issue.
-3. Finish **M12.4 [S]** and **M12.5 [S]**: add the interrupted-session notice, then measure listing performance; add an index only if it crosses the documented thresholds.
+3. Finish **M12.5 [S]**: measure listing performance; add an index only if it crosses the documented thresholds.
 4. Do **M13.5 Renovate [M]** after CI is stable, so automatic updates are governed by the completed checks.
 5. Complete **M14 [L]** only after all scheduled M0–M13 work is done; audit documentation, add deterministic and real-model screenshots, perform the final repository and code/test review, validate, then delete this TODO file.
 
@@ -622,7 +622,8 @@ type SessionController = {
   - In the TUI, `/history` opens an arrow-key picker that loads the chosen session, repairing it on load (M4.4).
   - `/resume <id>` works in both UIs.
   - **Done:** the TUI picker lists session titles, IDs, status, model and project path; selecting a session uses the shared resume command, which repairs and saves interrupted tool history. `/resume <id>` remains available through the shared command registry in both UIs.
-- [ ] **M12.4 [S] Startup notice** when the latest session for this project ended mid-turn: "Last session was interrupted — /resume to continue".
+- [x] **M12.4 [S] Startup notice** when the latest session for this project ended mid-turn: "Last session was interrupted — /resume to continue".
+  - **Done:** the TUI and readline CLI warn for the latest project session marked interrupted/error or containing an unanswered request, including crash-truncated sessions; already-resumed sessions and unrelated projects do not trigger the notice.
 - [ ] **M12.5 [S] Measure `listSessions`,** which parses every file. Add an index only past 200 sessions or 200 ms; until then, YAGNI. If indexing is needed, size that follow-up after measurement.
 
 **Validation stop:** the gate passes, plus S4 and S6, and resuming works from another directory.

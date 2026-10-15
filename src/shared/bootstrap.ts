@@ -420,6 +420,25 @@ const tryResumeSession = (
 	};
 };
 
+const isInterruptedSession = (historyDir: string, session: SessionMeta): boolean => {
+	if (session.status === "interrupted" || session.status === "error") return true;
+	const loaded = loadSession(historyDir, session.id);
+	return loaded.isOk() && repairHistory(loaded.value.messages).hasUnansweredUser;
+};
+
+const interruptedSessionNotice = (historyDir: string, projectRoot: string): string | undefined => {
+	try {
+		const latest = listSessions(historyDir).find((session) => session.cwd === projectRoot);
+		return latest && isInterruptedSession(historyDir, latest)
+			? "Last session was interrupted — /resume to continue"
+			: undefined;
+	} catch (error) {
+		return `Couldn't check saved sessions for interruption: ${
+			error instanceof Error ? error.message : String(error)
+		}`;
+	}
+};
+
 /**
  * Saves the conversation as each message lands, so a crash or kill mid-turn loses at most the
  * answer being streamed. One-shot runs are never saved.
@@ -434,9 +453,12 @@ export const openSession = (
 	const resumeResult = flags.resume
 		? tryResumeSession(historyDir, engine, projectRoot, flags.resumeId)
 		: undefined;
+	const resumeNotice =
+		resumeResult?.notice ??
+		(!flags.resume ? interruptedSessionNotice(historyDir, projectRoot) : undefined);
 	const session = createSessionWriter(historyDir, engine.messages, resumeResult?.id, {
 		...options,
-		...(resumeResult?.notice ? { resumeNotice: resumeResult.notice } : {}),
+		...(resumeNotice ? { resumeNotice } : {}),
 	});
 	// A failed save is reported by the save the UI makes at the end of the turn.
 	if (!flags.command) engine.onCommit(() => session.save());
