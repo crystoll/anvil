@@ -1,5 +1,6 @@
 import { okAsync, ResultAsync } from "neverthrow";
 import { createProvider } from "./openai-compatible.js";
+import { DEFAULT_CONNECT_TIMEOUT_SECONDS } from "./timeouts.js";
 import type {
 	CompleteOptions,
 	CompletionResult,
@@ -36,7 +37,7 @@ export type LlamaCppProvider = Provider & {
  */
 export const createLlamaCppProvider = (name: string, config: ProviderConfig): LlamaCppProvider => {
 	const baseUrl = config.endpoint.replace(/\/$/, "");
-	const connectTimeout = (config.connectTimeout ?? 3) * 1000;
+	const connectTimeout = (config.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT_SECONDS) * 1000;
 
 	// Underlying OAI-compatible provider does the real streaming/completion work.
 	// The llama.cpp server's /v1 endpoints are fully OpenAI-compatible.

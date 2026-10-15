@@ -2,6 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { load as yamlLoad } from "js-yaml";
 import { err, ok, type Result } from "neverthrow";
+import {
+	DEFAULT_CONNECT_TIMEOUT_SECONDS,
+	DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS,
+	DEFAULT_STREAM_TIMEOUT_SECONDS,
+} from "../provider/timeouts.js";
 
 /** Provider entry in config. */
 export type ProviderEntry = {
@@ -16,6 +21,7 @@ export type AnvilConfig = {
 	defaultModel: string;
 	providers: Record<string, ProviderEntry>;
 	keepAlive: string | number;
+	firstTokenTimeout: number;
 	streamTimeout: number;
 	connectTimeout: number;
 	maxRounds: number;
@@ -32,8 +38,9 @@ const DEFAULT_CONFIG: AnvilConfig = {
 		ollama: { endpoint: "http://localhost:11434" },
 	},
 	keepAlive: "30m",
-	streamTimeout: 120,
-	connectTimeout: 300,
+	firstTokenTimeout: DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS,
+	streamTimeout: DEFAULT_STREAM_TIMEOUT_SECONDS,
+	connectTimeout: DEFAULT_CONNECT_TIMEOUT_SECONDS,
 	maxRounds: 25,
 	showTokens: true,
 	contextSize: 32768,
@@ -42,8 +49,9 @@ const DEFAULT_CONFIG: AnvilConfig = {
 const DEFAULT_YAML = `default_provider: ollama
 default_model: gemma4:e4b
 keep_alive: 30m
-stream_timeout: 120
-connect_timeout: 300
+first_token_timeout: ${DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS}
+stream_timeout: ${DEFAULT_STREAM_TIMEOUT_SECONDS}
+connect_timeout: ${DEFAULT_CONNECT_TIMEOUT_SECONDS}
 context_size: 32768
 max_rounds: 25
 
@@ -105,8 +113,9 @@ const validateConfig = (raw: Record<string, unknown>): Result<AnvilConfig, Confi
 		defaultModel,
 		providers: providers.value,
 		keepAlive: toKeepAlive(raw.keep_alive),
-		streamTimeout: toNumber(raw.stream_timeout, 120),
-		connectTimeout: toNumber(raw.connect_timeout, 300),
+		firstTokenTimeout: toNumber(raw.first_token_timeout, DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS),
+		streamTimeout: toNumber(raw.stream_timeout, DEFAULT_STREAM_TIMEOUT_SECONDS),
+		connectTimeout: toNumber(raw.connect_timeout, DEFAULT_CONNECT_TIMEOUT_SECONDS),
 		maxRounds: toNumber(raw.max_rounds, 25),
 		contextSize: toNumber(process.env.ANVIL_CONTEXT_SIZE ?? raw.context_size, 32768),
 		showTokens: raw.show_tokens !== false,

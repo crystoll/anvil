@@ -13,7 +13,12 @@ describe("stream reader cancellation", () => {
 		const controller = new AbortController();
 		const results = (async () => {
 			const readResults = [];
-			for await (const result of readWithTimeout(body.getReader(), 10_000, controller.signal)) {
+			for await (const result of readWithTimeout(
+				body.getReader(),
+				10_000,
+				10_000,
+				controller.signal,
+			)) {
 				readResults.push(result);
 			}
 			return readResults;

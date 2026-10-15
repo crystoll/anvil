@@ -1,6 +1,11 @@
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { requestMessageContent } from "./request-message.js";
 import { readWithTimeout, type StreamReadResult } from "./stream-reader.js";
+import {
+	DEFAULT_CONNECT_TIMEOUT_SECONDS,
+	DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS,
+	DEFAULT_STREAM_TIMEOUT_SECONDS,
+} from "./timeouts.js";
 import type {
 	CompleteOptions,
 	CompletionResult,
@@ -16,8 +21,10 @@ import type {
 
 /** Creates an OpenAI-compatible provider (works with Ollama, LM Studio, llama.cpp, LiteLLM). */
 export const createProvider = (name: string, config: ProviderConfig): Provider => {
-	const streamTimeout = (config.streamTimeout ?? 30) * 1000;
-	const connectTimeout = (config.connectTimeout ?? 3) * 1000;
+	const firstTokenTimeout =
+		(config.firstTokenTimeout ?? DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS) * 1000;
+	const streamTimeout = (config.streamTimeout ?? DEFAULT_STREAM_TIMEOUT_SECONDS) * 1000;
+	const connectTimeout = (config.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT_SECONDS) * 1000;
 	const baseUrl = config.endpoint.replace(/\/$/, "");
 
 	const headers = (): Record<string, string> => {
@@ -98,7 +105,7 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 					message: "Response has no body",
 				});
 			}
-			return okAsync(parseSSEStream(response.body, streamTimeout, opts.signal));
+			return okAsync(parseSSEStream(response.body, firstTokenTimeout, streamTimeout, opts.signal));
 		});
 	};
 
@@ -127,7 +134,7 @@ export const createProvider = (name: string, config: ProviderConfig): Provider =
 				method: "POST",
 				headers: headers(),
 				body: JSON.stringify(body),
-				signal: AbortSignal.timeout(connectTimeout + streamTimeout),
+				signal: AbortSignal.timeout(connectTimeout + firstTokenTimeout + streamTimeout),
 			}).then((r) => {
 				if (!r.ok) throw { kind: "api", status: r.status, message: `API returned ${r.status}` };
 				return r.json();
@@ -179,7 +186,8 @@ const parseSSELine = (line: string): StreamChunk[] | "done" | undefined => {
 /** Parse SSE stream into data chunks followed by exactly one terminal chunk. */
 async function* parseSSEStream(
 	body: ReadableStream<Uint8Array>,
-	timeout: number,
+	firstTokenTimeout: number,
+	streamTimeout: number,
 	signal?: AbortSignal,
 ): AsyncIterable<StreamChunk> {
 	const reader = body.getReader();
@@ -187,7 +195,7 @@ async function* parseSSEStream(
 	const state: SSEState = { think: { inside: false, pending: "" } };
 	let buffer = "";
 
-	for await (const result of readWithTimeout(reader, timeout, signal)) {
+	for await (const result of readWithTimeout(reader, firstTokenTimeout, streamTimeout, signal)) {
 		const decoded = decodeSSERead(result, buffer, decoder);
 		if (decoded.kind === "failure") {
 			yield* terminalFailure(state, decoded.error);

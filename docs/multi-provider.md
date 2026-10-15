@@ -21,6 +21,9 @@ default_provider: ollama
 default_model: gemma4:e4b
 context_size: 32768  # 32k default — increase for large codebases
 keep_alive: 30m       # keep native Ollama models loaded between requests
+first_token_timeout: 300  # allow model load and prompt evaluation
+stream_timeout: 120        # maximum pause between response chunks
+connect_timeout: 300       # HTTP connection establishment
 
 providers:
   ollama:
@@ -36,6 +39,11 @@ providers:
 
 `keep_alive` is sent to Ollama's native API for streamed and non-streamed requests. It defaults
 to `30m`; set it to a duration such as `5m` or a number of seconds accepted by Ollama.
+
+`first_token_timeout` controls how long Anvil waits for a stream's first response chunk;
+`stream_timeout` applies to pauses between later chunks. Both are in seconds and default to
+`300` and `120`, respectively. `connect_timeout` separately limits connection setup and waiting
+for response headers.
 
 ## Usage
 

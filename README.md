@@ -155,10 +155,14 @@ Anvil uses Ollama's native API (`/api/chat`) which supports runtime context cont
 ```yaml
 context_size: 131072  # 128k — use for large codebases
 keep_alive: 30m       # keep native Ollama models loaded between requests
+first_token_timeout: 300  # model load and prompt evaluation, in seconds
+stream_timeout: 120        # pause allowed between later response chunks
 ```
 
 `context_size` is sent as `options.num_ctx` in every request. `keep_alive` controls how long
-Ollama keeps the model loaded; it defaults to `30m`. No custom Modelfile needed.
+Ollama keeps the model loaded; it defaults to `30m`. The timeout defaults let slow local models
+take up to 300 seconds to produce their first response chunk, then 120 seconds between chunks.
+No custom Modelfile needed.
 
 > **Note**: If your config has `endpoint: http://localhost:11434/v1` (the `/v1` suffix), Anvil uses the OpenAI-compatible endpoint which does not support context control. Remove the `/v1` to use the native API.
 

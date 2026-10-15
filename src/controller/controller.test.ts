@@ -203,6 +203,7 @@ describe("session controller", () => {
 			config: {
 				providers: { ollama: { endpoint: mock.endpoint } },
 				contextSize: 4096,
+				firstTokenTimeout: 300,
 				connectTimeout: 1,
 				streamTimeout: 5,
 				keepAlive: "30m",

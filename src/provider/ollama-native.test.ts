@@ -585,7 +585,7 @@ describe("ollama-native provider", () => {
 				}),
 			);
 
-			const providerConfig = Object.assign({}, config, { keepAlive: "2h" });
+			const providerConfig = { ...config, keepAlive: "2h" };
 			const provider = createOllamaProvider("ollama", providerConfig);
 			const options = { contextSize: 32768, temperature: 0.4, maxTokens: 1024 };
 			const result = await provider.completeChat(

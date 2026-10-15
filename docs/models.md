@@ -106,8 +106,9 @@ export OLLAMA_CONTEXT_LENGTH=32000  # default context for models (Anvil override
 ```yaml
 default_provider: ollama
 default_model: qwen3.6:35b          # fast MoE, best speed+capability on 36GB; gemma4:e4b for lighter tasks
+first_token_timeout: 300            # cold model load and prompt evaluation, seconds
 stream_timeout: 120
-connect_timeout: 300                # cold model load from disk can take 30-60s
+connect_timeout: 300                # HTTP connection and response headers, seconds
 context_size: 65536                 # 64k — qwen3.6:35b at 64k uses ~28GB total, fits in 36GB
 
 providers:
@@ -262,8 +263,9 @@ ollama ps               # check context size and GPU/CPU split
 ```yaml
 default_provider: ollama
 default_model: qwen3.5:9b-q8_0   # fully in VRAM at 64k; swap for qwen3.8:27b if you prefer capability over speed
+first_token_timeout: 300           # model load and prompt evaluation
 stream_timeout: 120
-connect_timeout: 60               # GPU loads models fast; 60s is sufficient
+connect_timeout: 60                # HTTP connection and response headers
 context_size: 65536               # 64k — fits fully in 16GB VRAM with 9b-q8_0; expect CPU offload with 27b
 
 providers:

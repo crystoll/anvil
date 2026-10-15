@@ -99,6 +99,7 @@ const writeScript = async (
 	}
 
 	response.writeHead(200, { "Content-Type": format.contentType });
+	response.flushHeaders();
 	const frames = script.frames ?? [];
 	for (const [index, frame] of frames.entries()) {
 		if (index === script.dropAfter) {

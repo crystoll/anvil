@@ -5,21 +5,28 @@ export type StreamReadResult =
 	| { kind: "cancelled" }
 	| { kind: "error"; cause: unknown };
 
-/** Read one network chunk at a time, distinguishing stalls, aborts, drops and normal EOF. */
+/** Use a first-read timeout, then a separate timeout for stalls between later reads. */
 export async function* readWithTimeout(
 	reader: ReadableStreamDefaultReader<Uint8Array>,
-	timeout: number,
+	firstReadTimeoutMs: number,
+	streamTimeoutMs: number,
 	signal?: AbortSignal,
 ): AsyncGenerator<StreamReadResult> {
 	let completed = false;
+	let firstRead = true;
 	try {
 		while (true) {
-			const result = await readNext(reader, timeout, signal);
+			const result = await readNext(
+				reader,
+				firstRead ? firstReadTimeoutMs : streamTimeoutMs,
+				signal,
+			);
 			if (result.kind !== "chunk") {
 				completed = true;
 				yield result;
 				return;
 			}
+			if (result.value.byteLength > 0) firstRead = false;
 			yield result;
 		}
 	} finally {

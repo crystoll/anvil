@@ -35,6 +35,7 @@ const createHarness = () => {
 		config: {
 			providers: { test: { endpoint: "http://127.0.0.1:1" } },
 			contextSize: 4096,
+			firstTokenTimeout: 300,
 			connectTimeout: 1,
 			streamTimeout: 1,
 			keepAlive: "30m",

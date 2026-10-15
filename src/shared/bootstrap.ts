@@ -144,11 +144,17 @@ export const parseFlags = (argv: string[]): Flags => {
 export const makeProvider = (
 	name: string,
 	entry: ProviderEntry,
-	settings: { streamTimeout: number; connectTimeout: number; keepAlive: string | number },
+	settings: {
+		firstTokenTimeout: number;
+		streamTimeout: number;
+		connectTimeout: number;
+		keepAlive: string | number;
+	},
 ): Provider => {
 	const providerConfig = {
 		endpoint: entry.endpoint,
 		...(entry.apiKey ? { apiKey: entry.apiKey } : {}),
+		firstTokenTimeout: settings.firstTokenTimeout,
 		streamTimeout: settings.streamTimeout,
 		connectTimeout: settings.connectTimeout,
 		keepAlive: settings.keepAlive,
@@ -369,7 +375,8 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 	const projectRoot = flags.path ? resolve(flags.path) : process.cwd();
 	const p = paths(projectRoot);
 	const { config, defaultEntry } = loadConfigOrExit(p.configPath);
-	const timeouts = {
+	const providerSettings = {
+		firstTokenTimeout: config.firstTokenTimeout,
 		streamTimeout: config.streamTimeout,
 		connectTimeout: config.connectTimeout,
 		keepAlive: config.keepAlive,
@@ -389,7 +396,7 @@ export const bootstrap = async (flags: Flags): Promise<AppContext> => {
 		config.defaultProvider,
 	);
 	const bootEntry = config.providers[resolved.provider] ?? defaultEntry;
-	const provider = makeProvider(resolved.provider, bootEntry, timeouts);
+	const provider = makeProvider(resolved.provider, bootEntry, providerSettings);
 	const activeProviderName = resolved.provider;
 	const engine = createEngine(provider, resolved.model, { debug: flags.debug });
 

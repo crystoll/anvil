@@ -103,7 +103,12 @@ describe("makeProvider", () => {
 		const provider = makeProvider(
 			"ollama",
 			{ endpoint: "http://localhost:11434" },
-			{ streamTimeout: 2, connectTimeout: 2, keepAlive: "45m" },
+			{
+				firstTokenTimeout: 300,
+				streamTimeout: 2,
+				connectTimeout: 2,
+				keepAlive: "45m",
+			},
 		);
 		const result = await provider.completeChat("m", [{ role: "user", content: "hi" }], [], {});
 

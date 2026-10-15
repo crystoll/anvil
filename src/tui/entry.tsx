@@ -38,6 +38,7 @@ const listModels = async (): Promise<string[]> => {
 	const results = await Promise.all(
 		healthyProviders.map(async ([name, entry]) => {
 			const result = await makeProvider(name, entry, {
+				firstTokenTimeout: ctx.config.firstTokenTimeout,
 				streamTimeout: ctx.config.streamTimeout,
 				connectTimeout: ctx.config.connectTimeout,
 				keepAlive: ctx.config.keepAlive,

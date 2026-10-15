@@ -83,7 +83,26 @@ providers:
 		const config = result._unsafeUnwrap();
 		expect(config.streamTimeout).toBe(120);
 		expect(config.connectTimeout).toBe(300);
+		expect(config).toMatchObject({ firstTokenTimeout: 300 });
 		expect(config.maxRounds).toBe(25);
+	});
+
+	it("loads a configured first-token timeout", () => {
+		writeFileSync(
+			CONFIG_PATH,
+			`default_provider: ollama
+default_model: qwen3:8b
+first_token_timeout: 90
+providers:
+  ollama:
+    endpoint: http://localhost:11434
+`,
+		);
+
+		const result = loadConfig(CONFIG_PATH);
+
+		expect(result.isOk()).toBe(true);
+		expect(result._unsafeUnwrap()).toMatchObject({ firstTokenTimeout: 90 });
 	});
 
 	it("returns err for invalid YAML", () => {

@@ -4,7 +4,7 @@ import { startMockOpenAI } from "../test-support/mock-openai.js";
 import type { MockStreamServer } from "../test-support/mock-stream-server.js";
 import { createOllamaProvider } from "./ollama-native.js";
 import { createProvider } from "./openai-compatible.js";
-import type { Provider, StreamChunk } from "./types.js";
+import type { Provider, ProviderConfig, StreamChunk } from "./types.js";
 
 const servers: MockStreamServer[] = [];
 
@@ -80,6 +80,55 @@ describe("streaming provider contracts", () => {
 		const chunks = await consume(
 			createOllamaProvider("ollama", { endpoint: mock.endpoint, streamTimeout: 0.05 }),
 		);
+
+		expect(chunks.at(-1)).toMatchObject({ done: true, error: { kind: "timeout" } });
+	});
+
+	it("allows more time for the first Ollama chunk than for a later stall", async () => {
+		const mock = await startOllama({
+			frames: [ollamaFrame("first")],
+			delayMs: 200,
+			stallAfter: 1,
+		});
+		const providerConfig: ProviderConfig = {
+			endpoint: mock.endpoint,
+			firstTokenTimeout: 0.5,
+			streamTimeout: 0.05,
+		};
+		const chunks = await consume(createOllamaProvider("ollama", providerConfig));
+
+		expect(chunks).toMatchObject([
+			{ content: "first", done: false },
+			{ done: true, error: { kind: "timeout" } },
+		]);
+	});
+
+	it("times out if Ollama does not produce a first chunk in time", async () => {
+		const mock = await startOllama({
+			frames: [ollamaFrame("late", true, "stop")],
+			delayMs: 100,
+		});
+		const providerConfig: ProviderConfig = {
+			endpoint: mock.endpoint,
+			firstTokenTimeout: 0.02,
+			streamTimeout: 1,
+		};
+		const chunks = await consume(createOllamaProvider("ollama", providerConfig));
+
+		expect(chunks.at(-1)).toMatchObject({ done: true, error: { kind: "timeout" } });
+	});
+
+	it("uses the first-token timeout for OpenAI-compatible streams", async () => {
+		const mock = await startOpenAI({
+			frames: [openAIFrame({ content: "late" }, "stop")],
+			delayMs: 100,
+		});
+		const providerConfig: ProviderConfig = {
+			endpoint: `${mock.endpoint}/v1`,
+			firstTokenTimeout: 0.02,
+			streamTimeout: 1,
+		};
+		const chunks = await consume(createProvider("test", providerConfig));
 
 		expect(chunks.at(-1)).toMatchObject({ done: true, error: { kind: "timeout" } });
 	});

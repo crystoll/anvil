@@ -81,9 +81,11 @@ export type CompleteOptions = {
 export type ProviderConfig = {
 	endpoint: string;
 	apiKey?: string;
-	/** Seconds without a chunk before aborting stream (default 30). */
+	/** Seconds between response chunks before aborting the stream (default 120). */
 	streamTimeout?: number;
-	/** Seconds to establish connection (default 3). */
+	/** Seconds allowed before the first response chunk arrives (default 300). */
+	firstTokenTimeout?: number;
+	/** Seconds for fetch to receive response headers (default 300). */
 	connectTimeout?: number;
 	/** Ollama model retention duration (default "30m"). */
 	keepAlive?: string | number;

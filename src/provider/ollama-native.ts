@@ -2,6 +2,11 @@ import { err, errAsync, ok, okAsync, Result, ResultAsync } from "neverthrow";
 import { isPlainObject } from "remeda";
 import { requestMessageContent } from "./request-message.js";
 import { readWithTimeout, type StreamReadResult } from "./stream-reader.js";
+import {
+	DEFAULT_CONNECT_TIMEOUT_SECONDS,
+	DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS,
+	DEFAULT_STREAM_TIMEOUT_SECONDS,
+} from "./timeouts.js";
 import type {
 	CompleteOptions,
 	CompletionResult,
@@ -29,8 +34,10 @@ const parseStoredArguments = (raw: string): Result<Record<string, unknown>, stri
 
 /** Creates a native Ollama provider using /api/chat with options.num_ctx support. */
 export const createOllamaProvider = (name: string, config: ProviderConfig): Provider => {
-	const streamTimeout = (config.streamTimeout ?? 30) * 1000;
-	const connectTimeout = (config.connectTimeout ?? 3) * 1000;
+	const firstTokenTimeout =
+		(config.firstTokenTimeout ?? DEFAULT_FIRST_TOKEN_TIMEOUT_SECONDS) * 1000;
+	const streamTimeout = (config.streamTimeout ?? DEFAULT_STREAM_TIMEOUT_SECONDS) * 1000;
+	const connectTimeout = (config.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT_SECONDS) * 1000;
 	const baseUrl = config.endpoint.replace(/\/$/, "");
 
 	const buildMessages = (messages: Message[]) =>
@@ -208,7 +215,9 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 					message: "Response has no body",
 				});
 			}
-			return okAsync(parseNDJSONStream(response.body, streamTimeout, opts.signal));
+			return okAsync(
+				parseNDJSONStream(response.body, firstTokenTimeout, streamTimeout, opts.signal),
+			);
 		});
 	};
 
@@ -271,14 +280,15 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 
 	async function* parseNDJSONStream(
 		body: ReadableStream<Uint8Array>,
-		timeout: number,
+		firstTokenTimeout: number,
+		streamTimeout: number,
 		signal?: AbortSignal,
 	): AsyncIterable<StreamChunk> {
 		const reader = body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
 		const toolCallCounter = { value: 0 };
-		for await (const result of readWithTimeout(reader, timeout, signal)) {
+		for await (const result of readWithTimeout(reader, firstTokenTimeout, streamTimeout, signal)) {
 			const decoded = decodeNDJSONRead(result, buffer, decoder);
 			if (decoded.kind === "failure") {
 				yield { done: true, error: decoded.error };
@@ -317,7 +327,7 @@ export const createOllamaProvider = (name: string, config: ProviderConfig): Prov
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify(body),
-				signal: AbortSignal.timeout(connectTimeout + streamTimeout),
+				signal: AbortSignal.timeout(connectTimeout + firstTokenTimeout + streamTimeout),
 			}).then((r) => {
 				if (!r.ok)
 					throw { kind: "api", status: r.status, message: `Ollama API returned ${r.status}` };

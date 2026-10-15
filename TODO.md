@@ -525,9 +525,9 @@ type SessionController = {
   - Optional `think` is deferred until Anvil has model-specific capability settings.
 
   **Done:** request-body tests cover both API paths; compaction passes its context size; `keep_alive` is configurable with a `30m` default.
-- [ ] **M10.2 One source of timeout defaults.**
-  - Today the providers fall back to 30 s and 3 s, while the config defaults are 120 s and 300 s.
-  - Split `first_token_timeout` (model load plus prompt eval; 300 s by default for local models) from `stream_timeout` (stall between chunks; 120 s).
+- [x] **M10.2 One source of timeout defaults.**
+  - Split `first_token_timeout` (model load plus prompt eval; 300 s by default for local models) from `stream_timeout` (stall between chunks; 120 s); keep `connect_timeout` separate.
+  - **Done:** shared constants now supply config and provider defaults; streaming applies the first-token timeout before its first response chunk and the stream timeout thereafter. Non-streaming completions receive a bounded budget for all three phases.
 - [ ] **M10.3 Real token accounting.**
   - Calibrate the chars/4 estimate with `prompt_eval_count` and `eval_count`, or OpenAI's `usage`.
   - Compact proactively at about 80 % of `num_ctx`.
