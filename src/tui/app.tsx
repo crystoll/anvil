@@ -497,6 +497,20 @@ type InputAreaProps = {
 	onSubmit: (value: string) => void;
 };
 
+const handleInputChange = (
+	value: string,
+	setInput: Dispatch<SetStateAction<string>>,
+	onSubmit: (value: string) => void,
+): void => {
+	const submittedValue = value.replace(/[\r\n]+$/, "");
+	if (submittedValue !== value) {
+		setInput("");
+		onSubmit(submittedValue.trim());
+		return;
+	}
+	setInput(value);
+};
+
 function InputArea({
 	state,
 	picker,
@@ -528,7 +542,11 @@ function InputArea({
 					{pickerLoading ? (
 						<Text dimColor>Loading models…</Text>
 					) : (
-						<TextInput value={input} onChange={setInput} onSubmit={onSubmit} />
+						<TextInput
+							value={input}
+							onChange={(value) => handleInputChange(value, setInput, onSubmit)}
+							onSubmit={onSubmit}
+						/>
 					)}
 				</>
 			)}

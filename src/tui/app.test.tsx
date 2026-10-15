@@ -171,6 +171,19 @@ describe("TUI App", () => {
 		expect(onExit).toHaveBeenCalledOnce();
 	});
 
+	it.each(["\n", "\r", "\r\n"])(
+		"submits input ending in %j on the first Enter",
+		async (lineEnding) => {
+			const { controller } = createController();
+			const screen = mountApp(controller);
+
+			screen.stdin.write(`  hello  ${lineEnding}`);
+
+			await vi.waitFor(() => expect(controller.submit).toHaveBeenCalledWith("hello"));
+			expect(controller.submit).toHaveBeenCalledOnce();
+		},
+	);
+
 	it("navigates submitted input history with the up and down arrows", async () => {
 		const { controller } = createController();
 		const screen = mountApp(controller);

@@ -520,10 +520,9 @@ type SessionController = {
   - The status bar shows the phase, elapsed time, and tokens/s from Ollama's `eval_count` and `eval_duration`.
   - While waiting for the first token, show "waiting for model (loading?) 42 s".
   - **Done:** reasoning is buffered at the TUI render cadence, displayed with an estimated token count and elapsed time, and can be expanded with `/think`. The status bar reports phase, request elapsed time, and Ollama's measured output rate; first-token waits show an explicit loading hint.
-- [ ] **M9.4 [S] Don't drop the first Enter.** In 2 of 11 automated pty runs during M0, the first Enter after launch arrived while the terminal was still in cooked mode. ink received `text\n` as typed input, so nothing was sent until the next Enter, and that message had a stray newline. The pre-M0 build does the same; the root cause is unknown.
-  - **Test first** (M8.4 harness): typing `hello\n` into the prompt submits `hello`.
-  - In the input's `onChange`, treat a trailing `\r` or `\n` as submit and strip it. Trim submitted values.
-  - Recheck in a real terminal after M9.1.
+- [x] **M9.4 [S] Don't drop the first Enter.** In 2 of 11 automated pty runs during M0, the first Enter after launch arrived while the terminal was still in cooked mode. ink received `text\n` as typed input, so nothing was sent until the next Enter, and that message had a stray newline.
+  - **Done:** trailing CR/LF in the TUI input's `onChange` now submits the stripped, trimmed prompt. The component regression test reproduced the raw `hello\n` behavior before the fix and verifies CR, LF, and CRLF submission exactly once.
+  - **Validated:** a pseudo-terminal smoke test confirmed `/help` is handled on the first Enter after the TUI starts.
 
 **Validation stop:** the gate passes, plus S1 and S6, and a long streaming answer shows no flicker or scrollback corruption. The first message after launch is sent on the first Enter.
 
@@ -635,7 +634,8 @@ type SessionController = {
   - **Done:** CI now runs the check job on both Node 22.x and 24.x; pnpm continues to be resolved from `packageManager`. GitHub CI #95 passed on both versions.
 - [x] **M13.3 [XS] Raise the audit gate** to `--audit-level=high --prod`. The production tree is small after M1.
   - **Done:** the workflow now fails on high or critical production vulnerabilities; the current dependency tree passes locally and in GitHub CI #96 on Node 22 and 24.
-- [ ] **M13.4 [S] Run `pnpm test:integration` in CI.** It uses mock servers only, so no model is needed.
+- [x] **M13.4 [S] Run `pnpm test:integration` in CI.** It uses mock servers only, so no model is needed.
+  - **Done:** CI runs the integration suite after the build and unit tests on Node 22.x and 24.x; GitHub CI #97 passed on both versions.
 - [ ] **M13.5 [M] Renovate** (P1 in `docs/ideas.md`):
   - Group minor and patch updates.
   - One PR per major.
