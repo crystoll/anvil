@@ -136,14 +136,18 @@ describe("streaming provider contracts", () => {
 	it("reports cancellation and closes the Ollama socket", async () => {
 		const mock = await startOllama({ frames: [ollamaFrame("partial")], stallAfter: 1 });
 		const controller = new AbortController();
-		const pending = consume(
-			createOllamaProvider("ollama", { endpoint: mock.endpoint, streamTimeout: 5 }),
-			controller.signal,
-		);
+		const pending = createOllamaProvider("ollama", {
+			endpoint: mock.endpoint,
+			streamTimeout: 5,
+		}).streamChat("test-model", [{ role: "user", content: "hi" }], [], {
+			signal: controller.signal,
+		});
 		await waitForRequest(mock);
+		const result = await pending;
+		if (result.isErr()) throw result.error;
 		controller.abort();
 
-		const chunks = await pending;
+		const chunks = await collect(result.value);
 		await mock.clientDisconnected;
 		expect(chunks.at(-1)).toMatchObject({ done: true, error: { kind: "cancelled" } });
 	});
