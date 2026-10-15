@@ -151,8 +151,7 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
 
 **Suggested remaining-work order:**
 
-1. Do **M13.5 Renovate [M]** now that CI is stable, so automatic updates are governed by the completed checks.
-2. Complete **M14 [L]** only after all scheduled M0–M13 work is done; audit documentation, add deterministic and real-model screenshots, perform the final repository and code/test review, validate, then delete this TODO file.
+1. Complete **M14 [L]** now that all remaining M0–M13 items are done or explicitly descoped; audit documentation, add deterministic and real-model screenshots, perform the final repository and code/test review, validate, then delete this TODO file.
 
 - The longest dependency chain is M0 → M2 → M5 → M6 → M7 → M8 → M12. M1, M3 and M4 can run alongside it.
 - M10.1 (Ollama options) is a completed example of a small, independent improvement.
@@ -639,16 +638,7 @@ type SessionController = {
   - **Done:** the workflow now fails on high or critical production vulnerabilities; the current dependency tree passes locally and in GitHub CI #96 on Node 22 and 24.
 - [x] **M13.4 [S] Run `pnpm test:integration` in CI.** It uses mock servers only, so no model is needed.
   - **Done:** CI runs the integration suite after the build and unit tests on Node 22.x and 24.x; GitHub CI #97 passed on both versions.
-- [ ] **M13.5 [M] Renovate** (P1 in `docs/ideas.md`):
-  - Group minor and patch updates.
-  - One PR per major.
-  - `minimumReleaseAge: "3 days"`.
-  - Weekly lockfile maintenance.
-  - Auto-merge patches only on green CI.
-
-  Then remove the item from `docs/ideas.md`.
-
-**Validation stop:** CI is green on both Node versions, and the first Renovate PR opens.
+- [x] **M13.5 [M] Renovate — out of scope.** Per user decision, do not set up Renovate or a scheduled runner for this personal project.
 
 ## M14 — Final cleanup and release readiness
 
