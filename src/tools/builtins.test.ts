@@ -2,7 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { editFileTool, writeFileTool } from "./builtins.js";
+import { editFileTool, search, writeFileTool } from "./builtins.js";
 
 const ROOT = join(tmpdir(), "anvil-builtins-test");
 const context = { projectRoot: ROOT, signal: new AbortController().signal };
@@ -130,5 +130,69 @@ describe("edit_file", () => {
 
 		await expect(edit).rejects.toThrow(/must not be empty/);
 		expect(readFileSync(join(ROOT, "keep.txt"), "utf-8")).toBe("hello");
+	});
+});
+
+describe("search", () => {
+	it("uses fixed-string matching by default and returns matching lines", async () => {
+		writeFileSync(join(ROOT, "matches.ts"), "const value = x.y;\nconst other = xay;\n");
+
+		const result = await search.execute({ query: "X.Y" }, context);
+
+		expect(result).toContain("matches.ts:1: const value = x.y;");
+		expect(result).not.toContain("matches.ts:2:");
+	});
+
+	it("uses regular expressions when regex is enabled", async () => {
+		writeFileSync(join(ROOT, "regex.ts"), "const value = x.y;\nconst other = xay;\n");
+
+		const result = await search.execute({ query: "x.y", regex: true }, context);
+
+		expect(result).toContain("regex.ts:1: const value = x.y;");
+		expect(result).toContain("regex.ts:2: const other = xay;");
+	});
+
+	it("excludes dependency, git, and build directories", async () => {
+		for (const directory of ["node_modules", ".git", "dist"]) {
+			const path = join(ROOT, directory);
+			mkdirSync(path, { recursive: true });
+			writeFileSync(join(path, "ignored.txt"), "needle\n");
+		}
+		writeFileSync(join(ROOT, "source.txt"), "needle\n");
+
+		const result = await search.execute({ query: "needle" }, context);
+
+		expect(result).toContain("source.txt:1: needle");
+		expect(result).not.toContain("ignored.txt");
+	});
+
+	it("caps results at 100 matching lines and reports truncation", async () => {
+		writeFileSync(
+			join(ROOT, "many.txt"),
+			`${Array.from({ length: 105 }, (_, i) => `needle ${i}`).join("\n")}\n`,
+		);
+
+		const result = await search.execute({ query: "needle" }, context);
+		const resultLines = result.split("\n").filter((line) => line.startsWith("many.txt:"));
+
+		expect(resultLines).toHaveLength(100);
+		expect(result).toContain("truncated");
+		expect(result).not.toContain("many.txt:101:");
+	});
+
+	it("reports search command errors instead of treating them as no matches", async () => {
+		await expect(
+			search.execute({ query: "needle", path: "missing-directory" }, context),
+		).rejects.toThrow(/Search failed/);
+	});
+
+	it("returns a no-match result only when the search completes successfully", async () => {
+		writeFileSync(join(ROOT, "source.txt"), "present\n");
+
+		await expect(search.execute({ query: "absent" }, context)).resolves.toBe("No matches found");
+	});
+
+	it("rejects an empty query", async () => {
+		await expect(search.execute({ query: "" }, context)).rejects.toThrow(/must not be empty/);
 	});
 });

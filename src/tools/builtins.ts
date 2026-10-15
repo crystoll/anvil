@@ -16,6 +16,9 @@ const PROCESS_KILL_GRACE_MS = 2000;
 const MAX_RUN_CMD_HEAD_LENGTH = 2000;
 const MAX_RUN_CMD_TAIL_LENGTH = 6000;
 const MAX_RUN_CMD_OUTPUT_LENGTH = MAX_RUN_CMD_HEAD_LENGTH + MAX_RUN_CMD_TAIL_LENGTH;
+const SEARCH_TIMEOUT_MS = 15_000;
+const MAX_SEARCH_RESULTS = 100;
+const MAX_SEARCH_ERROR_LENGTH = 4000;
 
 /** Save a backup of a file before overwriting it. */
 export const backupFile = async (fullPath: string, projectRoot: string): Promise<void> => {
@@ -417,36 +420,203 @@ export const glob: Tool = {
 };
 
 /** Search file contents. */
+type SearchCommand = {
+	label: string;
+	command: string;
+	args: string[];
+};
+
+type SearchCommandOutcome = {
+	exitCode: number | null;
+	lines: string[];
+	truncated: boolean;
+	stderr: string;
+	error: Error | undefined;
+	timedOut: boolean;
+};
+
+const formatSearchLine = (line: string): string => {
+	const normalized = line.replace(/^\.\//, "");
+	const match = normalized.match(/^(.+?):(\d+):(.*)$/);
+	return match ? `${match[1]}:${match[2]}: ${match[3]}` : normalized;
+};
+
+const runSearchCommand = (
+	command: SearchCommand,
+	cwd: string,
+	signal: AbortSignal,
+): Promise<SearchCommandOutcome> =>
+	new Promise((resolveOutcome) => {
+		const child = spawn(command.command, command.args, {
+			cwd,
+			signal,
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		const stdoutDecoder = new StringDecoder("utf8");
+		let stdoutRemainder = "";
+		let stderr = "";
+		const lines: string[] = [];
+		let matchedLineCount = 0;
+		let truncated = false;
+		let processError: Error | undefined;
+		let timedOut = false;
+		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+		let killTimer: ReturnType<typeof setTimeout> | undefined;
+
+		const appendLine = (line: string): void => {
+			matchedLineCount += 1;
+			if (matchedLineCount <= MAX_SEARCH_RESULTS) {
+				lines.push(formatSearchLine(line));
+			} else {
+				truncated = true;
+			}
+		};
+
+		const appendStdout = (chunk: string): void => {
+			const parts = (stdoutRemainder + chunk).split("\n");
+			stdoutRemainder = parts.pop() ?? "";
+			for (const line of parts) appendLine(line.endsWith("\r") ? line.slice(0, -1) : line);
+		};
+
+		const appendStderr = (chunk: Buffer): void => {
+			stderr = (stderr + chunk.toString("utf8")).slice(-MAX_SEARCH_ERROR_LENGTH);
+		};
+
+		timeoutTimer = setTimeout(() => {
+			timedOut = true;
+			child.kill("SIGTERM");
+			killTimer = setTimeout(() => child.kill("SIGKILL"), PROCESS_KILL_GRACE_MS);
+		}, SEARCH_TIMEOUT_MS);
+
+		child.stdout?.on("data", (chunk: Buffer) => appendStdout(stdoutDecoder.write(chunk)));
+		child.stderr?.on("data", appendStderr);
+		child.once("error", (error) => {
+			processError = error;
+		});
+		child.once("close", (exitCode) => {
+			clearTimeout(timeoutTimer);
+			clearTimeout(killTimer);
+			appendStdout(stdoutDecoder.end());
+			if (stdoutRemainder) appendLine(stdoutRemainder);
+			resolveOutcome({
+				exitCode,
+				lines,
+				truncated,
+				stderr,
+				error: processError,
+				timedOut,
+			});
+		});
+	});
+
+const isMissingCommandError = (error: Error | undefined): boolean =>
+	error !== undefined && "code" in error && error.code === "ENOENT";
+
+const isGitRepositoryUnavailable = (
+	command: SearchCommand,
+	outcome: SearchCommandOutcome,
+): boolean =>
+	command.label === "git grep" &&
+	outcome.exitCode !== 0 &&
+	outcome.exitCode !== 1 &&
+	outcome.stderr.includes("not a git repository");
+
+const searchCommandOutput = (command: SearchCommand, outcome: SearchCommandOutcome): string => {
+	if (outcome.exitCode !== 0 && outcome.exitCode !== 1) {
+		throw new Error(
+			`Search failed (${command.label}): ${outcome.stderr.trim() || `exit code ${outcome.exitCode}`}`,
+		);
+	}
+	if (outcome.lines.length === 0) return "No matches found";
+	return [
+		outcome.lines.join("\n"),
+		outcome.truncated ? `Results truncated after ${MAX_SEARCH_RESULTS} lines` : "",
+	]
+		.filter(Boolean)
+		.join("\n");
+};
+
+const searchCommands = (query: string, path: string, regex: boolean): SearchCommand[] => {
+	const exclusions = ["node_modules", ".git", "dist"];
+	const rgArgs = [
+		"--line-number",
+		"--no-heading",
+		"--color",
+		"never",
+		"--ignore-case",
+		"--hidden",
+		...exclusions.flatMap((directory) => ["--glob", `!**/${directory}/**`]),
+		...(regex ? [] : ["--fixed-strings"]),
+		"--",
+		query,
+		path,
+	];
+	const gitArgs = [
+		"grep",
+		"-n",
+		"-I",
+		"-i",
+		"--untracked",
+		regex ? "-E" : "-F",
+		"-e",
+		query,
+		"--",
+		path,
+		...exclusions.map((directory) => `:(exclude,glob)**/${directory}/**`),
+	];
+	const grepArgs = [
+		"-rn",
+		"-i",
+		regex ? "-E" : "-F",
+		...exclusions.map((directory) => `--exclude-dir=${directory}`),
+		"--",
+		query,
+		path,
+	];
+
+	return [
+		{ label: "rg", command: "rg", args: rgArgs },
+		{ label: "git grep", command: "git", args: gitArgs },
+		{ label: "grep", command: "grep", args: grepArgs },
+	];
+};
+
+const searchFiles = async (
+	query: string,
+	searchPath: string,
+	regex: boolean,
+	context: Parameters<Tool["execute"]>[1],
+): Promise<string> => {
+	for (const command of searchCommands(query, searchPath, regex)) {
+		const outcome = await runSearchCommand(command, context.projectRoot, context.signal);
+		if (isMissingCommandError(outcome.error)) continue;
+		if (context.signal.aborted) throw new Error("Search cancelled by user");
+		if (outcome.timedOut) throw new Error(`Search failed (${command.label}): timed out`);
+		if (outcome.error)
+			throw new Error(`Search failed (${command.label}): ${outcome.error.message}`);
+		if (isGitRepositoryUnavailable(command, outcome)) continue;
+		return searchCommandOutput(command, outcome);
+	}
+	throw new Error("Search failed: rg, git grep, and grep are unavailable");
+};
+
 export const search: Tool = {
 	name: "search",
-	description: "Search file contents for a text pattern (case-insensitive)",
+	description:
+		"Search file contents case-insensitively using fixed strings by default; set regex to use a regular expression",
 	schema: objSchema(["query"], {
 		query: strProp("Text to search for"),
 		path: strProp("Project-relative directory to search (default '.')"),
+		regex: { type: "boolean", description: "Treat query as a regular expression" },
 	}),
 	needsApproval: false,
-	timeout: 15_000,
+	timeout: SEARCH_TIMEOUT_MS + PROCESS_KILL_GRACE_MS + 1000,
 	execute: async (args, context) => {
 		const query = String(args.query ?? "");
+		if (!query) throw new Error("Search query must not be empty");
 		const path = String(args.path ?? ".");
-		const searchDir = resolve(context.projectRoot, path);
-
-		return new Promise((res) => {
-			execFile(
-				"grep",
-				["-rn", "--include=*", "-i", "-l", query, searchDir],
-				{ timeout: 15_000 },
-				(_, stdout) => {
-					const files = stdout
-						.trim()
-						.split("\n")
-						.filter(Boolean)
-						.map((f) => relative(context.projectRoot, f))
-						.slice(0, 50);
-					res(files.length > 0 ? `Found in:\n${files.join("\n")}` : "No matches found");
-				},
-			);
-		});
+		const searchPath = relative(context.projectRoot, resolve(context.projectRoot, path)) || ".";
+		return searchFiles(query, searchPath, args.regex === true, context);
 	},
 };
 

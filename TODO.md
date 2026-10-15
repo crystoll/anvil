@@ -561,12 +561,13 @@ type SessionController = {
   - Use a non-interactive environment: `CI=1`, `PAGER=cat`, `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`.
   - Keep the head and the tail of the output: the first 2K plus the last 6K characters, with "… N chars omitted …" between. Errors are at the tail (F19).
   - **Done:** commands receive the non-interactive environment, and captured output retains its first 2K and last 6K characters around an omission count.
-- [ ] **M10.10 Useful `search`.**
+- [x] **M10.10 Useful `search`.**
   - Use `rg`, falling back to `git grep -n`, then `grep -rnF`.
   - Search fixed strings by default; `regex: true` opts in to regex.
   - Exclude `node_modules`, `.git` and `dist`.
   - Return `file:line: text`, capped at 100 lines.
   - Report real errors instead of "No matches".
+  - **Done:** search uses fixed-string matching by default, supports regex opt-in, falls back across available search commands, excludes generated/dependency directories, caps output at 100 matches, and reports command failures.
 - [ ] **M10.11 Bounded reads.**
   - `read_file`:
     - gets `offset` and `limit`.
