@@ -145,17 +145,17 @@ Legend: ✅ reproduced against current code · 📊 seen in `~/.anvil/history` (
 | M11 Safety hardening                     | M7                | P1       |
 | M12 Persistence UX                       | M4, M8            | P2       |
 | M13 CI and maintenance                   | M1, M2            | P2       |
+| M14 Final cleanup and release readiness  | M0–M13            | P2       |
 
 **Relative sizing:** XS is a tiny, localized change; S is one narrow behavior with focused tests; M is comparable to completed **M10.3 real token accounting**, our medium-size benchmark; L spans several interacting paths or user-facing behavior. These sizes describe relative scope and risk, not time commitments. The completed work (M0–M8, M10, and M11.1–M11.3) took less than two days.
 
 **Suggested remaining-work order:**
 
-1. Finish **M11.4 [S]**, then **M11.5 [L]**, to complete the safety work. Validate one-shot approval behavior and backup creation, pruning, and undo.
-2. Do **M13.1–M13.4** as an early CI safety net (mostly **[S]**, with **M13.3 [XS]**): refresh pinned Actions after reviewing changelogs, add Node 22/24, raise the production audit gate, and run integration tests in CI.
-3. Implement **M12.1 [M]** and **M12.2 [M]**: add backward-compatible session metadata, then project-aware and ID-based resume.
-4. Complete **M9.3–M9.4**: add slow-model progress (**M9.3 [M]**) and fix first-Enter handling (**M9.4 [S]**). Ink v8 (**M9.1 [S]**) and buffered streaming (**M9.2 [L]**) are complete; finish this TUI foundation before adding the history picker.
-5. Finish **M12.3 [L]**, **M12.4 [S]**, and **M12.5 [S]**: add history browsing and interrupted-session notice, then measure listing performance; add an index only if it crosses the documented thresholds.
-6. Do **M13.5 Renovate [M]** after CI is stable, so automatic updates are governed by the completed checks.
+1. Do **M13.1–M13.4** as an early CI safety net (mostly **[S]**, with **M13.3 [XS]**): refresh pinned Actions after reviewing changelogs, add Node 22/24, raise the production audit gate, and run integration tests in CI.
+2. Fix **M9.4 [S]**: reproduce and prevent the first-Enter-after-launch issue.
+3. Finish **M12.3 [L]**, **M12.4 [S]**, and **M12.5 [S]**: add history browsing and interrupted-session notice, then measure listing performance; add an index only if it crosses the documented thresholds.
+4. Do **M13.5 Renovate [M]** after CI is stable, so automatic updates are governed by the completed checks.
+5. Complete **M14 [L]** only after all scheduled M0–M13 work is done; audit documentation, add deterministic and real-model screenshots, perform the final repository and code/test review, validate, then delete this TODO file.
 
 - The longest dependency chain is M0 → M2 → M5 → M6 → M7 → M8 → M12. M1, M3 and M4 can run alongside it.
 - M10.1 (Ollama options) is a completed example of a small, independent improvement.
@@ -643,6 +643,17 @@ type SessionController = {
   Then remove the item from `docs/ideas.md`.
 
 **Validation stop:** CI is green on both Node versions, and the first Renovate PR opens.
+
+## M14 — Final cleanup and release readiness
+
+- [ ] **M14 [L] Final repository cleanup.** Start only after all scheduled M0–M13 checklist work is complete. Parking-lot ideas are excluded unless explicitly promoted into scope.
+  - Audit README, feature docs, CLI/TUI help, configuration references, and examples against the shipped behavior. Update missing user-visible features and remove contradictions, stale claims, and obsolete guidance.
+  - Find and validate a maintainable way to capture the TUI in action. Include both a deterministic demo/mock session that does not require a model and an authentic local-Ollama session. Keep the captures in the repository (for example, `docs/images/`), embed a small selection near the top of README, and ensure the images contain no secrets, personal paths, or private conversation data.
+  - Sweep docs, code, tests, and assets for confirmed inconsistencies, invalid claims, redundancy, and dead material. Remove only verified dead or redundant items; preserve useful regression coverage.
+  - Review the final code and test changes end to end. Resolve meaningful findings, rerun the complete quality gates, and verify README images render from repository-relative paths.
+  - Delete `TODO.md` as the final cleanup action, after confirming every scheduled item is complete and no needed decisions or documentation exist only in the TODO.
+
+**Validation stop:** user-visible documentation is consistent with the implementation; both screenshot types are checked in and visible in README; the final review has no unresolved high-confidence issues; quality gates pass; `TODO.md` is deleted only after its completion criteria are satisfied.
 
 ---
 
